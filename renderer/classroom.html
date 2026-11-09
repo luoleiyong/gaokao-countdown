@@ -23,7 +23,6 @@
       <button class="cls-tab" data-tab="timetable">课程表</button>
     </nav>
     <div class="cls-top__actions">
-      <button class="cls-admin" id="btnAdmin" title="进入管理员模式">管理员</button>
       <button class="win-btn" id="btnCloseWindow" title="关闭">×</button>
     </div>
   </header>
@@ -54,6 +53,11 @@
         <div class="roll-name" id="rollName"><span>课堂</span><span>点名</span></div>
         <div class="roll-sub" id="rollSub">选择左侧名单，然后开始点名</div>
         <button class="roll-btn" id="btnRoll"><span>开 始 点 名</span></button>
+        <label class="voice-toggle" for="voiceToggle">
+          <input type="checkbox" id="voiceToggle" />
+          <span class="voice-toggle__dot"></span>
+          <span>朗读姓名</span>
+        </label>
       </section>
     </section>
 
@@ -119,6 +123,7 @@
 </div>
 
 <div class="cls-toast" id="clsToast" hidden></div>
+<script src="sound.js"></script>
 <script src="classroom.js"></script>
 </body>
 </html>

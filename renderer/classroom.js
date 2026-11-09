@@ -14,7 +14,8 @@ const state = {
   drawing: false,
   ttRows: null,
   ttFile: null,
-  debugMode: false
+  debugMode: false,
+  voice: false
 };
 
 function esc(v) {
@@ -36,6 +37,23 @@ function toast(msg) {
     el.classList.remove('show');
     setTimeout(() => { el.hidden = true; }, 260);
   }, 2600);
+}
+
+/* ---------------- 语音朗读 ---------------- */
+function speakName(name) {
+  if (!state.voice || !name || !window.speechSynthesis) return;
+  try {
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(String(name));
+    u.lang = 'zh-CN';
+    u.rate = 0.92;
+    u.pitch = 1;
+    u.volume = 1;
+    const voices = window.speechSynthesis.getVoices();
+    const zh = voices.find((v) => /zh[-_]CN/i.test(v.lang)) || voices.find((v) => /^zh/i.test(v.lang));
+    if (zh) u.voice = zh;
+    window.speechSynthesis.speak(u);
+  } catch (e) { /* 忽略语音失败 */ }
 }
 
 /* ---------------- 启动 ---------------- */
@@ -131,6 +149,12 @@ async function rollOnce() {
   nameEl.classList.remove('landed');
   nameEl.classList.add('rolling');
   $('rollSub').textContent = '讲台下的目光都在这里…';
+  if (window.GkSound) {
+    try {
+      GkSound.unlock();
+      GkSound.playShake();
+    } catch (e) { /* 忽略音效失败 */ }
+  }
 
   let res;
   try {
@@ -156,6 +180,10 @@ async function rollOnce() {
   nameEl.classList.remove('rolling');
   nameEl.classList.add('landed');
   $('rollSub').textContent = roster.name;
+  if (window.GkSound) {
+    try { GkSound.playDrawDone(); } catch (e) { /* 忽略音效失败 */ }
+  }
+  speakName(res.name);
   btn.disabled = false;
   btn.querySelector('span').textContent = '再 点 一 次';
   state.drawing = false;
@@ -305,7 +333,7 @@ function renderAdminPanel() {
     </div>
     <div class="admin-table-wrap">
       <table class="admin-table">
-        <thead><tr><th style="width:46%">姓名</th><th style="width:96px">权重</th><th style="width:104px">抽到次数</th><th style="width:60px"></th></tr></thead>
+        <thead><tr><th style="width:44%">姓名</th><th style="width:126px">权重</th><th style="width:110px">抽到次数</th><th style="width:64px"></th></tr></thead>
         <tbody>
           ${roster && roster.names.length
             ? roster.names.map((n) => `<tr data-nid="${esc(n.id)}">
@@ -628,6 +656,15 @@ function bindStaticEvents() {
   $('btnCloseWindow').addEventListener('click', () => bridge.closeClassroom());
   $('btnRoll').addEventListener('click', rollOnce);
 
+  // 朗读开关（保存在本机）
+  try { state.voice = localStorage.getItem('cls-voice') === '1'; } catch (e) { state.voice = false; }
+  $('voiceToggle').checked = state.voice;
+  $('voiceToggle').addEventListener('change', (e) => {
+    state.voice = !!e.target.checked;
+    try { localStorage.setItem('cls-voice', state.voice ? '1' : '0'); } catch (err) { /* 忽略 */ }
+    if (state.voice) speakName('朗读已开启');
+  });
+
   document.querySelectorAll('.cls-tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('.cls-tab').forEach((t) => t.classList.toggle('on', t === tab));
@@ -638,7 +675,8 @@ function bindStaticEvents() {
     });
   });
 
-  $('btnAdmin').addEventListener('click', openAdmin);
+  $('btnAdmin') && $('btnAdmin').addEventListener('click', openAdmin);
+  if (bridge.onAdminOpen) bridge.onAdminOpen(() => openAdmin());
   document.querySelectorAll('[data-close="admin"]').forEach((el) => el.addEventListener('click', closeAdmin));
   document.querySelectorAll('[data-close="tt"]').forEach((el) => el.addEventListener('click', closeTtImport));
 
@@ -804,7 +842,8 @@ function createMockBridge() {
     adminTriggerDraw: async () => ({ ok: true }),
     getFilePath: () => '',
     closeClassroom: () => window.close(),
-    onSkinChanged: () => {}
+    onSkinChanged: () => {},
+    onAdminOpen: () => {}
   };
 }
 

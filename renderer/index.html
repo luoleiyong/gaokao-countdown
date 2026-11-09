@@ -254,6 +254,37 @@
     </div>
   </div>
 
+  <!-- ======================= 首次配置 ======================= -->
+  <div class="onboard" id="onboard" hidden>
+    <div class="onboard__card">
+      <div class="onboard__seal">启</div>
+      <h2 class="onboard__title">欢迎使用高考倒计时</h2>
+      <p class="onboard__sub">先完成首次配置，之后的每一天都属于你的倒计时。</p>
+
+      <section class="onboard__section">
+        <label class="onboard__label">高考日期</label>
+        <input type="date" id="onboardDate" class="input" />
+      </section>
+
+      <section class="onboard__section">
+        <label class="onboard__label">选择科目 <span class="onboard__count" id="onboardSubjectCount">已选 6 / 6</span></label>
+        <div class="subject-grid" id="onboardSubjects"></div>
+        <p class="hint">最多选择 6 科，学科知识签将按所选科目展示。</p>
+      </section>
+
+      <section class="onboard__section onboard__row">
+        <div>
+          <label class="onboard__label">开机自动启动</label>
+          <p class="hint">开机后以桌面宠物形式出现，可随时在设置中修改。</p>
+        </div>
+        <button class="switch" id="onboardAutoLaunch" aria-pressed="false"><i></i></button>
+      </section>
+
+      <button class="btn-primary btn-wide" id="btnOnboardDone">完成配置，开始使用</button>
+      <p class="onboard__tip">所有数据仅保存在本机 · 仅供非商业用途</p>
+    </div>
+  </div>
+
   <!-- ======================= 每日首抽 · 全屏引导 ======================= -->
   <div class="first-draw" id="firstDraw" hidden>
     <div class="first-draw__glow"></div>
@@ -324,8 +355,12 @@
         </section>
 
         <section class="setting">
-          <label class="setting__label">版本与更新 <span class="setting__value" id="curVersionLabel">v1.0.0</span></label>
+          <label class="setting__label">版本与更新 <span class="setting__value setting__value--click" id="curVersionLabel" title="点击版本号">v1.0.0</span></label>
           <p class="hint" id="updateStatus">正在自动检测更新…</p>
+          <div class="update-progress" id="updateProgress" hidden>
+            <i id="updateProgressFill"></i>
+            <span id="updateProgressText">0%</span>
+          </div>
           <button class="btn-ghost btn-wide setting-action" id="btnCheckUpdate">检查更新</button>
           <button class="btn-primary btn-wide setting-action" id="btnDownloadUpdate" hidden>下载新版本</button>
           <a class="repo-link" id="repoLink" href="#">代码库 · github.com/luoleiyong/gaokao-countdown</a>
@@ -345,6 +380,19 @@
         <section class="setting setting--author">
           <label class="setting__label">联系作者</label>
           <p class="author-mail" id="authorMail">3270423617@qq.com</p>
+        </section>
+
+        <section class="setting setting--agreement">
+          <label class="setting__label">用户协议</label>
+          <div class="agreement" id="agreementBox">
+            <p><b>高考倒计时 · 用户协议</b></p>
+            <p>1. 本软件仅供个人学习、教学等非商业用途使用，禁止任何形式的商业使用，包括但不限于销售、付费分发、捆绑销售、商业培训、以本软件名义承接有偿服务等。</p>
+            <p>2. 软件按“现状”提供，作者尽力保证功能可用，但不对使用过程中产生的任何直接或间接损失承担责任。</p>
+            <p>3. 名单、抽签记录、课程表与管理员密码仅保存在本机，不会上传服务器。</p>
+            <p>4. 请勿删除或修改软件中的版权与协议说明；分发时须保持软件完整。</p>
+            <p>5. 使用本软件即视为已阅读并同意本协议。</p>
+            <p>作者联系方式：3270423617@qq.com</p>
+          </div>
         </section>
       </div>
       <footer class="settings__foot">

@@ -42,10 +42,13 @@ const state = {
   shaking: false,
   debug: false,
   debugPreview: false,
+  onboarded: false,
+  onboardAutoLaunch: false,
   weather: null,
   weatherCity: '',
   updateUrl: '',
   updateInfo: null,
+  updateDownload: { phase: 'idle', percent: 0, filePath: '', version: '' },
   version: '',
   selectedSubjects: [],
   historyExpanded: false
@@ -142,6 +145,8 @@ async function boot() {
     .slice(0, 6);
   if (!state.selectedSubjects.length) state.selectedSubjects = DEFAULT_SUBJECTS.slice();
   state.debug = !!s.debugMode;
+  state.onboarded = !!s.onboarded;
+  state.onboardAutoLaunch = state.autoLaunch;
 
   applySkin(state.skin);
   renderVersion(init.version);
@@ -171,6 +176,26 @@ async function boot() {
     $('firstDraw').hidden = true;
     setTimeout(() => showFirstDraw(true), 80);
   });
+  bridge.onUpdateProgress((data) => {
+    if (!data) return;
+    state.updateDownload.phase = 'downloading';
+    state.updateDownload.percent = Number(data.percent) || 0;
+    state.updateDownload.version = data.version || state.updateDownload.version;
+    renderUpdateUI();
+  });
+  bridge.onUpdateDownloaded((data) => {
+    if (!data) return;
+    state.updateDownload.phase = 'ready';
+    state.updateDownload.percent = 100;
+    state.updateDownload.filePath = data.filePath || '';
+    state.updateDownload.version = data.version || state.updateDownload.version;
+    renderUpdateUI();
+    if (!$('settings').hidden) toast('新版本安装包已下载完成');
+  });
+  bridge.onUpdateError(() => {
+    state.updateDownload.phase = 'error';
+    renderUpdateUI();
+  });
 
   setInterval(tick, 1000);
 
@@ -180,18 +205,22 @@ async function boot() {
   setTimeout(() => checkUpdates(true), 1800);
   setInterval(() => checkUpdates(true), 6 * 60 * 60 * 1000);
 
-  // 每天启动时若今日尚未抽签，弹出全屏首抽引导；跳过或未抽时下次启动仍会触发
-  setTimeout(() => {
-    if (todayEntry()) return;
-    if (state.mode === 'pet') {
-      // 开机自启以桌面宠物启动时，首抽先切回主面板全屏引导
-      Promise.resolve(bridge.setPetMode(false)).then(() => {
-        setTimeout(() => showFirstDraw(), 300);
-      });
-    } else {
-      showFirstDraw();
-    }
-  }, 900);
+  // 首次使用先完成配置；之后每天启动若今日尚未抽签，弹出全屏首抽引导
+  if (!state.onboarded) {
+    setTimeout(() => openOnboarding(), 600);
+  } else {
+    setTimeout(() => {
+      if (todayEntry()) return;
+      if (state.mode === 'pet') {
+        // 开机自启以桌面宠物启动时，首抽先切回主面板全屏引导
+        Promise.resolve(bridge.setPetMode(false)).then(() => {
+          setTimeout(() => showFirstDraw(), 300);
+        });
+      } else {
+        showFirstDraw();
+      }
+    }, 900);
+  }
 }
 
 /* ---------------- 渲染：倒计时 ---------------- */
@@ -756,11 +785,92 @@ function closeTermModal() {
   $('termModal').hidden = true;
 }
 
-/* ---------------- 版本更新（自动检测 + 国内镜像下载） ---------------- */
+/* ---------------- 版本更新（自动检测 + 后台下载 + 手动安装） ---------------- */
+function renderUpdateUI() {
+  const info = state.updateInfo;
+  const dl = state.updateDownload;
+  const btn = $('btnDownloadUpdate');
+  const progress = $('updateProgress');
+  const fill = $('updateProgressFill');
+  const ptext = $('updateProgressText');
+  const status = $('updateStatus');
+  if (!btn || !progress) return;
+
+  if (!info || !info.ok) {
+    btn.hidden = true;
+    progress.hidden = true;
+    if (status && info && !info.ok) status.textContent = '暂时无法连接更新服务，稍后会自动重试';
+    return;
+  }
+
+  if (!info.hasUpdate) {
+    btn.hidden = true;
+    progress.hidden = true;
+    $('updateDot').hidden = true;
+    if (status) status.textContent = `已是最新版本 v${info.current}`;
+    return;
+  }
+
+  $('updateDot').hidden = false;
+  if (dl.phase === 'downloading' || info.downloading) {
+    const pct = Math.max(0, Math.min(99, dl.percent || 0));
+    progress.hidden = false;
+    fill.style.width = pct + '%';
+    ptext.textContent = `正在后台下载 ${pct}%`;
+    btn.hidden = true;
+    if (status) status.textContent = `发现新版本 v${info.latest}，正在自动下载安装包…`;
+    return;
+  }
+  if (dl.phase === 'ready') {
+    progress.hidden = false;
+    fill.style.width = '100%';
+    ptext.textContent = '安装包已就绪';
+    btn.hidden = false;
+    btn.textContent = '立即安装';
+    if (status) status.textContent = `新版本 v${info.latest} 已下载完成，点击「立即安装」`;
+    return;
+  }
+  if (dl.phase === 'error') {
+    progress.hidden = true;
+    btn.hidden = false;
+    btn.textContent = info.setupMirrors && info.setupMirrors.length ? '重新下载安装包' : '手动下载新版本';
+    if (status) status.textContent = `新版本 v${info.latest} 下载失败`;
+    return;
+  }
+
+  progress.hidden = true;
+  btn.hidden = false;
+  btn.textContent = info.setupMirrors && info.setupMirrors.length
+    ? '获取安装包'
+    : (info.portableMirrors && info.portableMirrors.length ? '下载新版本' : '打开发布页');
+  if (status) status.textContent = `发现新版本 v${info.latest}${info.notes ? ' · ' + info.notes : ''}`;
+}
+
+async function startUpdateDownload(info) {
+  if (!info || !info.setupMirrors || !info.setupMirrors.length) return;
+  if (state.updateDownload.phase === 'downloading') return;
+  state.updateDownload = { phase: 'downloading', percent: 0, filePath: '', version: info.latest };
+  renderUpdateUI();
+  try {
+    const res = await bridge.downloadUpdatePackage({ version: info.latest, urls: info.setupMirrors });
+    if (res && res.ok) {
+      state.updateDownload.phase = 'ready';
+      state.updateDownload.percent = 100;
+      state.updateDownload.filePath = res.filePath || '';
+      renderUpdateUI();
+    } else if (!(res && res.downloading)) {
+      state.updateDownload.phase = 'error';
+      renderUpdateUI();
+    }
+  } catch (e) {
+    state.updateDownload.phase = 'error';
+    renderUpdateUI();
+  }
+}
+
 async function checkUpdates(silent) {
   const status = $('updateStatus');
   if (status && !silent) status.textContent = '正在检查…';
-  $('btnDownloadUpdate').hidden = true;
   try {
     const res = await bridge.checkUpdate();
     if (!res || !res.configured) {
@@ -773,15 +883,22 @@ async function checkUpdates(silent) {
       return;
     }
     state.updateInfo = res;
-    if (res.hasUpdate) {
-      if (status) status.textContent = `发现新版本 v${res.latest}${res.notes ? ' · ' + res.notes : ''}`;
-      $('btnDownloadUpdate').hidden = !(res.url || (res.mirrors && res.mirrors.length));
-      $('updateDot').hidden = false;
-      if (!silent) toast(`发现新版本 v${res.latest}`);
-    } else {
-      if (status) status.textContent = `已是最新版本 v${res.current}`;
-      $('updateDot').hidden = true;
+    if (!res.hasUpdate) {
+      state.updateDownload = { phase: 'idle', percent: 0, filePath: '', version: '' };
+      renderUpdateUI();
+      return;
     }
+    if (res.downloaded && res.downloadFilePath) {
+      state.updateDownload = { phase: 'ready', percent: 100, filePath: res.downloadFilePath, version: res.latest };
+      renderUpdateUI();
+    } else if (res.setupMirrors && res.setupMirrors.length) {
+      // 获取到新版本后在后台自动下载，下载完成后由用户点击安装
+      startUpdateDownload(res);
+    } else {
+      state.updateDownload = { phase: 'idle', percent: 0, filePath: '', version: '' };
+      renderUpdateUI();
+    }
+    if (!silent) toast(`发现新版本 v${res.latest}`);
   } catch (e) {
     if (status) status.textContent = '暂时无法连接更新服务，稍后会自动重试';
   }
@@ -793,13 +910,7 @@ function openSettings() {
   $('inputWeatherCity').value = state.weatherCity;
   $('weatherStatus').textContent = state.weatherCity || '自动定位';
   $('curVersionLabel').textContent = 'v' + state.version;
-  $('btnDownloadUpdate').hidden = !(state.updateInfo && state.updateInfo.hasUpdate && (state.updateInfo.url || (state.updateInfo.mirrors && state.updateInfo.mirrors.length)));
-  $('updateDot').hidden = !(state.updateInfo && state.updateInfo.hasUpdate);
-  if (state.updateInfo && state.updateInfo.ok) {
-    $('updateStatus').textContent = state.updateInfo.hasUpdate
-      ? `发现新版本 v${state.updateInfo.latest}`
-      : `已是最新版本 v${state.updateInfo.current}`;
-  }
+  renderUpdateUI();
   $('inputScale').value = String(state.petScale);
   $('scaleLabel').textContent = Math.round(state.petScale * 100) + '%';
   renderSkinGrid();
@@ -808,9 +919,58 @@ function openSettings() {
   $('settings').hidden = false;
 }
 
+/* ---------------- 首次配置 ---------------- */
+async function openOnboarding() {
+  if (state.mode === 'pet') {
+    try { await bridge.setPetMode(false); } catch (e) { /* 忽略 */ }
+  }
+  $('onboardDate').value = state.targetDate;
+  state.onboardAutoLaunch = state.autoLaunch;
+  setOnboardAutoLaunchUI(state.onboardAutoLaunch);
+  renderOnboardSubjects();
+  $('onboard').hidden = false;
+}
+
+function setOnboardAutoLaunchUI(on) {
+  const el = $('onboardAutoLaunch');
+  if (!el) return;
+  el.classList.toggle('on', !!on);
+  el.setAttribute('aria-pressed', String(!!on));
+}
+
+async function completeOnboarding() {
+  const v = $('onboardDate').value;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+    toast('请选择高考日期');
+    return;
+  }
+  state.targetDate = v;
+  try {
+    const res = await bridge.saveSettings({
+      targetDate: v,
+      selectedSubjects: state.selectedSubjects,
+      onboarded: true
+    });
+    if (res && Array.isArray(res.selectedSubjects)) state.selectedSubjects = res.selectedSubjects;
+  } catch (e) {
+    toast('保存失败，请重试');
+    return;
+  }
+  try {
+    const res = await bridge.setAutoLaunch(state.onboardAutoLaunch);
+    state.autoLaunch = !!(res && res.enabled);
+  } catch (e) { /* 忽略 */ }
+  state.onboarded = true;
+  $('onboard').hidden = true;
+  renderAll();
+  toast('配置完成，祝你每天都有好签');
+  setTimeout(() => {
+    if (!todayEntry()) showFirstDraw();
+  }, 500);
+}
+
 /* 知识点选科：九大学科最多选 6 科 */
-function renderSubjectGrid() {
-  const grid = $('subjectGrid');
+function renderSubjectChips(grid, countEl) {
   if (!grid) return;
   grid.innerHTML = '';
   const full = state.selectedSubjects.length >= 6;
@@ -824,7 +984,15 @@ function renderSubjectGrid() {
     btn.addEventListener('click', () => toggleSubject(s.id));
     grid.appendChild(btn);
   });
-  $('subjectCount').textContent = `已选 ${state.selectedSubjects.length} / 6`;
+  if (countEl) countEl.textContent = `已选 ${state.selectedSubjects.length} / 6`;
+}
+
+function renderSubjectGrid() {
+  renderSubjectChips($('subjectGrid'), $('subjectCount'));
+}
+
+function renderOnboardSubjects() {
+  renderSubjectChips($('onboardSubjects'), $('onboardSubjectCount'));
 }
 
 async function toggleSubject(id) {
@@ -843,11 +1011,15 @@ async function toggleSubject(id) {
     state.selectedSubjects.push(id);
   }
   renderSubjectGrid();
+  renderOnboardSubjects();
+  // 首次配置阶段先不落盘，点“完成配置”时统一保存
+  if (!$('onboard').hidden) return;
   try {
     const res = await bridge.saveSettings({ selectedSubjects: state.selectedSubjects });
     if (res && Array.isArray(res.selectedSubjects)) {
       state.selectedSubjects = res.selectedSubjects;
       renderSubjectGrid();
+      renderOnboardSubjects();
     }
     toast('科目选择已保存');
   } catch (e) {
@@ -1194,7 +1366,22 @@ function bindEvents() {
   $('btnDownloadUpdate').addEventListener('click', async () => {
     const info = state.updateInfo;
     if (!info) return;
+    const dl = state.updateDownload;
+    // 安装包已下载：退出应用并进入安装程序
+    if (dl.phase === 'ready' && dl.filePath) {
+      toast('即将退出程序并启动安装向导…');
+      const res = await bridge.installUpdate(dl.filePath);
+      if (!res || !res.ok) toast((res && res.error) || '无法启动安装程序');
+      return;
+    }
+    // 有安装包则继续后台下载
+    if (info.setupMirrors && info.setupMirrors.length) {
+      startUpdateDownload(info);
+      return;
+    }
+    // 没有安装包时退回浏览器下载
     const urls = [];
+    if (Array.isArray(info.portableMirrors)) urls.push(...info.portableMirrors);
     if (Array.isArray(info.mirrors)) urls.push(...info.mirrors);
     if (info.url) urls.push(info.url);
     if (!urls.length) {
@@ -1208,6 +1395,32 @@ function bindEvents() {
   $('repoLink').addEventListener('click', (e) => {
     e.preventDefault();
     bridge.openExternal('https://github.com/luoleiyong/gaokao-countdown');
+  });
+
+  // 连续点击版本号 5 次进入管理员模式
+  let versionClicks = 0;
+  let versionClickTimer = null;
+  $('curVersionLabel').addEventListener('click', () => {
+    versionClicks += 1;
+    clearTimeout(versionClickTimer);
+    versionClickTimer = setTimeout(() => { versionClicks = 0; }, 2500);
+    if (versionClicks >= 5) {
+      versionClicks = 0;
+      clearTimeout(versionClickTimer);
+      closeSettings();
+      bridge.openClassroomAdmin();
+      toast('正在进入管理员模式');
+    }
+  });
+
+  // 首次配置
+  $('onboardAutoLaunch').addEventListener('click', () => {
+    state.onboardAutoLaunch = !state.onboardAutoLaunch;
+    setOnboardAutoLaunchUI(state.onboardAutoLaunch);
+  });
+  $('btnOnboardDone').addEventListener('click', completeOnboarding);
+  $('onboardDate').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') completeOnboarding();
   });
 
   $('inputScale').addEventListener('input', (e) => {
@@ -1258,7 +1471,7 @@ function createMockBridge() {
     store = JSON.parse(localStorage.getItem(KEY) || 'null') || {};
   } catch (e) { store = {}; }
   store = Object.assign(
-    { targetDate: '2027-06-07', skin: 'board', petScale: 1, autoLaunch: false, history: [], lastLaunchDate: '', debugMode: false },
+    { targetDate: '2027-06-07', skin: 'board', petScale: 1, autoLaunch: false, history: [], lastLaunchDate: '', debugMode: false, onboarded: true },
     store
   );
   const today = dateKey();
@@ -1308,7 +1521,15 @@ function createMockBridge() {
     },
     checkUpdate: async () => ({ configured: true, ok: true, current: '1.0.0-dev', latest: '1.0.0-dev', hasUpdate: false }),
     downloadUpdate: async () => ({ ok: true }),
+    downloadUpdatePackage: async () => ({ ok: false, error: '浏览器预览不支持自动下载' }),
+    installUpdate: async () => ({ ok: false, error: '浏览器预览不支持安装' }),
+    onUpdateProgress: () => {},
+    onUpdateDownloaded: () => {},
+    onUpdateError: () => {},
     openClassroom: () => {
+      window.open('classroom.html', '_blank', 'width=1120,height=760');
+    },
+    openClassroomAdmin: () => {
       window.open('classroom.html', '_blank', 'width=1120,height=760');
     },
     openExternal: () => {},

@@ -1,5 +1,5 @@
 {
-  "version": "1.5.1",
-  "notes": "课堂助手（多名单点名、管理员密码、权重与次数、课程表导入）；版本更新支持国内镜像自动检测与下载",
+  "version": "1.6.0",
+  "notes": "新增安装包与用户协议、首次启动配置、后台自动下载更新、点名音效与姓名朗读；管理员入口移至版本号",
   "url": "https://github.com/luoleiyong/gaokao-countdown/releases/latest"
 }

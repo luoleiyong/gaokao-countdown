@@ -426,6 +426,90 @@ body[data-skin="bamboo"] .cd-num{color:var(--gold-deep);text-shadow:0 0 1px rgba
   content:"⌘";font-size:12px;color:var(--gold);
 }
 .repo-link:hover{color:var(--gold);border-color:rgba(217,182,74,.6);background:rgba(217,182,74,.06)}
+.setting__value--click{cursor:pointer;user-select:none}
+.setting__value--click:active{opacity:.7}
+
+/* 更新下载进度 */
+.update-progress{
+  position:relative;
+  height:22px;
+  margin-top:10px;
+  border-radius:999px;
+  border:1px solid var(--line);
+  background:var(--panel);
+  overflow:hidden;
+}
+.update-progress i{
+  display:block;
+  height:100%;
+  width:0;
+  background:linear-gradient(90deg,var(--gold-deep),var(--gold));
+  transition:width .25s ease;
+}
+.update-progress span{
+  position:absolute;inset:0;
+  display:grid;place-items:center;
+  font-size:10.5px;letter-spacing:.08em;color:var(--text);
+}
+
+/* 用户协议 */
+.setting--agreement{padding-bottom:10px}
+.agreement{
+  max-height:160px;
+  overflow-y:auto;
+  padding:10px 12px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:var(--panel);
+  font-size:11.5px;
+  line-height:1.75;
+  color:var(--dim);
+  user-select:text;
+}
+.agreement p + p{margin-top:6px}
+.agreement b{color:var(--gold);font-weight:500}
+
+/* 首次配置 */
+.onboard{
+  position:fixed;inset:0;z-index:70;
+  display:flex;align-items:center;justify-content:center;
+  padding:24px;
+  background:rgba(8,12,10,.72);
+  backdrop-filter:blur(6px);
+}
+.onboard__card{
+  display:flex;flex-direction:column;gap:16px;
+  width:min(560px,100%);
+  max-height:92vh;
+  overflow-y:auto;
+  padding:28px 28px 20px;
+  border-radius:22px;
+  border:1px solid var(--line-strong);
+  background:var(--bg-glass);
+  box-shadow:var(--shadow);
+  animation:onboardPop .3s ease-out;
+}
+@keyframes onboardPop{
+  from{transform:translateY(14px) scale(.985);opacity:0}
+  to{transform:none;opacity:1}
+}
+.onboard__seal{
+  display:grid;place-items:center;
+  width:46px;height:46px;border-radius:13px;
+  background:linear-gradient(155deg,#c8452f,var(--red) 60%,var(--red-deep));
+  color:#fff7ea;
+  font-family:var(--font-title);font-size:24px;
+  box-shadow:0 10px 24px rgba(120,30,30,.35), inset 0 1px 0 rgba(255,255,255,.25);
+}
+.onboard__title{font-family:var(--font-title);font-size:25px;font-weight:500;letter-spacing:.06em}
+.onboard__sub{font-size:12.5px;color:var(--dim);line-height:1.7;margin-top:-4px}
+.onboard__section{display:flex;flex-direction:column;gap:8px}
+.onboard__label{font-size:12.5px;letter-spacing:.1em;color:var(--dim);display:flex;align-items:center;justify-content:space-between}
+.onboard__count{font-size:11px;color:var(--faint);letter-spacing:.04em}
+.onboard__row{flex-direction:row;align-items:center;justify-content:space-between;gap:16px}
+.onboard__row > div{display:flex;flex-direction:column;gap:3px}
+.onboard__tip{text-align:center;font-size:11px;color:var(--faint);letter-spacing:.06em}
+.onboard .subject-grid{margin-top:2px}
 
 /* 节气红印章 */
 .term-stamp{

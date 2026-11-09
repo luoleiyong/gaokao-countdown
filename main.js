@@ -43,6 +43,7 @@ const STORE_DEFAULTS = {
   petScale: 1,
   autoLaunch: false,
   debugMode: false,
+  onboarded: false,
   history: [],
   lastLaunchDate: '',
   panelBounds: null,
@@ -66,6 +67,11 @@ let firstTodayLaunch = false;
 let petScale = 1;
 let panelBounds = null;
 let saveBoundsTimer = null;
+let updateTask = { version: '', filePath: '', downloading: false, done: false };
+
+function updateDir() {
+  return path.join(app.getPath('temp'), 'GaokaoCountdownUpdate');
+}
 
 /* ---------------- 存储 & 日志 ---------------- */
 function ensureDirs() {
@@ -1193,7 +1199,8 @@ function wireIpc() {
       updateUrl: store.updateUrl,
       weatherCity: store.weatherCity,
       selectedSubjects: store.selectedSubjects,
-      debugMode: !!store.debugMode
+      debugMode: !!store.debugMode,
+      onboarded: !!store.onboarded
     },
     isFirstToday: firstTodayLaunch,
     today: dateKey(),
@@ -1223,11 +1230,13 @@ function wireIpc() {
       const list = Array.from(new Set(patch.selectedSubjects.filter((id) => SUBJECT_IDS.includes(id)))).slice(0, 6);
       if (list.length) store.selectedSubjects = list;
     }
+    if (typeof patch.onboarded === 'boolean') store.onboarded = patch.onboarded;
     saveStore();
     appendLog('SETTINGS', { targetDate: store.targetDate, petScale });
     return {
       ok: true, targetDate: store.targetDate, skin: store.skin, petScale,
-      updateUrl: store.updateUrl, weatherCity: store.weatherCity, selectedSubjects: store.selectedSubjects
+      updateUrl: store.updateUrl, weatherCity: store.weatherCity, selectedSubjects: store.selectedSubjects,
+      onboarded: !!store.onboarded
     };
   });
 
@@ -1285,6 +1294,8 @@ function wireIpc() {
     let latest = '';
     let notes = '';
     let downloadUrl = '';
+    let setupUrl = '';
+    let portableUrl = '';
     let pageUrl = REPO_URL + '/releases/latest';
     let source = '';
 
@@ -1297,8 +1308,13 @@ function wireIpc() {
         notes = String(info.body || '').replace(/\s+/g, ' ').slice(0, 200);
         pageUrl = String(info.html_url || pageUrl);
         const assets = Array.isArray(info.assets) ? info.assets : [];
-        const exeAsset = assets.find((a) => /\.exe$/i.test(String(a.name || '')));
-        downloadUrl = exeAsset ? String(exeAsset.browser_download_url || '') : '';
+        const exeAssets = assets.filter((a) => /\.exe$/i.test(String(a.name || '')));
+        const setupAsset = exeAssets.find((a) => /setup|安装/i.test(String(a.name || '')));
+        const portableAsset = exeAssets.find((a) => /portable|便携/i.test(String(a.name || '')))
+          || exeAssets.find((a) => !/setup|安装/i.test(String(a.name || '')));
+        setupUrl = setupAsset ? String(setupAsset.browser_download_url || '') : '';
+        portableUrl = portableAsset ? String(portableAsset.browser_download_url || '') : '';
+        downloadUrl = setupUrl || portableUrl;
         source = from;
         return !!latest;
       };
@@ -1341,7 +1357,10 @@ function wireIpc() {
 
     const hasUpdate = versionCmp(latest, current) > 0;
     const mirrors = downloadUrl ? UPDATE_MIRRORS.map((prefix) => prefix + downloadUrl) : [];
-    appendLog('UPDATE_CHECK', { latest, current, hasUpdate, source });
+    const setupMirrors = setupUrl ? UPDATE_MIRRORS.map((prefix) => prefix + setupUrl).concat(setupUrl) : [];
+    const portableMirrors = portableUrl ? UPDATE_MIRRORS.map((prefix) => prefix + portableUrl).concat(portableUrl) : [];
+    const downloaded = !!(updateTask.done && updateTask.version === latest && updateTask.filePath && fs.existsSync(updateTask.filePath));
+    appendLog('UPDATE_CHECK', { latest, current, hasUpdate, source, setup: !!setupUrl });
     return {
       configured: true,
       ok: true,
@@ -1351,9 +1370,129 @@ function wireIpc() {
       url: downloadUrl || pageUrl,
       pageUrl,
       mirrors,
+      setupUrl,
+      portableUrl,
+      setupMirrors,
+      portableMirrors,
+      downloaded,
+      downloadFilePath: downloaded ? updateTask.filePath : '',
+      downloading: !!updateTask.downloading && updateTask.version === latest,
       hasUpdate,
       source
     };
+  });
+
+  /* 后台静默下载安装包，支持进度事件 */
+  const downloadUpdatePackage = async (sender, payload) => {
+    const version = String((payload && payload.version) || '').trim();
+    const urls = ((payload && payload.urls) || []).filter((u) => typeof u === 'string' && /^https?:\/\//i.test(u));
+    if (!version) return { ok: false, error: '缺少版本号' };
+    if (!urls.length) return { ok: false, error: '没有可用的下载地址' };
+    if (updateTask.downloading) {
+      return { ok: false, error: '正在下载中', downloading: true };
+    }
+    const dir = updateDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, `GaokaoCountdown-Setup-${version}.exe`);
+    if (fs.existsSync(filePath) && fs.statSync(filePath).size > 20 * 1024 * 1024) {
+      updateTask = { version, filePath, downloading: false, done: true };
+      return { ok: true, filePath, version, cached: true };
+    }
+
+    updateTask = { version, filePath, downloading: true, done: false };
+    const tmp = filePath + '.part';
+    let lastError = '下载失败';
+    for (const url of urls) {
+      try {
+        if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+        const res = await net.fetch(url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+        });
+        if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+        const total = Number(res.headers.get('content-length')) || 0;
+        const stream = fs.createWriteStream(tmp);
+        const reader = res.body.getReader();
+        let received = 0;
+        let sentAt = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = Buffer.from(value);
+          received += chunk.length;
+          stream.write(chunk);
+          if (sender && !sender.isDestroyed() && Date.now() - sentAt > 180) {
+            sentAt = Date.now();
+            sender.send('update:progress', {
+              version,
+              received,
+              total,
+              percent: total ? Math.min(99, Math.round((received / total) * 100)) : 0
+            });
+          }
+        }
+        await new Promise((resolve, reject) => {
+          stream.on('error', reject);
+          stream.end(() => resolve());
+        });
+        if (fs.statSync(tmp).size < 20 * 1024 * 1024) throw new Error('安装包大小异常');
+        fs.renameSync(tmp, filePath);
+        updateTask = { version, filePath, downloading: false, done: true };
+        if (sender && !sender.isDestroyed()) {
+          sender.send('update:downloaded', { version, filePath });
+        }
+        appendLog('UPDATE_DOWNLOADED', { version, size: fs.statSync(filePath).size });
+        return { ok: true, filePath, version };
+      } catch (e) {
+        lastError = e.message;
+        appendLog('UPDATE_DOWNLOAD_FAIL', { url, message: e.message });
+      }
+    }
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch { /* 忽略 */ }
+    updateTask = { version, filePath: '', downloading: false, done: false };
+    if (sender && !sender.isDestroyed()) sender.send('update:error', { version, error: lastError });
+    return { ok: false, error: lastError };
+  };
+
+  ipcMain.handle('app:update-download', (event, payload) => downloadUpdatePackage(event.sender, payload));
+
+  /* 点击安装：退出应用后启动安装程序，安装成功再清理旧的便携版与安装包 */
+  ipcMain.handle('app:install-update', (_e, filePath) => {
+    try {
+      const setup = String(filePath || updateTask.filePath || '');
+      if (!setup || !fs.existsSync(setup)) return { ok: false, error: '安装包不存在，请重新下载' };
+      const portable = process.env.PORTABLE_EXECUTABLE_FILE;
+      const oldPortable = portable && fs.existsSync(portable) ? path.resolve(portable) : '';
+      const dir = updateDir();
+      fs.mkdirSync(dir, { recursive: true });
+      const psPath = path.join(dir, 'apply-update.ps1');
+      const psQuote = (p) => "'" + String(p).replace(/'/g, "''") + "'";
+      const lines = [
+        'Start-Sleep -Seconds 2',
+        `$p = Start-Process -FilePath ${psQuote(setup)} -PassThru -Wait`,
+        'if ($p.ExitCode -eq 0) {'
+      ];
+      if (oldPortable && oldPortable.toLowerCase() !== path.resolve(setup).toLowerCase()) {
+        lines.push(`  if (Test-Path ${psQuote(oldPortable)}) { Remove-Item -LiteralPath ${psQuote(oldPortable)} -Force -ErrorAction SilentlyContinue }`);
+      }
+      lines.push(`  if (Test-Path ${psQuote(setup)}) { Remove-Item -LiteralPath ${psQuote(setup)} -Force -ErrorAction SilentlyContinue }`);
+      lines.push('}');
+      lines.push('Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue');
+      fs.writeFileSync(psPath, '\uFEFF' + lines.join('\r\n'), 'utf8');
+
+      const { spawn } = require('child_process');
+      const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', psPath], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true
+      });
+      child.unref();
+      appendLog('UPDATE_INSTALL', { setup, oldPortable });
+      setTimeout(() => quitApp(), 350);
+      return { ok: true };
+    } catch (e) {
+      appendLog('UPDATE_INSTALL_ERR', { message: e.message });
+      return { ok: false, error: e.message };
+    }
   });
 
   /* 下载更新：优先选择能连通的国内镜像，再交给系统浏览器打开 */
@@ -1446,6 +1585,24 @@ function wireIpc() {
 
   ipcMain.handle('classroom:open', () => {
     openClassroomWindow();
+    return { ok: true };
+  });
+
+  /* 从设置页版本号进入管理员模式 */
+  ipcMain.handle('classroom:open-admin', () => {
+    const notify = () => {
+      if (classroomWin && !classroomWin.isDestroyed()) classroomWin.webContents.send('admin:open');
+    };
+    if (classroomWin && !classroomWin.isDestroyed()) {
+      classroomWin.show();
+      classroomWin.focus();
+      setTimeout(notify, 220);
+    } else {
+      openClassroomWindow();
+      if (classroomWin && !classroomWin.isDestroyed()) {
+        classroomWin.webContents.once('did-finish-load', () => setTimeout(notify, 320));
+      }
+    }
     return { ok: true };
   });
   ipcMain.on('classroom:close', () => {

@@ -11,6 +11,11 @@ contextBridge.exposeInMainWorld('gaokao', {
   getWeather: () => ipcRenderer.invoke('weather:get'),
   checkUpdate: () => ipcRenderer.invoke('app:check-update'),
   downloadUpdate: (urls) => ipcRenderer.invoke('app:download-update', urls),
+  downloadUpdatePackage: (payload) => ipcRenderer.invoke('app:update-download', payload),
+  installUpdate: (filePath) => ipcRenderer.invoke('app:install-update', filePath),
+  onUpdateProgress: (cb) => ipcRenderer.on('update:progress', (_e, data) => cb(data)),
+  onUpdateDownloaded: (cb) => ipcRenderer.on('update:downloaded', (_e, data) => cb(data)),
+  onUpdateError: (cb) => ipcRenderer.on('update:error', (_e, data) => cb(data)),
   openExternal: (url) => ipcRenderer.invoke('app:open-url', url),
   saveImage: (dataUrl, name) => ipcRenderer.invoke('app:save-image', dataUrl, name),
   log: (event, detail) => ipcRenderer.send('app:log', event, detail),
@@ -19,6 +24,7 @@ contextBridge.exposeInMainWorld('gaokao', {
   openKnowledge: () => ipcRenderer.invoke('knowledge:open'),
   closeKnowledge: () => ipcRenderer.send('knowledge:close'),
   openClassroom: () => ipcRenderer.invoke('classroom:open'),
+  openClassroomAdmin: () => ipcRenderer.invoke('classroom:open-admin'),
   closeClassroom: () => ipcRenderer.send('classroom:close'),
   petMenu: () => ipcRenderer.send('pet:menu'),
   hideToTray: () => ipcRenderer.send('window:hide'),
@@ -57,5 +63,6 @@ contextBridge.exposeInMainWorld('gaokao', {
   classroomSaveTimetable: (timetable) => ipcRenderer.invoke('classroom:save-timetable', timetable),
   classroomParseSheet: (filePath) => ipcRenderer.invoke('classroom:parse-sheet', filePath),
   adminSetDebug: (on) => ipcRenderer.invoke('admin:set-debug', on),
-  adminTriggerDraw: () => ipcRenderer.invoke('admin:trigger-draw')
+  adminTriggerDraw: () => ipcRenderer.invoke('admin:trigger-draw'),
+  onAdminOpen: (cb) => ipcRenderer.on('admin:open', () => cb())
 });

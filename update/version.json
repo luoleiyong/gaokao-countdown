@@ -1,5 +1,5 @@
 {
-  "version": "1.5.0",
-  "notes": "新增课堂助手：多名单随机点名、名单导入、管理员模式、权重与次数管理、课程表一键导入；版本更新支持国内镜像加速与自动检测",
+  "version": "1.5.1",
+  "notes": "课堂助手（多名单点名、管理员密码、权重与次数、课程表导入）；版本更新支持国内镜像自动检测与下载",
   "url": "https://github.com/luoleiyong/gaokao-countdown/releases/latest"
 }

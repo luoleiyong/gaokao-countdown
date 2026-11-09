@@ -28,7 +28,9 @@ const DEFAULT_SUBJECTS = ['chinese', 'math', 'english', 'physics', 'chemistry', 
 const REPO_URL = 'https://github.com/luoleiyong/gaokao-countdown';
 const DEFAULT_UPDATE_URL = REPO_URL;
 /* 国内加速下载前缀：拼接在 GitHub 资源直链前面 */
-const UPDATE_MIRRORS = ['https://ghproxy.net/', 'https://gh-proxy.com/', 'https://ghfast.top/'];
+const UPDATE_MIRRORS = ['https://gh-proxy.com/', 'https://ghproxy.net/'];
+/* GitHub API 被墙时的镜像前缀（同样拼接完整 API 地址） */
+const UPDATE_API_MIRRORS = ['https://gh-proxy.com/', 'https://ghproxy.net/'];
 /* GitHub API 不可达时的更新清单兜底（jsDelivr 国内可直连） */
 const UPDATE_MANIFESTS = [
   'https://cdn.jsdelivr.net/gh/luoleiyong/gaokao-countdown@master/update/version.json',
@@ -1288,24 +1290,34 @@ function wireIpc() {
 
     const gh = parseGitHubRepo(store.updateUrl || DEFAULT_UPDATE_URL);
     if (gh) {
+      const api = 'https://api.github.com/repos/' + gh.owner + '/' + gh.repo + '/releases/latest';
+      const readRelease = (info, from) => {
+        if (!info || !info.tag_name) return false;
+        latest = String(info.tag_name).replace(/^v/i, '').trim();
+        notes = String(info.body || '').replace(/\s+/g, ' ').slice(0, 200);
+        pageUrl = String(info.html_url || pageUrl);
+        const assets = Array.isArray(info.assets) ? info.assets : [];
+        const exeAsset = assets.find((a) => /\.exe$/i.test(String(a.name || '')));
+        downloadUrl = exeAsset ? String(exeAsset.browser_download_url || '') : '';
+        source = from;
+        return !!latest;
+      };
       try {
-        const api = 'https://api.github.com/repos/' + gh.owner + '/' + gh.repo + '/releases/latest';
-        const info = await fetchJson(api, 9000);
-        if (info && info.tag_name) {
-          latest = String(info.tag_name).replace(/^v/i, '').trim();
-          notes = String(info.body || '').replace(/\s+/g, ' ').slice(0, 200);
-          pageUrl = String(info.html_url || pageUrl);
-          const assets = Array.isArray(info.assets) ? info.assets : [];
-          const exeAsset = assets.find((a) => /\.exe$/i.test(String(a.name || '')));
-          downloadUrl = exeAsset ? String(exeAsset.browser_download_url || '') : '';
-          source = 'github';
-        }
+        readRelease(await fetchJson(api, 9000), 'github');
       } catch (e) {
         appendLog('UPDATE_API_FAIL', { message: e.message });
       }
+      // 直连 GitHub API 失败时，走国内镜像代理再试
+      if (!latest) {
+        for (const prefix of UPDATE_API_MIRRORS) {
+          try {
+            if (readRelease(await fetchJson(prefix + api, 9000), 'mirror')) break;
+          } catch { /* 换下一个镜像 */ }
+        }
+      }
     }
 
-    // GitHub 不可达时改用 jsDelivr 更新清单，保证国内也能检测到新版本
+    // GitHub 与镜像都不可达时，改用 jsDelivr 更新清单
     if (!latest) {
       for (const manifest of UPDATE_MANIFESTS) {
         try {

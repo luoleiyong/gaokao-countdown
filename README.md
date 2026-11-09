@@ -95,8 +95,8 @@
 
 - 应用启动后会自动检测更新，此后每 6 小时静默检查一次
 - 更新源固定为项目仓库的 Latest Release，无需手动填写地址
-- GitHub API 不可达时，会通过 jsDelivr CDN 读取版本清单
-- 下载新版本时优先使用国内加速镜像（ghproxy.net / gh-proxy.com / ghfast.top），自动探测可用线路
+- 下载新版本时优先使用国内加速镜像（gh-proxy.com / ghproxy.net），自动探测可用线路
+- GitHub API 不可达时，会通过镜像代理或 jsDelivr CDN 检测版本
 - 发布新版本只需：更新版本号 → 打包 → 创建 Release 并上传 exe
 
 ## 开发与构建

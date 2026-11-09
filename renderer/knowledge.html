@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';" />
+<title>学科知识签</title>
+<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="knowledge.css" />
+</head>
+<body data-skin="board">
+<div class="k-app">
+  <div class="k-shell">
+    <div class="liquid-bg" aria-hidden="true">
+      <i class="liquid-bg__blob liquid-bg__blob--a"></i>
+      <i class="liquid-bg__blob liquid-bg__blob--b"></i>
+      <i class="liquid-bg__blob liquid-bg__blob--c"></i>
+      <i class="liquid-bg__shine"></i>
+    </div>
+    <header class="k-topbar">
+      <div class="brand">
+        <span class="brand__seal">知</span>
+        <span class="brand__text">
+          <span class="brand__name">学科知识签</span>
+          <span class="brand__sub">语 · 数 · 英 · 日 · 理 · 化 · 生 · 政 · 史 · 地 · 不限次数</span>
+        </span>
+      </div>
+      <div class="win-actions">
+        <button class="win-btn" id="kClose" title="关闭知识签窗口">×</button>
+      </div>
+    </header>
+
+    <div class="k-body">
+      <aside class="k-side">
+        <div class="k-side__title">科 目</div>
+        <div class="k-subjects" id="kSubjects"></div>
+        <div class="k-side__foot">
+          题库共 <b id="kTotal">0</b> 条<br />
+          已抽 <b id="kTotalDrawn">0</b> 次 · 不重复抽取
+        </div>
+      </aside>
+
+      <main class="k-main">
+        <div class="k-toolbar">
+          <div class="k-stat">
+            剩余 <b id="kPoolCount">0</b> 条 · 已抽 <b id="kDrawCount">0</b> 次
+          </div>
+          <div class="k-actions">
+            <button class="btn-primary" id="kDraw10">十 连 抽</button>
+            <button class="btn-primary" id="kDraw">摇 一 签</button>
+          </div>
+        </div>
+
+        <div class="k-bell-row">
+          <div class="windbell" id="kWindbell" aria-hidden="true">
+            <i class="windbell__line"></i>
+            <span class="windbell__cap"></span>
+            <span class="windbell__tube"></span>
+            <span class="windbell__plate">知</span>
+          </div>
+        </div>
+
+        <div class="k-stage">
+          <div class="k-empty" id="kEmpty">
+            <div class="k-seal">知</div>
+            <p>每一次抽取，都是一次查漏补缺。</p>
+            <span>选好科目，摇一签，看看今天抽到哪一条。</span>
+          </div>
+
+          <div class="k-sign" id="kSign" hidden>
+            <div class="k-sign__top">
+              <span class="k-subject-badge" id="kSubjectBadge">物理</span>
+              <span class="k-sign__no" id="kNo">—</span>
+            </div>
+            <div class="k-sign__title" id="kTitle">—</div>
+            <div class="k-sign__desc" id="kDesc">—</div>
+            <div class="k-sign__formula" id="kFormula" hidden></div>
+            <div class="k-sign__error" id="kError" hidden><span>易错</span><b id="kErrorText">—</b></div>
+            <div class="k-sign__tip" id="kTipRow"><span>技巧</span><b id="kTip">—</b></div>
+            <div class="k-sign__seal">已 阅</div>
+          </div>
+
+          <div class="k-batch" id="kBatch" hidden>
+            <div class="k-batch__head">
+              十连签 · <span id="kBatchCount">0</span> 条
+              <em>点击任意一条可看详情</em>
+            </div>
+            <div class="k-batch__list" id="kBatchList"></div>
+          </div>
+        </div>
+
+        <section class="k-history">
+          <div class="k-history__head">本次签缘 <span id="kHistCount">0</span></div>
+          <div class="k-history__list" id="kHistList"></div>
+        </section>
+      </main>
+    </div>
+  </div>
+</div>
+
+<script src="knowledge-1.js"></script>
+<script src="knowledge-2.js"></script>
+<script src="knowledge-3.js"></script>
+<script src="knowledge-4.js"></script>
+<script src="knowledge-5.js"></script>
+<script src="knowledge-6.js"></script>
+<script src="knowledge-7.js"></script>
+<script src="knowledge-8.js"></script>
+<script src="knowledge-9.js"></script>
+<script src="knowledge-10.js"></script>
+<script src="knowledge-extra.js"></script>
+<script src="sound.js"></script>
+<script src="knowledge.js"></script>
+</body>
+</html>

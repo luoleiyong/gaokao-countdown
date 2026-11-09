@@ -1,0 +1,37 @@
+{
+  "name": "gaokao-countdown",
+  "version": "1.4.0",
+  "description": "高考倒计时 · 每日幸运签 · 桌面宠物（Windows）",
+  "main": "main.js",
+  "author": "Trae",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win portable nsis"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.trae.gaokao.countdown",
+    "productName": "高考倒计时",
+    "compression": "normal",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "build/icon.png"
+    ],
+    "win": {
+      "target": ["portable", "nsis"],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "高考倒计时"
+    }
+  }
+}

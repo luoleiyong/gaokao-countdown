@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';" />
+<title>高考倒计时</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body data-skin="board" data-mode="panel">
+<div class="app" id="app">
+
+  <!-- ======================= 主面板 ======================= -->
+  <div class="panel-view" id="panelView">
+    <div class="liquid-bg" aria-hidden="true">
+      <i class="liquid-bg__blob liquid-bg__blob--a"></i>
+      <i class="liquid-bg__blob liquid-bg__blob--b"></i>
+      <i class="liquid-bg__blob liquid-bg__blob--c"></i>
+      <i class="liquid-bg__shine"></i>
+    </div>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand__seal">签</span>
+        <span class="brand__text">
+          <span class="brand__name">高考倒计时</span>
+          <span class="brand__sub">每日一签 · 陪你到六月</span>
+        </span>
+      </div>
+      <div class="win-actions">
+        <button class="win-btn" id="btnPet" title="桌面宠物模式">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 12.4c2.6 0 4.6 1.9 4.6 4.2 0 1.7-1.3 2.6-2.7 2.6-.9 0-1.3-.4-1.9-.4s-1 .4-1.9.4c-1.4 0-2.7-.9-2.7-2.6 0-2.3 2-4.2 4.6-4.2Z"/>
+            <path d="M5.4 10.2c-.9-.6-1.6-1.7-1.5-2.7.1-1 .9-1.6 1.7-1.3.8.2 1.3 1 1.3 2 0 .7-.1 1.4-.5 1.9"/>
+            <path d="M18.6 10.2c.9-.6 1.6-1.7 1.5-2.7-.1-1-.9-1.6-1.7-1.3-.8.2-1.3 1-1.3 2 0 .7.1 1.4.5 1.9"/>
+            <path d="M9.2 8.4c-.6-.8-.8-1.9-.3-2.6.5-.7 1.5-.6 2.3.3.5.6.7 1.4.5 2.1"/>
+            <path d="M14.8 8.4c.6-.8.8-1.9.3-2.6-.5-.7-1.5-.6-2.3.3-.5.6-.7 1.4-.5 2.1"/>
+          </svg>
+        </button>
+        <button class="win-btn win-btn--settings" id="btnSettings" title="设置">设置<span class="update-dot" id="updateDot" hidden></span></button>
+        <button class="win-btn" id="btnHide" title="隐藏到托盘，右键托盘图标可退出">—</button>
+        <button class="win-btn win-btn--close" id="btnClose" title="收进桌面宠物">×</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="countdown">
+        <div class="cd-eyebrow" id="eyebrow">—— 致正在赶路的你 ——</div>
+        <div class="cd-title">距离高考</div>
+        <div class="cd-num-row">
+          <span class="cd-num" id="daysNum">--</span>
+          <span class="cd-unit">天</span>
+          <div class="weather-card" id="weatherCard" role="button" tabindex="0" title="点击查看未来三天天气与建议" hidden>
+            <div class="weather-card__head">
+              <span id="weatherCity">—</span>
+              <span class="weather-card__now"><b id="weatherNowTemp">—</b><em id="weatherNowDesc">—</em></span>
+            </div>
+            <div class="weather-card__days" id="weatherDays"></div>
+          </div>
+        </div>
+        <div class="cd-clock"><span id="clock">-- : -- : --</span></div>
+        <div class="cd-target" id="targetLabel">—</div>
+
+        <div class="progress">
+          <div class="progress__head">
+            <span>备考进度</span>
+            <span id="progressText">—</span>
+          </div>
+          <div class="progress__bar"><i id="progressFill"></i></div>
+          <div class="progress__foot">
+            <span id="startLabel">—</span>
+            <span id="endLabel">六月七日</span>
+          </div>
+        </div>
+
+        <div class="cd-actions">
+          <button class="btn-primary" id="btnDraw">开启今日幸运签</button>
+          <button class="btn-ghost" id="btnKnowledge">学科知识签</button>
+          <button class="btn-ghost" id="btnTerm">二十四节气签</button>
+          <button class="btn-ghost" id="btnViewToday" hidden>查看今日签</button>
+        </div>
+        <div class="milestone" id="milestone" hidden></div>
+      </section>
+
+      <aside class="sidebar">
+        <section class="today-card" id="todayCard">
+          <div class="today-card__head">
+            <span class="today-card__tag">今日签</span>
+            <span class="today-card__date" id="todayDate">—</span>
+          </div>
+
+          <div class="today-card__body">
+            <div class="today-empty" id="todayEmpty">
+              <div class="mini-tube"><span>签</span></div>
+              <p>今日签 · 待抽取</p>
+              <button class="btn-primary btn-small" id="btnDrawSide">摇 一 签</button>
+            </div>
+            <div class="today-sign" id="todaySign" hidden>
+              <div class="today-sign__top">
+                <span class="sign-level" id="signLevel">上上签</span>
+                <span class="sign-no" id="signNo">第 1 签</span>
+              </div>
+              <div class="sign-poem" id="signPoem">—</div>
+              <div class="sign-wish" id="signWish">—</div>
+              <div class="sign-foot">
+                <span class="sign-tag" id="signTag">学业</span>
+                <span class="term-stamp" id="signTermStamp" hidden>节气</span>
+                <button class="link-btn" id="btnSaveCard2">存为图片</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="today-card__foot">
+            <span id="openCount">已开启 0 / 280</span>
+            <span id="waitCount">待开启 280</span>
+          </div>
+        </section>
+
+        <section class="history">
+          <div class="history__head">
+            <h3>签运簿</h3>
+            <span id="historyCount">0 条</span>
+          </div>
+          <div class="history__list" id="historyList"></div>
+          <div class="history__empty" id="historyEmpty">还没有开启过幸运签</div>
+        </section>
+      </aside>
+    </main>
+
+    <footer class="foot">
+      <span>每天仅可开启一签 · 依倒计时天数落签 · 共 280 签</span>
+      <span id="versionLabel">v1.0.0</span>
+    </footer>
+  </div>
+
+  <!-- ======================= 桌面宠物 ======================= -->
+  <div class="pet-view" id="petView" hidden>
+    <div class="pet-clip"><i></i></div>
+    <div class="pet-card">
+      <div class="liquid-bg liquid-bg--pet" aria-hidden="true">
+        <i class="liquid-bg__blob liquid-bg__blob--a"></i>
+        <i class="liquid-bg__blob liquid-bg__blob--c"></i>
+        <i class="liquid-bg__shine"></i>
+      </div>
+      <div class="pet-top">
+        <span class="pet-label">距离高考</span>
+      </div>
+      <div class="pet-day">
+        <span id="petDays">--</span><em>天</em>
+        <div class="pet-weather-mini" id="petWeatherMini" hidden>
+          <span class="pet-weather-mini__temp" id="petTemp">—</span>
+          <span id="petDesc">—</span>
+          <span id="petHighLow">—</span>
+        </div>
+      </div>
+      <div class="pet-date" id="petTarget">—</div>
+      <div class="pet-sep"></div>
+      <div class="pet-sign">
+        <span class="pet-sign__level" id="petSignLevel">今日签 · 待开启</span>
+        <span class="pet-sign__poem" id="petSignPoem">摇一签，看看今天的气运</span>
+      </div>
+      <div class="pet-actions">
+        <button data-pet-act="minus" title="缩小">−</button>
+        <button data-pet-act="plus" title="放大">＋</button>
+        <button data-pet-act="panel" title="回到主界面">▣</button>
+        <button data-pet-act="menu" title="更多">⋯</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= 抽签仪式 ======================= -->
+  <div class="modal" id="drawModal" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__box draw-box">
+      <div class="windbell" id="windbell" aria-hidden="true">
+        <i class="windbell__line"></i>
+        <span class="windbell__cap"></span>
+        <span class="windbell__tube"></span>
+        <span class="windbell__plate">签</span>
+      </div>
+      <div class="draw-stage" id="drawStage">
+        <div class="tube" id="tube">
+          <div class="tube__sticks"><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="tube__body"><span>签</span></div>
+        </div>
+        <p class="draw-hint" id="drawHint">静心，凝神，摇一签</p>
+      </div>
+
+      <div class="draw-result" id="drawResult" hidden>
+        <div class="sign-sheet">
+          <div class="sign-sheet__ribbon" id="resLevel">上上签</div>
+          <span class="term-stamp term-stamp--result" id="resTermStamp" hidden>节气</span>
+          <div class="sign-sheet__no" id="resNo">第 1 签</div>
+          <div class="sign-sheet__poem" id="resPoem">—</div>
+          <div class="sign-sheet__wish" id="resWish">—</div>
+          <div class="sign-sheet__meta">
+            <span id="resTag">学业</span>
+            <span id="resDays">距高考 280 天</span>
+          </div>
+          <div class="sign-sheet__seal">今日<br>已启</div>
+        </div>
+        <div class="draw-result__actions">
+          <button class="btn-ghost" id="btnSaveCard">保存签卡</button>
+          <button class="btn-primary" id="btnDrawDone">收下这一签</button>
+        </div>
+      </div>
+
+      <button class="btn-primary" id="btnShake">摇 一 签</button>
+    </div>
+  </div>
+
+  <!-- ======================= 二十四节气签 ======================= -->
+  <div class="modal" id="termModal" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__box term-box">
+      <div class="term-head">
+        <span class="term-name" id="termName">—</span>
+        <span class="term-date" id="termDate">—</span>
+      </div>
+      <div class="term-poem" id="termPoem">—</div>
+      <div class="term-wish" id="termWish">—</div>
+      <div class="term-idea" id="termIdea">—</div>
+      <div class="term-nav" id="termNav">—</div>
+      <div class="term-actions">
+        <button class="btn-ghost" id="btnTermRandom">换一支节气签</button>
+        <button class="btn-primary" id="btnTermClose">收下</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= 天气详情 ======================= -->
+  <div class="modal" id="weatherModal" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__box weather-box">
+      <div class="weather-box__head">
+        <div class="weather-box__title">
+          <span class="weather-box__city" id="wCity">—</span>
+          <span class="weather-box__meta" id="wMeta">—</span>
+        </div>
+        <div class="weather-box__now">
+          <b id="wTemp">—</b>
+          <span id="wDesc">—</span>
+        </div>
+      </div>
+      <div class="weather-box__days" id="wDays"></div>
+      <div class="weather-box__advice">
+        <div class="weather-box__advice-head">天气建议</div>
+        <ul class="weather-box__advice-list" id="wAdvice"></ul>
+      </div>
+      <div class="weather-box__foot">
+        <span id="wUpdated">—</span>
+        <button class="btn-primary btn-small" id="btnWeatherClose">知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= 每日首抽 · 全屏引导 ======================= -->
+  <div class="first-draw" id="firstDraw" hidden>
+    <div class="first-draw__glow"></div>
+    <button class="first-draw__skip" id="btnFirstSkip">跳过今天抽签</button>
+    <div class="first-draw__content">
+      <div class="windbell windbell--big" id="firstBell" aria-hidden="true">
+        <i class="windbell__line"></i>
+        <span class="windbell__cap"></span>
+        <span class="windbell__tube"></span>
+        <span class="windbell__plate">今 日</span>
+      </div>
+      <p class="first-draw__eyebrow">今日签 · 等你开启</p>
+      <h2 class="first-draw__title">点击任意位置，摇出今日签</h2>
+      <p class="first-draw__sub">轻点一下，听听今天会落哪一签</p>
+    </div>
+  </div>
+
+  <!-- ======================= 设置 ======================= -->
+  <div class="settings" id="settings" hidden>
+    <div class="settings__backdrop" id="settingsBackdrop"></div>
+    <aside class="settings__panel">
+      <header class="settings__head">
+        <h2>设置</h2>
+        <button class="win-btn" id="btnCloseSettings" title="关闭">×</button>
+      </header>
+      <div class="settings__body">
+        <section class="setting">
+          <label class="setting__label">高考日期</label>
+          <input type="date" id="inputTarget" class="input" />
+          <p class="hint">倒计时按所选日期的零点计算，保存后立即生效。</p>
+        </section>
+
+        <section class="setting setting--row">
+          <div>
+            <label class="setting__label">开机自动启动</label>
+            <p class="hint">开机后以桌面宠物形式出现在桌面。</p>
+          </div>
+          <button class="switch" id="switchAutoLaunch" aria-pressed="false"><i></i></button>
+        </section>
+
+        <section class="setting">
+          <label class="setting__label">皮肤</label>
+          <div class="skin-grid" id="skinGrid"></div>
+        </section>
+
+        <section class="setting">
+          <label class="setting__label">宠物大小 <span class="setting__value" id="scaleLabel">100%</span></label>
+          <input type="range" id="inputScale" min="0.8" max="1.6" step="0.1" />
+        </section>
+
+        <section class="setting">
+          <label class="setting__label">桌面宠物</label>
+          <button class="btn-ghost btn-wide" id="btnEnterPet">进入桌面宠物模式</button>
+          <p class="hint">宠物贴在桌面层，打开其他程序时不会挡在最前面。</p>
+        </section>
+
+        <section class="setting">
+          <label class="setting__label">知识点科目 <span class="setting__value" id="subjectCount">已选 6 / 6</span></label>
+          <p class="hint">十门学科中最多选择 6 科（英语、日语分开），知识签只展示所选科目。</p>
+          <div class="subject-grid" id="subjectGrid"></div>
+        </section>
+
+        <section class="setting">
+          <label class="setting__label">天气 <span class="setting__value" id="weatherStatus">自动定位</span></label>
+          <p class="hint">留空自动定位；也可填写中文城市名（如 杭州）或中国天气网城市代码。</p>
+          <input class="input" id="inputWeatherCity" placeholder="留空自动定位" />
+          <button class="btn-ghost btn-wide setting-action" id="btnWeatherRefresh">刷新天气</button>
+        </section>
+
+        <section class="setting">
+          <label class="setting__label">版本与更新 <span class="setting__value" id="curVersionLabel">v1.0.0</span></label>
+          <p class="hint" id="updateStatus">未检查更新</p>
+          <input class="input" id="inputUpdateUrl" placeholder="GitHub 仓库地址或 version.json 直链" />
+          <button class="btn-ghost btn-wide setting-action" id="btnCheckUpdate">检查更新</button>
+          <button class="btn-primary btn-wide setting-action" id="btnDownloadUpdate" hidden>下载新版本</button>
+          <p class="hint">支持填写 GitHub 仓库地址（如 https://github.com/你的名字/仓库名，自动读取 Latest Release），或 version.json 清单直链。发布新 Release 后即可在这里检查并下载。</p>
+        </section>
+
+        <section class="setting">
+          <label class="setting__label">调试</label>
+          <div class="setting--row">
+            <div>
+              <p class="hint">开启后可预览每日首抽与抽签动画，不影响真实抽签记录。</p>
+            </div>
+            <button class="switch" id="switchDebug" aria-pressed="false"><i></i></button>
+          </div>
+          <button class="btn-ghost btn-wide debug-btn" id="btnDebugDraw" hidden>触发每日抽签动画</button>
+        </section>
+
+        <section class="setting">
+          <label class="setting__label">启动日志</label>
+          <p class="hint">每天启动时若今日签尚未抽取，会出现全屏首抽引导；也可右上角跳过后在主页抽取。</p>
+          <pre class="logs" id="logsBox">—</pre>
+        </section>
+
+        <section class="setting">
+          <label class="setting__label">数据</label>
+          <button class="btn-danger" id="btnClearHistory">清空签运簿</button>
+        </section>
+
+        <section class="setting setting--author">
+          <label class="setting__label">联系作者</label>
+          <p class="author-mail" id="authorMail">3270423617@qq.com</p>
+        </section>
+      </div>
+      <footer class="settings__foot">
+        <button class="btn-ghost" id="btnQuit">退出程序</button>
+        <button class="btn-primary" id="btnSettingsDone">完成</button>
+      </footer>
+    </aside>
+  </div>
+
+  <!-- ======================= 高考当天 · 全签点亮彩蛋 ======================= -->
+  <div class="egg" id="egg" hidden>
+    <div class="egg__glow"></div>
+    <div class="egg__card">
+      <div class="egg__seal">全</div>
+      <p class="egg__eyebrow">280 签 · 全部点亮</p>
+      <h2 class="egg__title">今日，去赴那场笃定的约</h2>
+      <p class="egg__sub">从第一支签到最后一支签，每一页都算数。</p>
+      <div class="egg__stars">✦ ✦ ✦ ✦ ✦ ✦ ✦</div>
+      <button class="btn-primary" id="btnEggClose">收下这份笃定</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+</div>
+<script src="sound.js"></script>
+<script src="solar-terms.js"></script>
+<script src="signs.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

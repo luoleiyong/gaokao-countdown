@@ -1,5 +1,5 @@
 {
-  "version": "1.6.0",
-  "notes": "新增安装包与用户协议、首次启动配置、后台自动下载更新、点名音效与姓名朗读；管理员入口移至版本号",
+  "version": "1.6.1",
+  "notes": "安装包与用户协议、首次启动配置、后台自动下载更新、点名音效与姓名朗读；优化安装完成后的旧程序清理",
   "url": "https://github.com/luoleiyong/gaokao-countdown/releases/latest"
 }

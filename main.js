@@ -52,6 +52,7 @@ const STORE_DEFAULTS = {
   weatherCity: '',
   weatherCache: null,
   selectedSubjects: DEFAULT_SUBJECTS.slice(),
+  pendingCleanup: [],
   classroom: null
 };
 
@@ -188,6 +189,9 @@ function loadStore() {
     merged.selectedSubjects = normalizeSubjects(merged.selectedSubjects);
     merged.classroom = normalizeClassroom(data.classroom);
     merged.debugMode = !!merged.debugMode;
+    merged.pendingCleanup = Array.isArray(data.pendingCleanup)
+      ? data.pendingCleanup.filter((p) => typeof p === 'string' && p.trim()).slice(0, 8)
+      : [];
     // 更新源固定为项目仓库，避免旧配置残留
     merged.updateUrl = DEFAULT_UPDATE_URL;
     return merged;
@@ -214,6 +218,27 @@ function appendLog(event, detail) {
     const line = `[${new Date().toISOString()}] ${event} ${JSON.stringify(detail || {})}\n`;
     fs.appendFileSync(LOG_FILE, line, 'utf8');
   } catch { /* 忽略 */ }
+}
+
+/* 新版本首次启动时清理旧便携版与安装包（安装成功后才可能执行成功） */
+function runPendingCleanup() {
+  const list = Array.isArray(store.pendingCleanup) ? store.pendingCleanup : [];
+  if (!list.length) return;
+  const selfPaths = [process.execPath];
+  if (process.env.PORTABLE_EXECUTABLE_FILE) selfPaths.push(process.env.PORTABLE_EXECUTABLE_FILE);
+  const selfSet = new Set(selfPaths.filter(Boolean).map((p) => path.resolve(p).toLowerCase()));
+  list.forEach((p) => {
+    try {
+      const rp = path.resolve(p);
+      if (selfSet.has(rp.toLowerCase())) return;
+      if (fs.existsSync(rp)) {
+        fs.unlinkSync(rp);
+        appendLog('UPDATE_CLEANUP', { file: rp });
+      }
+    } catch { /* 文件被占用时下次再试 */ }
+  });
+  store.pendingCleanup = [];
+  saveStore();
 }
 function readLogs(limit = 40) {
   try {
@@ -1455,39 +1480,23 @@ function wireIpc() {
 
   ipcMain.handle('app:update-download', (event, payload) => downloadUpdatePackage(event.sender, payload));
 
-  /* 点击安装：退出应用后启动安装程序，安装成功再清理旧的便携版与安装包 */
-  ipcMain.handle('app:install-update', (_e, filePath) => {
+  /* 点击安装：交给系统启动安装程序，退出应用；新版本首次启动时清理旧程序 */
+  ipcMain.handle('app:install-update', async (_e, filePath) => {
     try {
       const setup = String(filePath || updateTask.filePath || '');
       if (!setup || !fs.existsSync(setup)) return { ok: false, error: '安装包不存在，请重新下载' };
       const portable = process.env.PORTABLE_EXECUTABLE_FILE;
       const oldPortable = portable && fs.existsSync(portable) ? path.resolve(portable) : '';
-      const dir = updateDir();
-      fs.mkdirSync(dir, { recursive: true });
-      const psPath = path.join(dir, 'apply-update.ps1');
-      const psQuote = (p) => "'" + String(p).replace(/'/g, "''") + "'";
-      const lines = [
-        'Start-Sleep -Seconds 2',
-        `$p = Start-Process -FilePath ${psQuote(setup)} -PassThru -Wait`,
-        'if ($p.ExitCode -eq 0) {'
-      ];
-      if (oldPortable && oldPortable.toLowerCase() !== path.resolve(setup).toLowerCase()) {
-        lines.push(`  if (Test-Path ${psQuote(oldPortable)}) { Remove-Item -LiteralPath ${psQuote(oldPortable)} -Force -ErrorAction SilentlyContinue }`);
-      }
-      lines.push(`  if (Test-Path ${psQuote(setup)}) { Remove-Item -LiteralPath ${psQuote(setup)} -Force -ErrorAction SilentlyContinue }`);
-      lines.push('}');
-      lines.push('Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue');
-      fs.writeFileSync(psPath, '\uFEFF' + lines.join('\r\n'), 'utf8');
+      store.pendingCleanup = Array.from(new Set([oldPortable, setup].filter(Boolean)));
+      saveStore();
 
-      const { spawn } = require('child_process');
-      const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', psPath], {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true
-      });
-      child.unref();
-      appendLog('UPDATE_INSTALL', { setup, oldPortable });
-      setTimeout(() => quitApp(), 350);
+      const openError = await shell.openPath(setup);
+      appendLog('UPDATE_INSTALL', { setup, oldPortable, openError });
+      if (openError) {
+        const { spawn } = require('child_process');
+        spawn(setup, [], { detached: true, stdio: 'ignore' }).unref();
+      }
+      setTimeout(() => quitApp(), 800);
       return { ok: true };
     } catch (e) {
       appendLog('UPDATE_INSTALL_ERR', { message: e.message });
@@ -1819,6 +1828,7 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     ensureDirs();
+    runPendingCleanup();
     const today = dateKey();
     firstTodayLaunch = store.lastLaunchDate !== today;
     store.lastLaunchDate = today;

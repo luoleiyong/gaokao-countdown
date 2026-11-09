@@ -21,6 +21,7 @@ const SKINS = [
 ];
 const SUBJECT_IDS = ['chinese', 'math', 'english', 'japanese', 'physics', 'chemistry', 'biology', 'politics', 'history', 'geography'];
 const DEFAULT_SUBJECTS = ['chinese', 'math', 'english', 'physics', 'chemistry', 'biology'];
+const DEFAULT_UPDATE_URL = 'https://github.com/luoleiyong/gaokao-countdown';
 const STORE_DEFAULTS = {
   targetDate: '2027-06-07',
   skin: 'board',
@@ -30,7 +31,7 @@ const STORE_DEFAULTS = {
   lastLaunchDate: '',
   panelBounds: null,
   petPos: null,
-  updateUrl: '',
+  updateUrl: DEFAULT_UPDATE_URL,
   weatherCity: '',
   weatherCache: null,
   selectedSubjects: DEFAULT_SUBJECTS.slice()
@@ -69,6 +70,8 @@ function loadStore() {
       history: Array.isArray(data.history) ? data.history : []
     });
     merged.selectedSubjects = normalizeSubjects(merged.selectedSubjects);
+    // 旧版本存过空更新源时，回退到项目 GitHub 仓库
+    if (!merged.updateUrl) merged.updateUrl = DEFAULT_UPDATE_URL;
     return merged;
   } catch {
     return Object.assign({}, STORE_DEFAULTS);

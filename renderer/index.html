@@ -76,6 +76,7 @@
           <button class="btn-primary" id="btnDraw">开启今日幸运签</button>
           <button class="btn-ghost" id="btnKnowledge">学科知识签</button>
           <button class="btn-ghost" id="btnTerm">二十四节气签</button>
+          <button class="btn-ghost" id="btnClassroom">课堂点名</button>
           <button class="btn-ghost" id="btnViewToday" hidden>查看今日签</button>
         </div>
         <div class="milestone" id="milestone" hidden></div>
@@ -324,22 +325,10 @@
 
         <section class="setting">
           <label class="setting__label">版本与更新 <span class="setting__value" id="curVersionLabel">v1.0.0</span></label>
-          <p class="hint" id="updateStatus">未检查更新</p>
-          <input class="input" id="inputUpdateUrl" placeholder="GitHub 仓库地址或 version.json 直链" />
+          <p class="hint" id="updateStatus">正在自动检测更新…</p>
           <button class="btn-ghost btn-wide setting-action" id="btnCheckUpdate">检查更新</button>
           <button class="btn-primary btn-wide setting-action" id="btnDownloadUpdate" hidden>下载新版本</button>
-          <p class="hint">支持填写 GitHub 仓库地址（如 https://github.com/你的名字/仓库名，自动读取 Latest Release），或 version.json 清单直链。发布新 Release 后即可在这里检查并下载。</p>
-        </section>
-
-        <section class="setting">
-          <label class="setting__label">调试</label>
-          <div class="setting--row">
-            <div>
-              <p class="hint">开启后可预览每日首抽与抽签动画，不影响真实抽签记录。</p>
-            </div>
-            <button class="switch" id="switchDebug" aria-pressed="false"><i></i></button>
-          </div>
-          <button class="btn-ghost btn-wide debug-btn" id="btnDebugDraw" hidden>触发每日抽签动画</button>
+          <a class="repo-link" id="repoLink" href="#">代码库 · github.com/luoleiyong/gaokao-countdown</a>
         </section>
 
         <section class="setting">

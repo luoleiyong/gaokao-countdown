@@ -1,7 +1,7 @@
 {
   "name": "gaokao-countdown",
-  "version": "1.4.1",
-  "description": "高考倒计时 · 每日幸运签 · 桌面宠物（Windows）",
+  "version": "1.5.0",
+  "description": "高考倒计时 · 每日幸运签 · 桌面宠物 · 课堂点名（Windows）",
   "main": "main.js",
   "author": "Trae",
   "license": "MIT",
@@ -24,7 +24,10 @@
       "build/icon.png"
     ],
     "win": {
-      "target": ["portable", "nsis"],
+      "target": [
+        "portable",
+        "nsis"
+      ],
       "icon": "build/icon.png"
     },
     "nsis": {
@@ -33,5 +36,8 @@
       "createDesktopShortcut": true,
       "shortcutName": "高考倒计时"
     }
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
   }
 }

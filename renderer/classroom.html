@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';" />
+<title>课堂助手</title>
+<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="classroom.css" />
+</head>
+<body data-skin="board">
+<div class="cls">
+  <header class="cls-top">
+    <div class="cls-brand">
+      <span class="cls-seal">课</span>
+      <span class="cls-brand__text">
+        <b>课堂助手</b>
+        <i>随机点名 · 课程表</i>
+      </span>
+    </div>
+    <nav class="cls-tabs">
+      <button class="cls-tab on" data-tab="roll">随机点名</button>
+      <button class="cls-tab" data-tab="timetable">课程表</button>
+    </nav>
+    <div class="cls-top__actions">
+      <button class="cls-admin" id="btnAdmin" title="进入管理员模式">管理员</button>
+      <button class="win-btn" id="btnCloseWindow" title="关闭">×</button>
+    </div>
+  </header>
+
+  <main class="cls-main">
+    <!-- 随机点名 -->
+    <section class="cls-page cls-roll" id="pageRoll">
+      <aside class="roster-pane" id="rosterPane">
+        <div class="roster-head">
+          <span>名单</span>
+          <button class="cls-link" id="btnImportRoster">导入</button>
+        </div>
+        <div class="roster-list" id="rosterList"></div>
+        <div class="roster-empty" id="rosterEmpty">
+          <b>还没有名单</b>
+          <span>点击「导入」或拖拽文件到下方区域</span>
+        </div>
+        <div class="roster-drop" id="rosterDrop">
+          <b>拖拽名单文件到这里</b>
+          <span>.txt / .csv / .xlsx / .xls，可一次拖入多个</span>
+        </div>
+        <button class="cls-ghost roster-new" id="btnNewRoster">＋ 新建空名单</button>
+      </aside>
+
+      <section class="roll-stage" id="rollStage">
+        <div class="roll-glow" aria-hidden="true"></div>
+        <div class="roll-roster" id="rollRoster">未选择名单</div>
+        <div class="roll-name" id="rollName"><span>课堂</span><span>点名</span></div>
+        <div class="roll-sub" id="rollSub">选择左侧名单，然后开始点名</div>
+        <button class="roll-btn" id="btnRoll"><span>开 始 点 名</span></button>
+      </section>
+    </section>
+
+    <!-- 课程表 -->
+    <section class="cls-page cls-tt" id="pageTimetable" hidden>
+      <div class="tt-head">
+        <input class="tt-title" id="ttTitle" maxlength="40" aria-label="课程表标题" />
+        <div class="tt-head__actions">
+          <button class="cls-ghost" id="btnTtImport">一键导入</button>
+          <button class="cls-ghost" id="btnTtAdd">增加一节</button>
+        </div>
+      </div>
+      <div class="tt-scroll">
+        <table class="tt-table" id="ttTable"></table>
+      </div>
+      <p class="tt-tip">点击单元格直接编辑，修改会自动保存。支持 Excel / CSV / txt 一键导入。</p>
+    </section>
+  </main>
+</div>
+
+<input type="file" id="fileRoster" accept=".txt,.csv,.xlsx,.xls" multiple hidden />
+<input type="file" id="fileTimetable" accept=".txt,.csv,.xlsx,.xls" hidden />
+
+<!-- 管理员模式 -->
+<div class="cls-modal" id="adminModal" hidden>
+  <div class="cls-modal__backdrop" data-close="admin"></div>
+  <div class="cls-modal__box cls-admin-box">
+    <header class="cls-modal__head">
+      <h3 id="adminTitle">管理员模式</h3>
+      <button class="win-btn" data-close="admin" title="关闭">×</button>
+    </header>
+    <div class="cls-admin-body" id="adminBody"></div>
+  </div>
+</div>
+
+<!-- 课程表导入 -->
+<div class="cls-modal" id="ttImportModal" hidden>
+  <div class="cls-modal__backdrop" data-close="tt"></div>
+  <div class="cls-modal__box cls-import-box">
+    <header class="cls-modal__head">
+      <h3>一键导入课程表</h3>
+      <button class="win-btn" data-close="tt" title="关闭">×</button>
+    </header>
+    <div class="cls-import-body">
+      <p class="cls-import-tip">粘贴课表内容，或选择 csv / txt / xlsx 文件。支持两种格式：</p>
+      <pre class="cls-import-demo">格式一（表格，第一行含星期）：
+节次,时间,周一,周二,周三,周四,周五
+第1节,08:00-08:45,语文,数学,英语,物理,化学
+
+格式二（逐行）：
+周一 第1节 08:00-08:45 语文</pre>
+      <textarea class="cls-textarea" id="ttImportText" placeholder="在这里粘贴课表内容…"></textarea>
+      <div class="cls-import-file-row">
+        <button class="cls-ghost" id="btnPickTtFile">选择文件</button>
+        <span class="cls-import-file" id="ttFileName">未选择文件</span>
+      </div>
+    </div>
+    <footer class="cls-modal__foot">
+      <button class="cls-ghost" data-close="tt">取消</button>
+      <button class="cls-primary" id="btnDoImportTt">导入</button>
+    </footer>
+  </div>
+</div>
+
+<div class="cls-toast" id="clsToast" hidden></div>
+<script src="classroom.js"></script>
+</body>
+</html>

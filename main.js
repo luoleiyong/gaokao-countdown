@@ -6,7 +6,11 @@
 const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, dialog, net, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { execFile, execFileSync } = require('child_process');
+
+let XLSX = null;
+try { XLSX = require('xlsx'); } catch { /* 缺少表格组件时仅支持 txt/csv */ }
 
 const USER_DIR = path.join(app.getPath('appData'), 'GaokaoCountdown');
 const STORE_FILE = path.join(USER_DIR, 'store.json');
@@ -21,12 +25,22 @@ const SKINS = [
 ];
 const SUBJECT_IDS = ['chinese', 'math', 'english', 'japanese', 'physics', 'chemistry', 'biology', 'politics', 'history', 'geography'];
 const DEFAULT_SUBJECTS = ['chinese', 'math', 'english', 'physics', 'chemistry', 'biology'];
-const DEFAULT_UPDATE_URL = 'https://github.com/luoleiyong/gaokao-countdown';
+const REPO_URL = 'https://github.com/luoleiyong/gaokao-countdown';
+const DEFAULT_UPDATE_URL = REPO_URL;
+/* 国内加速下载前缀：拼接在 GitHub 资源直链前面 */
+const UPDATE_MIRRORS = ['https://ghproxy.net/', 'https://gh-proxy.com/', 'https://ghfast.top/'];
+/* GitHub API 不可达时的更新清单兜底（jsDelivr 国内可直连） */
+const UPDATE_MANIFESTS = [
+  'https://cdn.jsdelivr.net/gh/luoleiyong/gaokao-countdown@master/update/version.json',
+  'https://fastly.jsdelivr.net/gh/luoleiyong/gaokao-countdown@master/update/version.json',
+  'https://gcore.jsdelivr.net/gh/luoleiyong/gaokao-countdown@master/update/version.json'
+];
 const STORE_DEFAULTS = {
   targetDate: '2027-06-07',
   skin: 'board',
   petScale: 1,
   autoLaunch: false,
+  debugMode: false,
   history: [],
   lastLaunchDate: '',
   panelBounds: null,
@@ -34,12 +48,15 @@ const STORE_DEFAULTS = {
   updateUrl: DEFAULT_UPDATE_URL,
   weatherCity: '',
   weatherCache: null,
-  selectedSubjects: DEFAULT_SUBJECTS.slice()
+  selectedSubjects: DEFAULT_SUBJECTS.slice(),
+  classroom: null
 };
 
 let win = null;
 let knowledgeWin = null;
 let knowledgeSubjectsKey = '';
+let classroomWin = null;
+let classroomUnlocked = false;
 let tray = null;
 let quitting = false;
 let mode = 'panel';
@@ -61,6 +78,97 @@ function normalizeSubjects(input) {
   return filtered.length ? filtered : DEFAULT_SUBJECTS.slice();
 }
 
+/* ---------------- 课堂助手：名单 / 课程表 ---------------- */
+const TIMETABLE_DAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+
+function uid(prefix) {
+  return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+function clampWeight(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(10, Math.max(0.1, Math.round(n * 10) / 10));
+}
+function defaultTimetable() {
+  const times = ['08:00-08:45', '08:55-09:40', '10:00-10:45', '10:55-11:40', '14:00-14:45', '14:55-15:40', '16:00-16:45', '18:30-19:15'];
+  return {
+    title: '我的课程表',
+    days: TIMETABLE_DAYS.slice(),
+    periods: times.map((time, i) => ({
+      id: 'p' + (i + 1),
+      label: `第${i + 1}节`,
+      time,
+      cells: ['', '', '', '', '', '', '']
+    }))
+  };
+}
+function normalizeTimetable(input) {
+  const def = defaultTimetable();
+  const t = input && typeof input === 'object' ? input : null;
+  if (!t || !Array.isArray(t.periods) || !t.periods.length) return def;
+  return {
+    title: String(t.title || def.title).slice(0, 40),
+    days: Array.isArray(t.days) && t.days.length === 7 ? t.days.map((d) => String(d).slice(0, 6)) : def.days,
+    periods: t.periods.slice(0, 16).map((p, i) => ({
+      id: typeof p.id === 'string' && p.id ? p.id : 'p' + (i + 1),
+      label: String(p.label || `第${i + 1}节`).slice(0, 12),
+      time: String(p.time || '').slice(0, 24),
+      cells: Array.from({ length: 7 }, (_, j) => {
+        const v = Array.isArray(p.cells) ? p.cells[j] : '';
+        return String(v == null ? '' : v).slice(0, 30);
+      })
+    }))
+  };
+}
+function normalizeRoster(input) {
+  if (!input || typeof input !== 'object' || !Array.isArray(input.names)) return null;
+  const names = input.names.map((n) => {
+    if (!n) return null;
+    const name = String(n.name || '').trim().slice(0, 30);
+    if (!name) return null;
+    return {
+      id: typeof n.id === 'string' && n.id ? n.id : uid('n'),
+      name,
+      weight: clampWeight(n.weight),
+      count: Math.max(0, parseInt(n.count, 10) || 0),
+      pickedAt: Number(n.pickedAt) || 0
+    };
+  }).filter(Boolean);
+  return {
+    id: typeof input.id === 'string' && input.id ? input.id : uid('r'),
+    name: String(input.name || '未命名名单').slice(0, 40),
+    createdAt: Number(input.createdAt) || Date.now(),
+    names,
+    lastPickId: typeof input.lastPickId === 'string' ? input.lastPickId : ''
+  };
+}
+function defaultClassroom() {
+  return { passwordHash: '', passwordSalt: '', activeRosterId: '', rosters: [], timetable: defaultTimetable() };
+}
+function normalizeClassroom(input) {
+  const c = input && typeof input === 'object' ? input : {};
+  const out = defaultClassroom();
+  out.passwordHash = typeof c.passwordHash === 'string' ? c.passwordHash : '';
+  out.passwordSalt = typeof c.passwordSalt === 'string' ? c.passwordSalt : '';
+  out.rosters = Array.isArray(c.rosters) ? c.rosters.map(normalizeRoster).filter(Boolean) : [];
+  out.activeRosterId = typeof c.activeRosterId === 'string' ? c.activeRosterId : '';
+  if (!out.rosters.some((r) => r.id === out.activeRosterId)) {
+    out.activeRosterId = out.rosters.length ? out.rosters[0].id : '';
+  }
+  out.timetable = normalizeTimetable(c.timetable);
+  return out;
+}
+function hashPassword(password, salt) {
+  return crypto.createHash('sha256').update(salt + '|' + String(password)).digest('hex');
+}
+function adminHasPassword() {
+  return !!(store.classroom.passwordHash && store.classroom.passwordSalt);
+}
+function adminVerify(password) {
+  if (!adminHasPassword()) return false;
+  return hashPassword(password, store.classroom.passwordSalt) === store.classroom.passwordHash;
+}
+
 function loadStore() {
   ensureDirs();
   try {
@@ -70,11 +178,15 @@ function loadStore() {
       history: Array.isArray(data.history) ? data.history : []
     });
     merged.selectedSubjects = normalizeSubjects(merged.selectedSubjects);
-    // 旧版本存过空更新源时，回退到项目 GitHub 仓库
-    if (!merged.updateUrl) merged.updateUrl = DEFAULT_UPDATE_URL;
+    merged.classroom = normalizeClassroom(data.classroom);
+    merged.debugMode = !!merged.debugMode;
+    // 更新源固定为项目仓库，避免旧配置残留
+    merged.updateUrl = DEFAULT_UPDATE_URL;
     return merged;
   } catch {
-    return Object.assign({}, STORE_DEFAULTS);
+    const fresh = Object.assign({}, STORE_DEFAULTS);
+    fresh.classroom = defaultClassroom();
+    return fresh;
   }
 }
 const store = loadStore();
@@ -677,6 +789,7 @@ function setSkin(id) {
   saveStore();
   if (win && !win.isDestroyed()) win.webContents.send('skin:changed', { skin: id });
   if (knowledgeWin && !knowledgeWin.isDestroyed()) knowledgeWin.webContents.send('skin:changed', { skin: id });
+  if (classroomWin && !classroomWin.isDestroyed()) classroomWin.webContents.send('skin:changed', { skin: id });
   appendLog('SETTINGS', { skin: id });
   return id;
 }
@@ -755,6 +868,223 @@ function openKnowledgeWindow() {
   appendLog('KNOWLEDGE_OPEN', { skin: store.skin });
 }
 
+/* ---------------- 课堂助手窗口与数据 ---------------- */
+function openClassroomWindow() {
+  if (classroomWin && !classroomWin.isDestroyed()) {
+    classroomWin.show();
+    classroomWin.focus();
+    return;
+  }
+  classroomWin = new BrowserWindow({
+    width: 1120,
+    height: 760,
+    minWidth: 940,
+    minHeight: 620,
+    frame: false,
+    thickFrame: false,
+    transparent: true,
+    hasShadow: false,
+    resizable: true,
+    show: false,
+    title: '课堂助手',
+    icon: path.join(__dirname, 'build', 'icon.png'),
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      spellcheck: false,
+      backgroundThrottling: false
+    }
+  });
+  classroomWin.setMenuBarVisibility(false);
+  try { classroomWin.setBackgroundMaterial('none'); } catch { /* 旧系统忽略 */ }
+  classroomWin.loadFile(path.join(__dirname, 'renderer', 'classroom.html'), { query: { skin: store.skin } });
+  classroomWin.once('ready-to-show', () => {
+    disableDwmShadow(classroomWin);
+    classroomWin.show();
+    classroomWin.focus();
+  });
+  classroomWin.on('closed', () => {
+    classroomWin = null;
+    classroomUnlocked = false;
+  });
+  appendLog('CLASSROOM_OPEN', {});
+}
+
+const NAME_HEADER_RE = /^(姓名|名字|学生姓名|学生|name|序号|编号|学号|班级|性别)$/i;
+function cleanNameToken(token) {
+  let t = String(token == null ? '' : token).replace(/^\uFEFF/, '').trim();
+  t = t.replace(/^["'\s]+|["'\s]+$/g, '');
+  t = t.replace(/^\d+\s*[.、)．:：]?\s*/, '');
+  t = t.trim();
+  if (!t || t.length > 30) return '';
+  if (NAME_HEADER_RE.test(t)) return '';
+  if (/^\d+$/.test(t)) return '';
+  return t;
+}
+function parseNameText(text) {
+  const raw = String(text || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  const lines = raw.split('\n').filter((l) => l.trim());
+  let col = -1;
+  for (let i = 0; i < Math.min(lines.length, 5); i++) {
+    const cells = lines[i].split(/[,，;；\t]/).map((c) => c.trim());
+    const idx = cells.findIndex((c) => /^(姓名|名字|学生姓名|学生|name)$/i.test(c));
+    if (idx >= 0) {
+      col = idx;
+      lines.splice(0, i + 1);
+      break;
+    }
+  }
+  const out = [];
+  lines.forEach((line) => {
+    if (col >= 0) {
+      const cells = line.split(/[,，;；\t]/);
+      const v = cleanNameToken(cells[col]);
+      if (v) out.push(v);
+    } else {
+      line.split(/[\s,，;；、\t]+/).forEach((tok) => {
+        const v = cleanNameToken(tok);
+        if (v) out.push(v);
+      });
+    }
+  });
+  return Array.from(new Set(out));
+}
+function readSheetRows(filePath) {
+  if (!XLSX) throw new Error('当前版本缺少表格组件，请改用 txt/csv');
+  const wb = XLSX.readFile(filePath);
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  if (!sheet) throw new Error('表格中没有工作表');
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' });
+  return rows.map((r) => (Array.isArray(r) ? r.map((c) => String(c == null ? '' : c).trim()) : []));
+}
+function namesFromRows(rows) {
+  let col = -1;
+  let start = 0;
+  for (let r = 0; r < Math.min(rows.length, 6); r++) {
+    const idx = (rows[r] || []).findIndex((c) => /^(姓名|名字|学生姓名|学生|name)$/i.test(String(c || '').trim()));
+    if (idx >= 0) { col = idx; start = r + 1; break; }
+  }
+  const out = [];
+  if (col >= 0) {
+    for (let r = start; r < rows.length; r++) {
+      const v = cleanNameToken((rows[r] || [])[col]);
+      if (v) out.push(v);
+    }
+  } else {
+    const width = rows.reduce((m, r) => Math.max(m, r.length), 0);
+    let bestCol = -1;
+    let bestScore = 0;
+    for (let c = 0; c < width; c++) {
+      let score = 0;
+      rows.forEach((row) => {
+        const v = cleanNameToken(row[c]);
+        if (v && /^[\u4e00-\u9fa5·]{2,8}$/.test(v)) score++;
+      });
+      if (score > bestScore) { bestScore = score; bestCol = c; }
+    }
+    if (bestCol >= 0) {
+      rows.forEach((row) => {
+        const v = cleanNameToken(row[bestCol]);
+        if (v) out.push(v);
+      });
+    } else {
+      rows.forEach((row) => row.forEach((cell) => {
+        const v = cleanNameToken(cell);
+        if (v) out.push(v);
+      }));
+    }
+  }
+  return Array.from(new Set(out));
+}
+function importRosterFiles(filePaths) {
+  const created = [];
+  const errors = [];
+  const list = Array.isArray(filePaths) ? filePaths : [];
+  list.forEach((fp) => {
+    try {
+      if (typeof fp !== 'string' || !fs.existsSync(fp)) throw new Error('文件不存在');
+      const ext = path.extname(fp).toLowerCase();
+      let names = [];
+      if (['.xlsx', '.xls', '.xlsm'].includes(ext)) {
+        names = namesFromRows(readSheetRows(fp));
+      } else if (ext === '.csv') {
+        names = XLSX ? namesFromRows(readSheetRows(fp)) : parseNameText(fs.readFileSync(fp, 'utf8'));
+      } else {
+        names = parseNameText(fs.readFileSync(fp, 'utf8'));
+      }
+      if (!names.length) throw new Error('没有识别到姓名');
+      const roster = {
+        id: uid('r'),
+        name: (path.basename(fp, ext) || '导入名单').slice(0, 40),
+        createdAt: Date.now(),
+        names: names.map((name) => ({ id: uid('n'), name, weight: 1, count: 0, pickedAt: 0 })),
+        lastPickId: ''
+      };
+      store.classroom.rosters.push(roster);
+      if (!store.classroom.activeRosterId) store.classroom.activeRosterId = roster.id;
+      created.push({ name: roster.name, count: roster.names.length });
+    } catch (e) {
+      errors.push(path.basename(fp) + '：' + e.message);
+    }
+  });
+  if (created.length) saveStore();
+  appendLog('ROSTER_IMPORT', { created, errors });
+  return { ok: created.length > 0, created, errors };
+}
+function classroomPublicData() {
+  const c = store.classroom;
+  return {
+    activeRosterId: c.activeRosterId,
+    rosters: c.rosters.map((r) => ({
+      id: r.id,
+      name: r.name,
+      names: r.names.map((n) => ({ id: n.id, name: n.name }))
+    })),
+    timetable: c.timetable,
+    hasPassword: adminHasPassword(),
+    unlocked: classroomUnlocked,
+    debugMode: !!store.debugMode
+  };
+}
+function classroomAdminData() {
+  const data = classroomPublicData();
+  data.rosters = store.classroom.rosters.map((r) => ({
+    id: r.id,
+    name: r.name,
+    createdAt: r.createdAt,
+    lastPickId: r.lastPickId,
+    names: r.names.map((n) => ({ id: n.id, name: n.name, weight: n.weight, count: n.count, pickedAt: n.pickedAt }))
+  }));
+  return data;
+}
+function drawFromRoster(rosterId) {
+  const roster = store.classroom.rosters.find((r) => r.id === rosterId);
+  if (!roster) return { ok: false, error: '名单不存在' };
+  if (!roster.names.length) return { ok: false, error: '名单里还没有学生' };
+  const pool = roster.names.filter((n) => n.weight > 0);
+  if (!pool.length) return { ok: false, error: '权重都为 0，无法点名' };
+  const candidates = pool.length > 1 ? pool.filter((n) => n.id !== roster.lastPickId) : pool;
+  const total = candidates.reduce((sum, n) => sum + n.weight, 0);
+  let r = Math.random() * total;
+  let picked = candidates[candidates.length - 1];
+  for (const n of candidates) {
+    r -= n.weight;
+    if (r <= 0) { picked = n; break; }
+  }
+  picked.count += 1;
+  picked.pickedAt = Date.now();
+  roster.lastPickId = picked.id;
+  saveStore();
+  return { ok: true, name: picked.name, roster: roster.name, rosterId: roster.id };
+}
+function broadcastDebugMode() {
+  if (win && !win.isDestroyed()) win.webContents.send('debug:changed', { on: !!store.debugMode });
+  if (classroomWin && !classroomWin.isDestroyed()) classroomWin.webContents.send('debug:changed', { on: !!store.debugMode });
+}
+
 /* 把窗口压到桌面层（其他程序窗口之下，桌面之上） */
 function sendToBottom() {
   if (process.platform !== 'win32' || !win || win.isDestroyed()) return;
@@ -817,6 +1147,7 @@ function updateTrayMenu() {
   if (!tray) return;
   const menu = Menu.buildFromTemplate([
     { label: '打开主界面', click: showPanel },
+    { label: '课堂助手', click: () => openClassroomWindow() },
     { label: '学科知识签', click: () => openKnowledgeWindow() },
     { label: '桌面宠物模式', click: () => { showPanel(); setTimeout(() => applyPetMode(true), 200); } },
     { type: 'separator' },
@@ -830,6 +1161,7 @@ function updateTrayMenu() {
 function petContextMenu() {
   const template = [
     { label: '回到主界面', click: () => applyPetMode(false) },
+    { label: '课堂助手', click: () => openClassroomWindow() },
     { label: '学科知识签屋', click: () => openKnowledgeWindow() },
     {
       label: '更换皮肤',
@@ -858,7 +1190,8 @@ function wireIpc() {
       history: store.history,
       updateUrl: store.updateUrl,
       weatherCity: store.weatherCity,
-      selectedSubjects: store.selectedSubjects
+      selectedSubjects: store.selectedSubjects,
+      debugMode: !!store.debugMode
     },
     isFirstToday: firstTodayLaunch,
     today: dateKey(),
@@ -879,9 +1212,6 @@ function wireIpc() {
     if (patch.petScale != null) {
       petScale = clampScale(patch.petScale);
       store.petScale = petScale;
-    }
-    if (typeof patch.updateUrl === 'string') {
-      store.updateUrl = patch.updateUrl.trim().slice(0, 500);
     }
     if (typeof patch.weatherCity === 'string') {
       store.weatherCity = patch.weatherCity.trim().slice(0, 60);
@@ -950,48 +1280,97 @@ function wireIpc() {
 
   ipcMain.handle('app:check-update', async () => {
     const current = app.getVersion();
-    const url = (store.updateUrl || '').trim();
-    if (!url) return { configured: false, current };
-    if (!/^https?:\/\//i.test(url)) {
-      return { configured: true, ok: false, error: '更新地址需以 http(s) 开头', current };
-    }
-    try {
-      const gh = parseGitHubRepo(url);
-      let latest = '';
-      let notes = '';
-      let downloadUrl = '';
-      if (gh) {
+    let latest = '';
+    let notes = '';
+    let downloadUrl = '';
+    let pageUrl = REPO_URL + '/releases/latest';
+    let source = '';
+
+    const gh = parseGitHubRepo(store.updateUrl || DEFAULT_UPDATE_URL);
+    if (gh) {
+      try {
         const api = 'https://api.github.com/repos/' + gh.owner + '/' + gh.repo + '/releases/latest';
         const info = await fetchJson(api, 9000);
-        if (!info || !info.tag_name) throw new Error('该仓库还没有发布 Release');
-        latest = String(info.tag_name).replace(/^v/i, '').trim();
-        notes = String(info.body || '').replace(/\s+/g, ' ').slice(0, 200);
-        const assets = Array.isArray(info.assets) ? info.assets : [];
-        const exeAsset = assets.find((a) => /\.exe$/i.test(String(a.name || '')));
-        downloadUrl = exeAsset ? String(exeAsset.browser_download_url || '') : String(info.html_url || '');
-      } else {
-        const info = await fetchJson(url, 8000);
-        latest = String(info.version || '').trim();
-        notes = String(info.notes || '');
-        downloadUrl = String(info.url || '');
+        if (info && info.tag_name) {
+          latest = String(info.tag_name).replace(/^v/i, '').trim();
+          notes = String(info.body || '').replace(/\s+/g, ' ').slice(0, 200);
+          pageUrl = String(info.html_url || pageUrl);
+          const assets = Array.isArray(info.assets) ? info.assets : [];
+          const exeAsset = assets.find((a) => /\.exe$/i.test(String(a.name || '')));
+          downloadUrl = exeAsset ? String(exeAsset.browser_download_url || '') : '';
+          source = 'github';
+        }
+      } catch (e) {
+        appendLog('UPDATE_API_FAIL', { message: e.message });
       }
-      if (!latest) throw new Error('版本清单缺少版本号');
-      const hasUpdate = versionCmp(latest, current) > 0;
-      appendLog('UPDATE_CHECK', { latest, current, hasUpdate, source: gh ? 'github' : 'json' });
-      return {
-        configured: true,
-        ok: true,
-        current,
-        latest,
-        notes,
-        url: downloadUrl,
-        hasUpdate,
-        source: gh ? 'github' : 'json'
-      };
-    } catch (e) {
-      appendLog('UPDATE_ERR', { message: e.message });
-      return { configured: true, ok: false, error: e.message, current };
     }
+
+    // GitHub 不可达时改用 jsDelivr 更新清单，保证国内也能检测到新版本
+    if (!latest) {
+      for (const manifest of UPDATE_MANIFESTS) {
+        try {
+          const info = await fetchJson(manifest, 8000);
+          const v = String((info && info.version) || '').trim();
+          if (!v) continue;
+          latest = v;
+          notes = String(info.notes || '').slice(0, 200);
+          downloadUrl = '';
+          pageUrl = REPO_URL + '/releases/latest';
+          source = 'jsdelivr';
+          break;
+        } catch { /* 换下一个 CDN */ }
+      }
+    }
+
+    if (!latest) {
+      appendLog('UPDATE_ERR', { message: '更新源均不可用' });
+      return { configured: true, ok: false, error: '网络不可用，稍后会自动重试', current };
+    }
+
+    const hasUpdate = versionCmp(latest, current) > 0;
+    const mirrors = downloadUrl ? UPDATE_MIRRORS.map((prefix) => prefix + downloadUrl) : [];
+    appendLog('UPDATE_CHECK', { latest, current, hasUpdate, source });
+    return {
+      configured: true,
+      ok: true,
+      current,
+      latest,
+      notes,
+      url: downloadUrl || pageUrl,
+      pageUrl,
+      mirrors,
+      hasUpdate,
+      source
+    };
+  });
+
+  /* 下载更新：优先选择能连通的国内镜像，再交给系统浏览器打开 */
+  ipcMain.handle('app:download-update', async (_e, urls) => {
+    const list = (Array.isArray(urls) ? urls : [urls]).filter((u) => typeof u === 'string' && /^https?:\/\//i.test(u));
+    for (const u of list) {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 6000);
+      try {
+        const res = await net.fetch(u, {
+          method: 'HEAD',
+          signal: ac.signal,
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+        });
+        clearTimeout(timer);
+        if (res.ok || res.status === 405 || res.status === 403) {
+          shell.openExternal(u);
+          appendLog('UPDATE_DOWNLOAD_OPEN', { url: u });
+          return { ok: true, url: u };
+        }
+      } catch {
+        clearTimeout(timer);
+      }
+    }
+    if (list.length) {
+      shell.openExternal(list[0]);
+      return { ok: true, url: list[0], unverified: true };
+    }
+    return { ok: false };
   });
 
   ipcMain.handle('app:open-url', (_e, url) => {
@@ -1049,6 +1428,209 @@ function wireIpc() {
     appendLog('WINDOW_HIDE', { source: 'renderer' });
   });
   ipcMain.on('app:quit', quitApp);
+
+  /* ---------------- 课堂助手 IPC ---------------- */
+  const adminGuard = () => (classroomUnlocked ? null : { ok: false, error: '请先进入管理员模式' });
+
+  ipcMain.handle('classroom:open', () => {
+    openClassroomWindow();
+    return { ok: true };
+  });
+  ipcMain.on('classroom:close', () => {
+    if (classroomWin && !classroomWin.isDestroyed()) classroomWin.close();
+  });
+
+  ipcMain.handle('classroom:get', () => classroomPublicData());
+
+  ipcMain.handle('classroom:admin-status', () => ({
+    hasPassword: adminHasPassword(),
+    unlocked: classroomUnlocked
+  }));
+
+  ipcMain.handle('classroom:admin-data', () => {
+    const guard = adminGuard();
+    if (guard) return guard;
+    return { ok: true, data: classroomAdminData() };
+  });
+
+  ipcMain.handle('classroom:admin-setup', (_e, password) => {
+    if (adminHasPassword()) return { ok: false, error: '管理员密码已设置' };
+    const pw = String(password || '');
+    if (pw.length < 4) return { ok: false, error: '密码至少 4 位' };
+    store.classroom.passwordSalt = crypto.randomBytes(16).toString('hex');
+    store.classroom.passwordHash = hashPassword(pw, store.classroom.passwordSalt);
+    classroomUnlocked = true;
+    saveStore();
+    appendLog('ADMIN_SETUP', {});
+    return { ok: true, data: classroomAdminData() };
+  });
+
+  ipcMain.handle('classroom:admin-login', (_e, password) => {
+    if (!adminVerify(password)) {
+      appendLog('ADMIN_LOGIN_FAIL', {});
+      return { ok: false, error: '密码不正确' };
+    }
+    classroomUnlocked = true;
+    appendLog('ADMIN_LOGIN', {});
+    return { ok: true, data: classroomAdminData() };
+  });
+
+  ipcMain.handle('classroom:admin-lock', () => {
+    classroomUnlocked = false;
+    return { ok: true };
+  });
+
+  ipcMain.handle('classroom:admin-change-password', (_e, oldPassword, newPassword) => {
+    const guard = adminGuard();
+    if (guard) return guard;
+    if (!adminVerify(oldPassword)) return { ok: false, error: '原密码不正确' };
+    const pw = String(newPassword || '');
+    if (pw.length < 4) return { ok: false, error: '新密码至少 4 位' };
+    store.classroom.passwordSalt = crypto.randomBytes(16).toString('hex');
+    store.classroom.passwordHash = hashPassword(pw, store.classroom.passwordSalt);
+    saveStore();
+    appendLog('ADMIN_PASSWORD_CHANGE', {});
+    return { ok: true };
+  });
+
+  ipcMain.handle('classroom:import-rosters', (_e, paths) => {
+    const res = importRosterFiles(paths);
+    res.data = classroomPublicData();
+    return res;
+  });
+
+  ipcMain.handle('classroom:create-roster', (_e, name) => {
+    const roster = {
+      id: uid('r'),
+      name: String(name || '新名单').slice(0, 40),
+      createdAt: Date.now(),
+      names: [],
+      lastPickId: ''
+    };
+    store.classroom.rosters.push(roster);
+    if (!store.classroom.activeRosterId) store.classroom.activeRosterId = roster.id;
+    saveStore();
+    return { ok: true, rosterId: roster.id, data: classroomPublicData() };
+  });
+
+  ipcMain.handle('classroom:set-active', (_e, id) => {
+    if (!store.classroom.rosters.some((r) => r.id === id)) return { ok: false };
+    store.classroom.activeRosterId = id;
+    saveStore();
+    return { ok: true };
+  });
+
+  ipcMain.handle('classroom:rename-roster', (_e, id, name) => {
+    const guard = adminGuard();
+    if (guard) return guard;
+    const roster = store.classroom.rosters.find((r) => r.id === id);
+    if (!roster) return { ok: false, error: '名单不存在' };
+    roster.name = String(name || '').trim().slice(0, 40) || roster.name;
+    saveStore();
+    return { ok: true, data: classroomAdminData() };
+  });
+
+  ipcMain.handle('classroom:delete-roster', (_e, id) => {
+    const guard = adminGuard();
+    if (guard) return guard;
+    store.classroom.rosters = store.classroom.rosters.filter((r) => r.id !== id);
+    if (!store.classroom.rosters.some((r) => r.id === store.classroom.activeRosterId)) {
+      store.classroom.activeRosterId = store.classroom.rosters.length ? store.classroom.rosters[0].id : '';
+    }
+    saveStore();
+    appendLog('ROSTER_DELETE', { id });
+    return { ok: true, data: classroomAdminData() };
+  });
+
+  ipcMain.handle('classroom:add-names', (_e, rosterId, text) => {
+    const guard = adminGuard();
+    if (guard) return guard;
+    const roster = store.classroom.rosters.find((r) => r.id === rosterId);
+    if (!roster) return { ok: false, error: '名单不存在' };
+    const names = parseNameText(text);
+    const exists = new Set(roster.names.map((n) => n.name));
+    const added = [];
+    names.forEach((name) => {
+      if (exists.has(name)) return;
+      exists.add(name);
+      roster.names.push({ id: uid('n'), name, weight: 1, count: 0, pickedAt: 0 });
+      added.push(name);
+    });
+    saveStore();
+    return { ok: true, added: added.length, data: classroomAdminData() };
+  });
+
+  ipcMain.handle('classroom:update-name', (_e, rosterId, nameId, patch) => {
+    const guard = adminGuard();
+    if (guard) return guard;
+    const roster = store.classroom.rosters.find((r) => r.id === rosterId);
+    const target = roster && roster.names.find((n) => n.id === nameId);
+    if (!target) return { ok: false, error: '学生不存在' };
+    if (patch && typeof patch.name === 'string') {
+      const name = patch.name.trim().slice(0, 30);
+      if (name) target.name = name;
+    }
+    if (patch && patch.weight != null) target.weight = clampWeight(patch.weight);
+    saveStore();
+    return { ok: true, data: classroomAdminData() };
+  });
+
+  ipcMain.handle('classroom:remove-name', (_e, rosterId, nameId) => {
+    const guard = adminGuard();
+    if (guard) return guard;
+    const roster = store.classroom.rosters.find((r) => r.id === rosterId);
+    if (!roster) return { ok: false };
+    roster.names = roster.names.filter((n) => n.id !== nameId);
+    saveStore();
+    return { ok: true, data: classroomAdminData() };
+  });
+
+  ipcMain.handle('classroom:reset-counts', (_e, rosterId) => {
+    const guard = adminGuard();
+    if (guard) return guard;
+    const roster = store.classroom.rosters.find((r) => r.id === rosterId);
+    if (!roster) return { ok: false };
+    roster.names.forEach((n) => { n.count = 0; n.pickedAt = 0; });
+    roster.lastPickId = '';
+    saveStore();
+    return { ok: true, data: classroomAdminData() };
+  });
+
+  ipcMain.handle('classroom:draw', (_e, rosterId) => drawFromRoster(rosterId));
+
+  ipcMain.handle('classroom:save-timetable', (_e, timetable) => {
+    store.classroom.timetable = normalizeTimetable(timetable);
+    saveStore();
+    return { ok: true, timetable: store.classroom.timetable };
+  });
+
+  ipcMain.handle('classroom:parse-sheet', (_e, filePath) => {
+    try {
+      return { ok: true, rows: readSheetRows(String(filePath || '')) };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('admin:set-debug', (_e, on) => {
+    const guard = adminGuard();
+    if (guard) return guard;
+    store.debugMode = !!on;
+    saveStore();
+    broadcastDebugMode();
+    appendLog('DEBUG_MODE', { on: store.debugMode });
+    return { ok: true, debugMode: store.debugMode };
+  });
+
+  ipcMain.handle('admin:trigger-draw', () => {
+    const guard = adminGuard();
+    if (guard) return guard;
+    showPanel();
+    setTimeout(() => {
+      if (win && !win.isDestroyed()) win.webContents.send('debug:preview');
+    }, 260);
+    return { ok: true };
+  });
 }
 
 /* ---------------- 生命周期 ---------------- */
@@ -1060,6 +1642,9 @@ if (!gotLock) {
     showPanel();
     if (Array.isArray(argv) && argv.includes('--pet')) {
       setTimeout(() => applyPetMode(true), 200);
+    }
+    if (Array.isArray(argv) && argv.includes('--classroom')) {
+      openClassroomWindow();
     }
   });
 
@@ -1076,6 +1661,9 @@ if (!gotLock) {
     createWindow();
     createTray();
     wireIpc();
+    if (process.argv.includes('--classroom')) {
+      setTimeout(() => openClassroomWindow(), 500);
+    }
 
     screen.on('display-metrics-changed', () => {
       if (mode === 'pet' && win) applyPetMode(true);

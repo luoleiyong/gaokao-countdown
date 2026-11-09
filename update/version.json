@@ -1,5 +1,5 @@
 {
-  "version": "1.4.1",
-  "notes": "天气卡片字号统一、点击查看三日详情与天气建议、多平台天气兜底、作者联系方式",
+  "version": "1.5.0",
+  "notes": "新增课堂助手：多名单随机点名、名单导入、管理员模式、权重与次数管理、课程表一键导入；版本更新支持国内镜像加速与自动检测",
   "url": "https://github.com/luoleiyong/gaokao-countdown/releases/latest"
 }

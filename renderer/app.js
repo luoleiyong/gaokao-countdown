@@ -141,7 +141,7 @@ async function boot() {
     .filter((id) => SUBJECT_META.some((x) => x.id === id))
     .slice(0, 6);
   if (!state.selectedSubjects.length) state.selectedSubjects = DEFAULT_SUBJECTS.slice();
-  try { state.debug = localStorage.getItem('gk-debug-mode') === '1'; } catch (e) { state.debug = false; }
+  state.debug = !!s.debugMode;
 
   applySkin(state.skin);
   renderVersion(init.version);
@@ -161,14 +161,24 @@ async function boot() {
     $('inputScale').value = String(state.petScale);
     $('scaleLabel').textContent = Math.round(state.petScale * 100) + '%';
   });
+  bridge.onDebugChanged((data) => {
+    state.debug = !!(data && data.on);
+  });
+  bridge.onDebugPreview(() => {
+    state.debugPreview = true;
+    state.shaking = false;
+    $('drawModal').hidden = true;
+    $('firstDraw').hidden = true;
+    setTimeout(() => showFirstDraw(true), 80);
+  });
 
   setInterval(tick, 1000);
 
   refreshWeather();
   setInterval(() => refreshWeather(), 30 * 60 * 1000);
-  if (state.updateUrl) {
-    setTimeout(() => checkUpdates(true), 1800);
-  }
+  // 启动后自动检测更新，此后每 6 小时静默检测一次
+  setTimeout(() => checkUpdates(true), 1800);
+  setInterval(() => checkUpdates(true), 6 * 60 * 60 * 1000);
 
   // 每天启动时若今日尚未抽签，弹出全屏首抽引导；跳过或未抽时下次启动仍会触发
   setTimeout(() => {
@@ -746,59 +756,50 @@ function closeTermModal() {
   $('termModal').hidden = true;
 }
 
-/* ---------------- 版本更新 ---------------- */
+/* ---------------- 版本更新（自动检测 + 国内镜像下载） ---------------- */
 async function checkUpdates(silent) {
-  const input = $('inputUpdateUrl');
-  const url = (input ? input.value : state.updateUrl).trim();
   const status = $('updateStatus');
-  if (!url) {
-    status.textContent = '未配置更新源（填写 GitHub 仓库地址或 version.json 直链）';
-    $('btnDownloadUpdate').hidden = true;
-    $('updateDot').hidden = true;
-    if (!silent) toast('请先填写 GitHub 仓库地址或更新清单地址');
-    return;
-  }
-  state.updateUrl = url;
-  try { await bridge.saveSettings({ updateUrl: url }); } catch (e) { /* 忽略 */ }
-  status.textContent = '正在检查…';
+  if (status && !silent) status.textContent = '正在检查…';
   $('btnDownloadUpdate').hidden = true;
   try {
     const res = await bridge.checkUpdate();
     if (!res || !res.configured) {
-      status.textContent = '未配置更新源';
+      if (status) status.textContent = '更新服务未配置';
       return;
     }
     if (!res.ok) {
-      status.textContent = '检查失败：' + (res.error || '未知错误');
+      if (status) status.textContent = '暂时无法连接更新服务，稍后会自动重试';
       $('updateDot').hidden = true;
       return;
     }
     state.updateInfo = res;
     if (res.hasUpdate) {
-      status.textContent = `发现新版本 v${res.latest}${res.notes ? ' · ' + res.notes : ''}`;
-      $('btnDownloadUpdate').hidden = !res.url;
+      if (status) status.textContent = `发现新版本 v${res.latest}${res.notes ? ' · ' + res.notes : ''}`;
+      $('btnDownloadUpdate').hidden = !(res.url || (res.mirrors && res.mirrors.length));
       $('updateDot').hidden = false;
-      toast(silent ? `发现新版本 v${res.latest}，可在设置中更新` : `发现新版本 v${res.latest}`);
+      if (!silent) toast(`发现新版本 v${res.latest}`);
     } else {
-      status.textContent = `已是最新版本 v${res.current}`;
-      $('btnDownloadUpdate').hidden = true;
+      if (status) status.textContent = `已是最新版本 v${res.current}`;
       $('updateDot').hidden = true;
     }
   } catch (e) {
-    status.textContent = '检查失败：' + e.message;
+    if (status) status.textContent = '暂时无法连接更新服务，稍后会自动重试';
   }
 }
 
 function openSettings() {
   $('inputTarget').value = state.targetDate;
   setAutoLaunchUI(state.autoLaunch);
-  syncDebugUI();
   $('inputWeatherCity').value = state.weatherCity;
   $('weatherStatus').textContent = state.weatherCity || '自动定位';
-  $('inputUpdateUrl').value = state.updateUrl;
   $('curVersionLabel').textContent = 'v' + state.version;
-  $('btnDownloadUpdate').hidden = !(state.updateInfo && state.updateInfo.hasUpdate && state.updateInfo.url);
+  $('btnDownloadUpdate').hidden = !(state.updateInfo && state.updateInfo.hasUpdate && (state.updateInfo.url || (state.updateInfo.mirrors && state.updateInfo.mirrors.length)));
   $('updateDot').hidden = !(state.updateInfo && state.updateInfo.hasUpdate);
+  if (state.updateInfo && state.updateInfo.ok) {
+    $('updateStatus').textContent = state.updateInfo.hasUpdate
+      ? `发现新版本 v${state.updateInfo.latest}`
+      : `已是最新版本 v${state.updateInfo.current}`;
+  }
   $('inputScale').value = String(state.petScale);
   $('scaleLabel').textContent = Math.round(state.petScale * 100) + '%';
   renderSkinGrid();
@@ -854,13 +855,6 @@ async function toggleSubject(id) {
   }
 }
 
-function syncDebugUI() {
-  const sw = $('switchDebug');
-  if (!sw) return;
-  sw.classList.toggle('on', state.debug);
-  sw.setAttribute('aria-pressed', String(state.debug));
-  $('btnDebugDraw').hidden = !state.debug;
-}
 function closeSettings() {
   $('settings').hidden = true;
   $('settingsBackdrop').hidden = false;
@@ -1077,6 +1071,7 @@ function bindEvents() {
   $('btnDraw').addEventListener('click', () => startDrawFlow(false));
   $('btnDrawSide').addEventListener('click', () => startDrawFlow(false));
   $('btnKnowledge').addEventListener('click', () => bridge.openKnowledge());
+  $('btnClassroom').addEventListener('click', () => bridge.openClassroom());
   $('btnTerm').addEventListener('click', () => openTermModal(false));
   $('btnTermRandom').addEventListener('click', () => openTermModal(true));
   $('btnTermClose').addEventListener('click', closeTermModal);
@@ -1172,21 +1167,6 @@ function bindEvents() {
       toast('设置失败');
     }
   });
-  $('switchDebug').addEventListener('click', () => {
-    state.debug = !state.debug;
-    try { localStorage.setItem('gk-debug-mode', state.debug ? '1' : '0'); } catch (e) { /* ignore */ }
-    syncDebugUI();
-    toast(state.debug ? '已开启调试模式' : '已关闭调试模式');
-  });
-  $('btnDebugDraw').addEventListener('click', () => {
-    if (!state.debug) return;
-    state.debugPreview = true;
-    state.shaking = false;
-    closeSettings();
-    $('drawModal').hidden = true;
-    $('firstDraw').hidden = true;
-    setTimeout(() => showFirstDraw(true), 60);
-  });
 
   $('inputWeatherCity').addEventListener('change', async (e) => {
     const v = e.target.value.trim();
@@ -1211,10 +1191,23 @@ function bindEvents() {
   $('btnWeatherClose').addEventListener('click', closeWeatherDetail);
   $('weatherModal').querySelector('.modal__backdrop').addEventListener('click', closeWeatherDetail);
   $('btnCheckUpdate').addEventListener('click', () => checkUpdates(false));
-  $('btnDownloadUpdate').addEventListener('click', () => {
-    const url = state.updateInfo && state.updateInfo.url;
-    if (url) bridge.openExternal(url);
-    else toast('版本清单未提供下载地址');
+  $('btnDownloadUpdate').addEventListener('click', async () => {
+    const info = state.updateInfo;
+    if (!info) return;
+    const urls = [];
+    if (Array.isArray(info.mirrors)) urls.push(...info.mirrors);
+    if (info.url) urls.push(info.url);
+    if (!urls.length) {
+      toast('版本清单未提供下载地址');
+      return;
+    }
+    const res = await bridge.downloadUpdate(urls);
+    if (res && res.ok) toast('已打开下载链接，如速度慢会自动切换镜像');
+    else toast('下载链接打开失败，请稍后重试');
+  });
+  $('repoLink').addEventListener('click', (e) => {
+    e.preventDefault();
+    bridge.openExternal('https://github.com/luoleiyong/gaokao-countdown');
   });
 
   $('inputScale').addEventListener('input', (e) => {
@@ -1265,7 +1258,7 @@ function createMockBridge() {
     store = JSON.parse(localStorage.getItem(KEY) || 'null') || {};
   } catch (e) { store = {}; }
   store = Object.assign(
-    { targetDate: '2027-06-07', skin: 'board', petScale: 1, autoLaunch: false, history: [], lastLaunchDate: '' },
+    { targetDate: '2027-06-07', skin: 'board', petScale: 1, autoLaunch: false, history: [], lastLaunchDate: '', debugMode: false },
     store
   );
   const today = dateKey();
@@ -1313,7 +1306,11 @@ function createMockBridge() {
         aqi: 42, code: 2, desc: '多云', days, updatedAt: Date.now()
       };
     },
-    checkUpdate: async () => ({ configured: false, current: '1.1.0' }),
+    checkUpdate: async () => ({ configured: true, ok: true, current: '1.0.0-dev', latest: '1.0.0-dev', hasUpdate: false }),
+    downloadUpdate: async () => ({ ok: true }),
+    openClassroom: () => {
+      window.open('classroom.html', '_blank', 'width=1120,height=760');
+    },
     openExternal: () => {},
     saveImage: async (dataUrl, name) => {
       const a = document.createElement('a');
@@ -1334,7 +1331,9 @@ function createMockBridge() {
     quit: () => {},
     onModeChanged: () => {},
     onSkinChanged: () => {},
-    onScaleChanged: () => {}
+    onScaleChanged: () => {},
+    onDebugChanged: () => {},
+    onDebugPreview: () => {}
   };
 }
 

@@ -52,7 +52,8 @@ const state = {
   updateAutoCheck: true,
   updateAutoDownload: true,
   updateLastCheck: '',
-  updateBannerDismissed: '',
+  updateNotesDismissed: '',
+  pendingUpdateNotes: false,
   updateDeferred: false,
   updateInstallStarted: false,
   version: '',
@@ -171,7 +172,7 @@ async function boot() {
   state.onboardAutoLaunch = state.autoLaunch;
   state.updateAutoCheck = s.updateAutoCheck !== false;
   state.updateAutoDownload = s.updateAutoDownload !== false;
-  try { state.updateBannerDismissed = localStorage.getItem('gk-update-dismissed') || ''; } catch (e) { /* 忽略 */ }
+  try { state.updateNotesDismissed = localStorage.getItem('gk-update-dismissed') || ''; } catch (e) { /* 忽略 */ }
 
   applySkin(state.skin);
   renderVersion(init.version);
@@ -214,6 +215,7 @@ async function boot() {
     state.updateDownload.percent = 100;
     state.updateDownload.filePath = data.filePath || '';
     state.updateDownload.version = data.version || state.updateDownload.version;
+    hideUpdateNotes();
     renderUpdateUI();
     if (!state.updateInstallStarted && !state.updateDeferred) {
       showUpdateReadyDialog();
@@ -761,6 +763,7 @@ function closeDrawModal() {
   $('drawModal').hidden = true;
   pendingSign = null;
   state.debugPreview = false;
+  setTimeout(() => { if (state.pendingUpdateNotes) maybeShowUpdateNotes(); }, 400);
 }
 
 /* ---------------- 首次启动问候 ---------------- */
@@ -776,6 +779,7 @@ function hideFirstDraw() {
   const el = $('firstDraw');
   el.classList.remove('show');
   setTimeout(() => { el.hidden = true; }, 320);
+  setTimeout(() => { if (state.pendingUpdateNotes) maybeShowUpdateNotes(); }, 420);
 }
 
 function swayBell(el) {
@@ -1076,44 +1080,87 @@ function updateHighlights() {
   return info.notes ? [info.notes] : [];
 }
 
-function renderUpdateBanner() {
-  const box = $('updateBanner');
-  if (!box) return;
+function updateNotesOpen() {
+  const modal = $('updateNotesModal');
+  return !!modal && !modal.hidden;
+}
+
+function showUpdateNotes() {
   const info = state.updateInfo;
-  const dl = state.updateDownload;
-  if (!info || !info.ok || !info.hasUpdate || state.updateBannerDismissed === info.latest) {
-    box.hidden = true;
-    return;
-  }
-  box.hidden = false;
-  $('updateBannerTitle').textContent = `发现新版本 v${info.latest}`;
-  const list = $('updateBannerList');
+  if (!info || !info.ok || !info.hasUpdate) return;
+  $('updateNotesVersion').textContent = info.latest || '';
+  const list = $('updateNotesList');
   const items = updateHighlights();
   list.innerHTML = items.length
     ? items.map((text) => `<li>${escapeHtml(text)}</li>`).join('')
     : '<li>本次更新带来了一些改进与修复</li>';
-
-  let statusText = '可立即更新，或稍后再试';
-  if (dl.phase === 'downloading' || info.downloading) statusText = `正在后台下载 ${dl.percent || 0}%`;
-  else if (dl.phase === 'ready') statusText = '安装包已下载完成';
-  else if (dl.phase === 'error') statusText = '下载失败，可点击重试';
-  else if (info.notes) statusText = info.notes.slice(0, 46);
-  $('updateBannerStatus').textContent = statusText;
-
-  const nowBtn = $('btnUpdateNow');
-  nowBtn.disabled = dl.phase === 'downloading';
-  nowBtn.textContent = dl.phase === 'ready'
-    ? '立即安装'
-    : (dl.phase === 'downloading' ? '下载中…' : '现在更新');
+  $('updateNotesModal').hidden = false;
+  renderUpdateNotes();
 }
 
-function dismissUpdateBanner() {
+function hideUpdateNotes() {
+  $('updateNotesModal').hidden = true;
+}
+
+function renderUpdateNotes() {
+  if (!updateNotesOpen()) return;
+  const info = state.updateInfo;
+  const dl = state.updateDownload;
+  if (!info || !info.ok || !info.hasUpdate) {
+    hideUpdateNotes();
+    return;
+  }
+  const status = $('updateNotesStatus');
+  const btn = $('btnUpdateNotesNow');
+  const progress = $('updateNotesProgress');
+  const fill = $('updateNotesProgressFill');
+  if (dl.phase === 'downloading' || info.downloading) {
+    const pct = Math.max(0, Math.min(99, dl.percent || 0));
+    progress.hidden = false;
+    fill.style.width = pct + '%';
+    status.textContent = `正在后台下载安装包 ${pct}%`;
+    btn.disabled = true;
+    btn.textContent = '下载中…';
+    return;
+  }
+  progress.hidden = true;
+  btn.disabled = false;
+  if (dl.phase === 'ready') {
+    status.textContent = '安装包已下载完成，点击「立即安装」重启更新';
+    btn.textContent = '立即安装';
+    return;
+  }
+  if (dl.phase === 'error') {
+    status.textContent = '下载失败，可重试或在设置中手动下载';
+    btn.textContent = '重新下载';
+    return;
+  }
+  status.textContent = '可立即更新，或稍后再试';
+  btn.textContent = '现在更新';
+}
+
+function dismissUpdateNotes() {
   const info = state.updateInfo;
   if (info && info.latest) {
-    state.updateBannerDismissed = info.latest;
+    state.updateNotesDismissed = info.latest;
     try { localStorage.setItem('gk-update-dismissed', info.latest); } catch (e) { /* 忽略 */ }
   }
-  renderUpdateBanner();
+  hideUpdateNotes();
+}
+
+function maybeShowUpdateNotes(force) {
+  const info = state.updateInfo;
+  if (!info || !info.ok || !info.hasUpdate) return;
+  if (!force && state.updateNotesDismissed === info.latest) return;
+  if (!force) {
+    const busy = !$('onboard').hidden || !$('firstDraw').hidden || !$('drawModal').hidden;
+    if (busy) {
+      state.pendingUpdateNotes = true;
+      return;
+    }
+  }
+  state.pendingUpdateNotes = false;
+  showUpdateNotes();
 }
 
 function showUpdateReadyDialog() {
@@ -1128,7 +1175,7 @@ function hideUpdateReadyDialog() {
 }
 
 function renderUpdateUI() {
-  renderUpdateBanner();
+  renderUpdateNotes();
   const info = state.updateInfo;
   const dl = state.updateDownload;
   const btn = $('btnDownloadUpdate');
@@ -1217,9 +1264,9 @@ async function startUpdateDownload(info) {
 async function checkUpdates(silent) {
   const status = $('updateStatus');
   if (status && !silent) status.textContent = '正在检查…';
-  // 手动检查时重新显示更新公告
+  // 手动检查时重新显示更新内容
   if (!silent) {
-    state.updateBannerDismissed = '';
+    state.updateNotesDismissed = '';
     try { localStorage.removeItem('gk-update-dismissed'); } catch (e) { /* 忽略 */ }
   }
   try {
@@ -1253,6 +1300,7 @@ async function checkUpdates(silent) {
       state.updateDownload = { phase: 'idle', percent: 0, filePath: '', version: '' };
       renderUpdateUI();
     }
+    maybeShowUpdateNotes(!silent);
     if (!silent) toast(`发现新版本 v${res.latest}`);
   } catch (e) {
     if (status) status.textContent = '暂时无法连接更新服务，稍后会自动重试';
@@ -1323,6 +1371,7 @@ async function completeOnboarding() {
   setTimeout(() => {
     if (!todayEntry()) showFirstDraw();
   }, 500);
+  setTimeout(() => { if (state.pendingUpdateNotes) maybeShowUpdateNotes(); }, 1000);
 }
 
 /* 知识点选科：九大学科最多选 6 科 */
@@ -1787,18 +1836,22 @@ function bindEvents() {
     bridge.openExternal(url);
   });
 
-  // 首页更新公告
-  $('btnUpdateBannerClose').addEventListener('click', dismissUpdateBanner);
-  $('btnUpdateBannerLater').addEventListener('click', () => {
-    dismissUpdateBanner();
-    toast('已收起更新公告，可在设置中更新');
+  // 更新内容弹窗
+  $('btnUpdateNotesClose').addEventListener('click', dismissUpdateNotes);
+  $('btnUpdateNotesLater').addEventListener('click', () => {
+    dismissUpdateNotes();
+    toast('已收起更新内容，可在设置中更新');
   });
-  $('btnUpdateNow').addEventListener('click', async () => {
+  $('btnUpdateNotesNow').addEventListener('click', async () => {
     const info = state.updateInfo;
     const dl = state.updateDownload;
     if (!info) return;
     if (dl.phase === 'downloading') return toast('安装包正在下载，请稍候');
-    if (dl.phase === 'ready') return showUpdateReadyDialog();
+    if (dl.phase === 'ready') {
+      hideUpdateNotes();
+      showUpdateReadyDialog();
+      return;
+    }
     if (info.setupMirrors && info.setupMirrors.length) {
       startUpdateDownload(info);
       toast('已开始后台下载更新');
@@ -1807,9 +1860,12 @@ function bindEvents() {
     const urls = [];
     if (Array.isArray(info.portableMirrors)) urls.push(...info.portableMirrors);
     if (Array.isArray(info.mirrors)) urls.push(...info.mirrors);
-    if (info.url) urls.push(info.url);
     if (urls.length) bridge.downloadUpdate(urls);
+    else if (info.pageUrl) bridge.openExternal(info.pageUrl);
     else toast('版本清单未提供下载地址');
+  });
+  document.querySelectorAll('[data-close="updateNotes"]').forEach((el) => {
+    el.addEventListener('click', dismissUpdateNotes);
   });
 
   // 更新下载完成弹窗
@@ -1818,7 +1874,7 @@ function bindEvents() {
     if (!dl.filePath) return;
     state.updateInstallStarted = true;
     hideUpdateReadyDialog();
-    toast('正在退出并启动安装程序…');
+    toast('正在自动安装并重启…');
     const res = await bridge.installUpdate(dl.filePath);
     if (!res || !res.ok) {
       state.updateInstallStarted = false;
@@ -1938,6 +1994,7 @@ function bindEvents() {
     if (e.key === 'Escape') {
       if (!$('agreementModal').hidden) closeAgreementModal();
       else if (!$('eventsModal').hidden) closeEventsModal();
+      else if (!$('updateNotesModal').hidden) dismissUpdateNotes();
       else if (!$('updateReadyModal').hidden) hideUpdateReadyDialog();
       else if (!$('settings').hidden) closeSettings();
       else if (!$('drawModal').hidden) closeDrawModal();

@@ -93,20 +93,6 @@
       </section>
 
       <aside class="sidebar">
-        <section class="update-banner" id="updateBanner" hidden>
-          <div class="update-banner__head">
-            <span class="update-banner__tag">更新公告</span>
-            <b id="updateBannerTitle">发现新版本</b>
-            <button class="update-banner__close" id="btnUpdateBannerClose" title="关闭">×</button>
-          </div>
-          <ul class="update-banner__list" id="updateBannerList"></ul>
-          <div class="update-banner__foot">
-            <span class="update-banner__status" id="updateBannerStatus">新版本已就绪</span>
-            <button class="btn-ghost btn-small" id="btnUpdateBannerLater">稍后</button>
-            <button class="btn-primary btn-small" id="btnUpdateNow">现在更新</button>
-          </div>
-        </section>
-
         <section class="today-card" id="todayCard">
           <div class="today-card__head">
             <span class="today-card__tag">今日签</span>
@@ -290,18 +276,39 @@
     </div>
   </div>
 
+  <!-- ======================= 更新内容 ======================= -->
+  <div class="modal" id="updateNotesModal" hidden>
+    <div class="modal__backdrop" data-close="updateNotes"></div>
+    <div class="modal__box update-notes-box">
+      <button class="win-btn update-notes__close" id="btnUpdateNotesClose" title="关闭">×</button>
+      <div class="update-ready__badge">新</div>
+      <h2 class="update-ready__title">发现新版本 v<span id="updateNotesVersion">—</span></h2>
+      <p class="update-ready__sub">本次更新内容</p>
+      <ul class="update-notes-list" id="updateNotesList"></ul>
+      <div class="update-notes-progress" id="updateNotesProgress" hidden>
+        <i id="updateNotesProgressFill"></i>
+      </div>
+      <div class="update-notes-status" id="updateNotesStatus">可立即更新，或稍后再试</div>
+      <div class="update-ready__actions">
+        <button class="btn-ghost" id="btnUpdateNotesLater">稍后</button>
+        <button class="btn-primary" id="btnUpdateNotesNow">现在更新</button>
+      </div>
+      <p class="update-ready__tip">下载完成后会提示重启更新，也可在退出程序后自动安装</p>
+    </div>
+  </div>
+
   <!-- ======================= 更新已下载 ======================= -->
   <div class="modal" id="updateReadyModal" hidden>
     <div class="modal__backdrop"></div>
     <div class="modal__box update-ready-box">
       <div class="update-ready__badge">新</div>
       <h2 class="update-ready__title">新版本 v<span id="readyVersion">—</span> 已下载完成</h2>
-      <p class="update-ready__sub">安装包已在后台静默下载完成，重启程序即可使用新版本。</p>
+      <p class="update-ready__sub">点击「重启更新」后将自动安装并重新打开程序，无需手动点击安装向导。</p>
       <div class="update-ready__actions">
         <button class="btn-ghost" id="btnUpdateLater">稍后更新</button>
         <button class="btn-primary" id="btnUpdateRestart">重启更新</button>
       </div>
-      <p class="update-ready__tip">选择“稍后更新”将在退出程序后自动安装</p>
+      <p class="update-ready__tip">选择“稍后更新”会在退出程序后自动安装</p>
     </div>
   </div>
 

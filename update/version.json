@@ -1,5 +1,5 @@
 {
-  "version": "1.7.1",
-  "notes": "修复更新安装包下载遇到权限或杀毒拦截时程序报错的问题，新增下载目录自动回退与手动下载入口；课程表返回按钮加固；文件属性更新为高考倒计时 · 作者 luo",
+  "version": "1.7.2",
+  "notes": "更新内容改为弹窗展示；重启更新后自动静默安装并自动启动，无需手动点击安装向导；退出后安装同样静默完成",
   "url": "https://github.com/luoleiyong/gaokao-countdown/releases/latest"
 }

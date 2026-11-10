@@ -7,7 +7,7 @@ const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, dialog, ne
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { execFile, execFileSync } = require('child_process');
+const { execFile, execFileSync, spawn } = require('child_process');
 
 let XLSX = null;
 try { XLSX = require('xlsx'); } catch { /* 缺少表格组件时仅支持 txt/csv */ }
@@ -108,6 +108,25 @@ function renameWithRetry(src, dest) {
     lastError = e;
   }
   throw lastError || new Error('无法保存安装包');
+}
+
+/* 静默运行安装程序（/S 无界面安装，--force-run 安装完成后自动启动） */
+function spawnSilentInstaller(setup) {
+  try {
+    const child = spawn(setup, ['/S', '--updated', '--force-run'], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true
+    });
+    child.once('error', () => {
+      try { shell.openPath(setup); } catch { /* 忽略 */ }
+    });
+    child.unref();
+    return true;
+  } catch {
+    try { shell.openPath(setup); } catch { /* 忽略 */ }
+    return false;
+  }
 }
 
 /* ---------------- 存储 & 日志 ---------------- */
@@ -1914,11 +1933,14 @@ function wireIpc() {
 
   ipcMain.handle('app:update-download', (event, payload) => downloadUpdatePackage(event.sender, payload));
 
-  /* 点击安装：交给系统启动安装程序，退出应用；新版本首次启动时清理旧程序 */
+  /* 点击安装：静默运行安装程序，安装完成后自动启动；无安装包时打开下载页 */
   ipcMain.handle('app:install-update', async (_e, filePath) => {
     try {
       const setup = String(filePath || updateTask.filePath || '');
-      if (!setup || !fs.existsSync(setup)) return { ok: false, error: '安装包不存在，请重新下载' };
+      if (!setup || !fs.existsSync(setup)) {
+        try { shell.openExternal(`${REPO_URL}/releases/latest`); } catch { /* 忽略 */ }
+        return { ok: false, manual: true, error: '安装包不存在，已打开下载页，请手动下载安装' };
+      }
       const portable = process.env.PORTABLE_EXECUTABLE_FILE;
       const oldPortable = portable && fs.existsSync(portable) ? path.resolve(portable) : '';
       store.pendingCleanup = Array.from(new Set([oldPortable, setup].filter(Boolean)));
@@ -1926,13 +1948,41 @@ function wireIpc() {
       saveStore();
 
       installerLaunched = true;
-      const openError = await shell.openPath(setup);
-      appendLog('UPDATE_INSTALL', { setup, oldPortable, openError });
-      if (openError) {
-        const { spawn } = require('child_process');
-        spawn(setup, [], { detached: true, stdio: 'ignore' }).unref();
+      const args = ['/S', '--updated', '--force-run'];
+      const launched = await new Promise((resolve) => {
+        let done = false;
+        const finish = (result) => {
+          if (done) return;
+          done = true;
+          resolve(result);
+        };
+        let child = null;
+        try {
+          child = spawn(setup, args, { detached: true, stdio: 'ignore', windowsHide: true });
+        } catch (e) {
+          finish({ ok: false, error: e.message });
+          return;
+        }
+        child.once('error', (e) => finish({ ok: false, error: e.message }));
+        child.once('spawn', () => {
+          try { child.unref(); } catch { /* 忽略 */ }
+          finish({ ok: true });
+        });
+        setTimeout(() => {
+          try { child.unref(); } catch { /* 忽略 */ }
+          finish({ ok: true });
+        }, 1500);
+      });
+
+      if (launched.ok) {
+        appendLog('UPDATE_INSTALL', { setup, oldPortable, mode: 'silent', args: args.join(' ') });
+      } else {
+        // 静默启动失败时回退到交互式安装，用户手动完成安装后仍会自动启动
+        appendLog('UPDATE_INSTALL_FALLBACK', { setup, message: launched.error });
+        const openError = await shell.openPath(setup);
+        appendLog('UPDATE_INSTALL', { setup, oldPortable, openError, mode: 'interactive' });
       }
-      setTimeout(() => quitApp(), 800);
+      setTimeout(() => quitApp(), 700);
       return { ok: true };
     } catch (e) {
       appendLog('UPDATE_INSTALL_ERR', { message: e.message });
@@ -2371,8 +2421,8 @@ if (!gotLock) {
       installerLaunched = true;
       saveStore();
       try {
-        shell.openPath(setup);
-        appendLog('UPDATE_INSTALL_ON_QUIT', { setup });
+        spawnSilentInstaller(setup);
+        appendLog('UPDATE_INSTALL_ON_QUIT', { setup, mode: 'silent' });
       } catch (e) {
         appendLog('UPDATE_INSTALL_ON_QUIT_ERR', { message: e.message });
       }

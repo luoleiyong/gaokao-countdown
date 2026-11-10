@@ -49,9 +49,9 @@
         <div class="cd-num-row">
           <span class="cd-num" id="daysNum">--</span>
           <span class="cd-unit">天</span>
-          <div class="weather-card" id="weatherCard" role="button" tabindex="0" title="点击查看未来三天天气与建议" hidden>
+          <div class="weather-card" id="weatherCard" role="button" tabindex="0" title="点击查看逐小时天气与未来三天" hidden>
             <div class="weather-card__head">
-              <span id="weatherCity">—</span>
+              <span class="weather-card__city"><span id="weatherCity">—</span><i class="weather-card__live">实时</i></span>
               <span class="weather-card__now"><b id="weatherNowTemp">—</b><em id="weatherNowDesc">—</em></span>
             </div>
             <div class="weather-card__days" id="weatherDays"></div>
@@ -83,6 +83,20 @@
       </section>
 
       <aside class="sidebar">
+        <section class="update-banner" id="updateBanner" hidden>
+          <div class="update-banner__head">
+            <span class="update-banner__tag">更新公告</span>
+            <b id="updateBannerTitle">发现新版本</b>
+            <button class="update-banner__close" id="btnUpdateBannerClose" title="关闭">×</button>
+          </div>
+          <ul class="update-banner__list" id="updateBannerList"></ul>
+          <div class="update-banner__foot">
+            <span class="update-banner__status" id="updateBannerStatus">新版本已就绪</span>
+            <button class="btn-ghost btn-small" id="btnUpdateBannerLater">稍后</button>
+            <button class="btn-primary btn-small" id="btnUpdateNow">现在更新</button>
+          </div>
+        </section>
+
         <section class="today-card" id="todayCard">
           <div class="today-card__head">
             <span class="today-card__tag">今日签</span>
@@ -243,6 +257,10 @@
         </div>
       </div>
       <div class="weather-box__days" id="wDays"></div>
+      <div class="weather-box__hourly" id="wHourlyBox">
+        <div class="weather-box__section-head">逐小时预报 <span id="wHourlyNote">未来 24 小时</span></div>
+        <div class="w-hours" id="wHours"></div>
+      </div>
       <div class="weather-box__advice">
         <div class="weather-box__advice-head">天气建议</div>
         <ul class="weather-box__advice-list" id="wAdvice"></ul>
@@ -251,6 +269,21 @@
         <span id="wUpdated">—</span>
         <button class="btn-primary btn-small" id="btnWeatherClose">知道了</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ======================= 更新已下载 ======================= -->
+  <div class="modal" id="updateReadyModal" hidden>
+    <div class="modal__backdrop"></div>
+    <div class="modal__box update-ready-box">
+      <div class="update-ready__badge">新</div>
+      <h2 class="update-ready__title">新版本 v<span id="readyVersion">—</span> 已下载完成</h2>
+      <p class="update-ready__sub">安装包已在后台静默下载完成，重启程序即可使用新版本。</p>
+      <div class="update-ready__actions">
+        <button class="btn-ghost" id="btnUpdateLater">稍后更新</button>
+        <button class="btn-primary" id="btnUpdateRestart">重启更新</button>
+      </div>
+      <p class="update-ready__tip">选择“稍后更新”将在退出程序后自动安装</p>
     </div>
   </div>
 
@@ -364,6 +397,24 @@
           <button class="btn-ghost btn-wide setting-action" id="btnCheckUpdate">检查更新</button>
           <button class="btn-primary btn-wide setting-action" id="btnDownloadUpdate" hidden>下载新版本</button>
           <a class="repo-link" id="repoLink" href="#">代码库 · github.com/luoleiyong/gaokao-countdown</a>
+
+          <div class="update-prefs">
+            <div class="update-pref">
+              <div>
+                <b>自动检测更新</b>
+                <span>启动时与每 6 小时检查一次</span>
+              </div>
+              <button class="switch" id="switchUpdateCheck" aria-pressed="true"><i></i></button>
+            </div>
+            <div class="update-pref">
+              <div>
+                <b>自动下载更新</b>
+                <span>发现新版本后在后台静默下载</span>
+              </div>
+              <button class="switch" id="switchUpdateDownload" aria-pressed="true"><i></i></button>
+            </div>
+          </div>
+          <p class="hint" id="updateLastCheck">上次检查：—</p>
         </section>
 
         <section class="setting">

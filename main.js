@@ -53,6 +53,9 @@ const STORE_DEFAULTS = {
   weatherCache: null,
   selectedSubjects: DEFAULT_SUBJECTS.slice(),
   pendingCleanup: [],
+  pendingInstallUpdate: '',
+  updateAutoCheck: true,
+  updateAutoDownload: true,
   classroom: null
 };
 
@@ -69,6 +72,7 @@ let petScale = 1;
 let panelBounds = null;
 let saveBoundsTimer = null;
 let updateTask = { version: '', filePath: '', downloading: false, done: false };
+let installerLaunched = false;
 
 function updateDir() {
   return path.join(app.getPath('temp'), 'GaokaoCountdownUpdate');
@@ -192,6 +196,9 @@ function loadStore() {
     merged.pendingCleanup = Array.isArray(data.pendingCleanup)
       ? data.pendingCleanup.filter((p) => typeof p === 'string' && p.trim()).slice(0, 8)
       : [];
+    merged.pendingInstallUpdate = typeof data.pendingInstallUpdate === 'string' ? data.pendingInstallUpdate : '';
+    merged.updateAutoCheck = merged.updateAutoCheck !== false;
+    merged.updateAutoDownload = merged.updateAutoDownload !== false;
     // 更新源固定为项目仓库，避免旧配置残留
     merged.updateUrl = DEFAULT_UPDATE_URL;
     return merged;
@@ -555,6 +562,11 @@ async function fetchCnWeather(loc) {
 async function resolveLocation() {
   const cityPref = (store.weatherCity || '').trim();
   if (cityPref) {
+    const plain = cityPref.replace(/市$/, '');
+    if (CN_CITY_COORDS[plain]) {
+      const c = CN_CITY_COORDS[plain];
+      return { city: cityPref, lat: c[0], lon: c[1], source: 'city' };
+    }
     const geo = await fetchJson(
       'https://geocoding-api.open-meteo.com/v1/search?name=' +
         encodeURIComponent(cityPref) + '&count=1&language=zh&format=json',
@@ -579,12 +591,84 @@ async function resolveLocation() {
   return { city: '北京', lat: 39.9042, lon: 116.4074, source: 'fallback' };
 }
 
+/* Open-Meteo 逐小时预报 → 24 小时精简数据 */
+function parseHourly(data) {
+  const h = data && data.hourly;
+  if (!h || !Array.isArray(h.time)) return [];
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours());
+  const out = [];
+  for (let i = 0; i < h.time.length; i++) {
+    const t = new Date(h.time[i]);
+    if (Number.isNaN(t.getTime()) || t < start) continue;
+    const code = Number(h.weather_code ? h.weather_code[i] : 0);
+    const hh = String(t.getHours()).padStart(2, '0');
+    out.push({
+      time: h.time[i],
+      label: out.length === 0 ? '现在' : `${hh}时`,
+      temp: Math.round(Number(h.temperature_2m ? h.temperature_2m[i] : 0)),
+      code,
+      desc: WMO_DESC[code] || '天气',
+      pop: Math.round(Number(h.precipitation_probability ? h.precipitation_probability[i] : 0)) || 0
+    });
+    if (out.length >= 24) break;
+  }
+  return out;
+}
+
+async function fetchHourlyForecast(cityName) {
+  let loc = null;
+  const key = String(cityName || '').trim();
+  const plain = key.replace(/市$/, '');
+  if (plain && CN_CITY_COORDS[plain]) {
+    const c = CN_CITY_COORDS[plain];
+    loc = { lat: c[0], lon: c[1] };
+  }
+  if (!loc) loc = await resolveLocation();
+  const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + loc.lat +
+    '&longitude=' + loc.lon +
+    '&hourly=temperature_2m,weather_code,precipitation_probability' +
+    '&timezone=auto&forecast_days=2';
+  const data = await fetchJson(url, 12000);
+  return parseHourly(data);
+}
+
+/* 常用城市坐标（用于逐小时预报，避免同名地名定位到错误地区） */
+const CN_CITY_COORDS = {
+  北京: [39.90, 116.41], 上海: [31.23, 121.47], 天津: [39.13, 117.20], 重庆: [29.56, 106.55],
+  哈尔滨: [45.80, 126.53], 长春: [43.82, 125.32], 沈阳: [41.80, 123.43], 呼和浩特: [40.84, 111.75],
+  石家庄: [38.04, 114.51], 太原: [37.87, 112.55], 西安: [34.34, 108.94], 济南: [36.65, 117.12],
+  乌鲁木齐: [43.83, 87.62], 拉萨: [29.65, 91.14], 西宁: [36.62, 101.78], 兰州: [36.06, 103.83],
+  银川: [38.49, 106.23], 郑州: [34.75, 113.63], 南京: [32.06, 118.80], 武汉: [30.59, 114.31],
+  杭州: [30.27, 120.15], 合肥: [31.82, 117.23], 福州: [26.07, 119.30], 南昌: [28.68, 115.89],
+  长沙: [28.23, 112.94], 贵阳: [26.65, 106.63], 成都: [30.57, 104.07], 广州: [23.13, 113.26],
+  昆明: [25.04, 102.71], 南宁: [22.82, 108.37], 海口: [20.04, 110.32], 香港: [22.32, 114.17],
+  澳门: [22.20, 113.54], 台北: [25.03, 121.57], 深圳: [22.54, 114.06], 苏州: [31.30, 120.58],
+  青岛: [36.07, 120.38], 大连: [38.91, 121.61], 厦门: [24.48, 118.09], 宁波: [29.87, 121.55],
+  无锡: [31.49, 120.31], 东莞: [23.02, 113.75], 佛山: [23.02, 113.12], 温州: [27.99, 120.70],
+  珠海: [22.27, 113.58], 三亚: [18.25, 109.51], 徐州: [34.26, 117.18], 常州: [31.81, 119.97],
+  南通: [31.98, 120.89], 烟台: [37.46, 121.45], 潍坊: [36.71, 119.16], 唐山: [39.63, 118.18],
+  保定: [38.87, 115.46], 洛阳: [34.62, 112.45], 宜昌: [30.69, 111.29], 襄阳: [32.01, 112.12],
+  株洲: [27.83, 113.13], 赣州: [25.83, 114.93], 芜湖: [31.35, 118.43], 泉州: [24.87, 118.68],
+  汕头: [23.35, 116.68], 惠州: [23.11, 114.42], 中山: [22.52, 113.39], 江门: [22.58, 113.08],
+  湛江: [21.27, 110.36], 桂林: [25.27, 110.29], 柳州: [24.33, 109.43], 遵义: [27.73, 106.93],
+  凯里: [26.57, 107.98], 都匀: [26.26, 107.52], 铜仁: [27.72, 109.19], 毕节: [27.28, 105.29],
+  六盘水: [26.59, 104.83], 安顺: [26.25, 105.95], 绵阳: [31.47, 104.68], 德阳: [31.13, 104.40],
+  宜宾: [28.77, 104.63], 大理: [25.61, 100.27], 丽江: [26.86, 100.23], 宝鸡: [34.36, 107.24],
+  咸阳: [34.33, 108.71], 榆林: [38.29, 109.73], 天水: [34.58, 105.72], 包头: [40.66, 109.84],
+  吉林: [43.84, 126.55], 大庆: [46.59, 125.10]
+};
+
 async function fetchWeatherData() {
-  // 主源：中国天气网（国内可直连）
+  // 主源：中国天气网（国内可直连），逐小时预报按需单独获取
   try {
     const cnLoc = await resolveCnCity();
     const cn = await fetchCnWeather(cnLoc);
-    if (cn) return cn;
+    if (cn) {
+      cn.hours = [];
+      cn.updatedAt = Date.now();
+      return cn;
+    }
   } catch (e) {
     appendLog('WEATHER_CN_FAIL', { message: e.message });
   }
@@ -595,6 +679,7 @@ async function fetchWeatherData() {
     '&longitude=' + loc.lon +
     '&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m' +
     '&daily=weather_code,temperature_2m_max,temperature_2m_min' +
+    '&hourly=temperature_2m,weather_code,precipitation_probability' +
     '&timezone=auto&forecast_days=3';
   const data = await fetchJson(url, 6000);
   const cur = data && data.current;
@@ -624,6 +709,7 @@ async function fetchWeatherData() {
     code,
     desc: WMO_DESC[code] || '天气',
     days,
+    hours: parseHourly(data),
     source: loc.source,
     updatedAt: Date.now()
   };
@@ -1225,7 +1311,10 @@ function wireIpc() {
       weatherCity: store.weatherCity,
       selectedSubjects: store.selectedSubjects,
       debugMode: !!store.debugMode,
-      onboarded: !!store.onboarded
+      onboarded: !!store.onboarded,
+      updateAutoCheck: !!store.updateAutoCheck,
+      updateAutoDownload: !!store.updateAutoDownload,
+      pendingInstallUpdate: store.pendingInstallUpdate || ''
     },
     isFirstToday: firstTodayLaunch,
     today: dateKey(),
@@ -1256,12 +1345,16 @@ function wireIpc() {
       if (list.length) store.selectedSubjects = list;
     }
     if (typeof patch.onboarded === 'boolean') store.onboarded = patch.onboarded;
+    if (typeof patch.updateAutoCheck === 'boolean') store.updateAutoCheck = patch.updateAutoCheck;
+    if (typeof patch.updateAutoDownload === 'boolean') store.updateAutoDownload = patch.updateAutoDownload;
     saveStore();
     appendLog('SETTINGS', { targetDate: store.targetDate, petScale });
     return {
       ok: true, targetDate: store.targetDate, skin: store.skin, petScale,
       updateUrl: store.updateUrl, weatherCity: store.weatherCity, selectedSubjects: store.selectedSubjects,
-      onboarded: !!store.onboarded
+      onboarded: !!store.onboarded,
+      updateAutoCheck: !!store.updateAutoCheck,
+      updateAutoDownload: !!store.updateAutoDownload
     };
   });
 
@@ -1299,7 +1392,7 @@ function wireIpc() {
     const fresh = cache && cache.data && cache.data.source === 'weather.com.cn' &&
       Array.isArray(cache.data.days) && cache.data.days.length &&
       cache.data.days[0].date === cnDate(0) &&
-      Date.now() - cache.ts < 20 * 60 * 1000;
+      Date.now() - cache.ts < 8 * 60 * 1000;
     if (fresh) return cache.data;
     try {
       const data = await fetchWeatherData();
@@ -1314,10 +1407,31 @@ function wireIpc() {
     }
   });
 
+  /* 逐小时预报：按需获取，10 分钟内复用 */
+  let hourlyCache = { key: '', ts: 0, hours: [] };
+  ipcMain.handle('weather:hourly', async () => {
+    const city = (store.weatherCity || (store.weatherCache && store.weatherCache.data && store.weatherCache.data.city) || '').trim();
+    if (hourlyCache.hours.length && hourlyCache.key === city && Date.now() - hourlyCache.ts < 10 * 60 * 1000) {
+      return { ok: true, hours: hourlyCache.hours, cached: true };
+    }
+    try {
+      const hours = await fetchHourlyForecast(city);
+      if (!hours.length) throw new Error('逐小时数据为空');
+      hourlyCache = { key: city, ts: Date.now(), hours };
+      appendLog('WEATHER_HOURLY_OK', { city, count: hours.length });
+      return { ok: true, hours };
+    } catch (e) {
+      appendLog('WEATHER_HOURLY_FAIL', { message: e.message });
+      return { ok: false, error: e.message, hours: [] };
+    }
+  });
+
   ipcMain.handle('app:check-update', async () => {
     const current = app.getVersion();
     let latest = '';
     let notes = '';
+    let notesFull = '';
+    let highlights = [];
     let downloadUrl = '';
     let setupUrl = '';
     let portableUrl = '';
@@ -1331,6 +1445,12 @@ function wireIpc() {
         if (!info || !info.tag_name) return false;
         latest = String(info.tag_name).replace(/^v/i, '').trim();
         notes = String(info.body || '').replace(/\s+/g, ' ').slice(0, 200);
+        notesFull = String(info.body || '').slice(0, 1500);
+        highlights = notesFull
+          .split(/\r?\n/)
+          .map((line) => line.replace(/^[\s\-*•·]+/, '').trim())
+          .filter(Boolean)
+          .slice(0, 8);
         pageUrl = String(info.html_url || pageUrl);
         const assets = Array.isArray(info.assets) ? info.assets : [];
         const exeAssets = assets.filter((a) => /\.exe$/i.test(String(a.name || '')));
@@ -1367,6 +1487,8 @@ function wireIpc() {
           if (!v) continue;
           latest = v;
           notes = String(info.notes || '').slice(0, 200);
+          notesFull = String(info.notes || '').slice(0, 1500);
+          highlights = notesFull ? notesFull.split(/[；;。]\s*/).map((s) => s.trim()).filter(Boolean).slice(0, 6) : [];
           downloadUrl = '';
           pageUrl = REPO_URL + '/releases/latest';
           source = 'jsdelivr';
@@ -1392,6 +1514,8 @@ function wireIpc() {
       current,
       latest,
       notes,
+      notesFull,
+      highlights,
       url: downloadUrl || pageUrl,
       pageUrl,
       mirrors,
@@ -1488,8 +1612,10 @@ function wireIpc() {
       const portable = process.env.PORTABLE_EXECUTABLE_FILE;
       const oldPortable = portable && fs.existsSync(portable) ? path.resolve(portable) : '';
       store.pendingCleanup = Array.from(new Set([oldPortable, setup].filter(Boolean)));
+      store.pendingInstallUpdate = '';
       saveStore();
 
+      installerLaunched = true;
       const openError = await shell.openPath(setup);
       appendLog('UPDATE_INSTALL', { setup, oldPortable, openError });
       if (openError) {
@@ -1502,6 +1628,16 @@ function wireIpc() {
       appendLog('UPDATE_INSTALL_ERR', { message: e.message });
       return { ok: false, error: e.message };
     }
+  });
+
+  /* 稍后更新：退出程序时再启动安装程序 */
+  ipcMain.handle('app:defer-install', (_e, filePath) => {
+    const setup = String(filePath || updateTask.filePath || '');
+    if (!setup || !fs.existsSync(setup)) return { ok: false, error: '安装包不存在' };
+    store.pendingInstallUpdate = setup;
+    saveStore();
+    appendLog('UPDATE_DEFER', { setup });
+    return { ok: true };
   });
 
   /* 下载更新：优先选择能连通的国内镜像，再交给系统浏览器打开 */
@@ -1856,6 +1992,22 @@ if (!gotLock) {
 
   app.on('before-quit', () => {
     quitting = true;
+    // 用户选择“稍后更新”：退出主程序时启动安装向导
+    if (!installerLaunched && store.pendingInstallUpdate && fs.existsSync(store.pendingInstallUpdate)) {
+      const setup = store.pendingInstallUpdate;
+      const portable = process.env.PORTABLE_EXECUTABLE_FILE;
+      const oldPortable = portable && fs.existsSync(portable) ? path.resolve(portable) : '';
+      store.pendingCleanup = Array.from(new Set([...(store.pendingCleanup || []), oldPortable, setup].filter(Boolean)));
+      store.pendingInstallUpdate = '';
+      installerLaunched = true;
+      saveStore();
+      try {
+        shell.openPath(setup);
+        appendLog('UPDATE_INSTALL_ON_QUIT', { setup });
+      } catch (e) {
+        appendLog('UPDATE_INSTALL_ON_QUIT_ERR', { message: e.message });
+      }
+    }
     saveStore();
   });
 }

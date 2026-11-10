@@ -49,6 +49,12 @@ const state = {
   updateUrl: '',
   updateInfo: null,
   updateDownload: { phase: 'idle', percent: 0, filePath: '', version: '' },
+  updateAutoCheck: true,
+  updateAutoDownload: true,
+  updateLastCheck: '',
+  updateBannerDismissed: '',
+  updateDeferred: false,
+  updateInstallStarted: false,
   version: '',
   selectedSubjects: [],
   historyExpanded: false
@@ -62,6 +68,11 @@ function dateKey(d = new Date()) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+function escapeHtml(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
 
 function fmtTargetCN(target) {
   const wk = '日一二三四五六'[target.getDay()];
@@ -147,6 +158,9 @@ async function boot() {
   state.debug = !!s.debugMode;
   state.onboarded = !!s.onboarded;
   state.onboardAutoLaunch = state.autoLaunch;
+  state.updateAutoCheck = s.updateAutoCheck !== false;
+  state.updateAutoDownload = s.updateAutoDownload !== false;
+  try { state.updateBannerDismissed = localStorage.getItem('gk-update-dismissed') || ''; } catch (e) { /* 忽略 */ }
 
   applySkin(state.skin);
   renderVersion(init.version);
@@ -190,7 +204,9 @@ async function boot() {
     state.updateDownload.filePath = data.filePath || '';
     state.updateDownload.version = data.version || state.updateDownload.version;
     renderUpdateUI();
-    if (!$('settings').hidden) toast('新版本安装包已下载完成');
+    if (!state.updateInstallStarted && !state.updateDeferred) {
+      showUpdateReadyDialog();
+    }
   });
   bridge.onUpdateError(() => {
     state.updateDownload.phase = 'error';
@@ -200,10 +216,14 @@ async function boot() {
   setInterval(tick, 1000);
 
   refreshWeather();
-  setInterval(() => refreshWeather(), 30 * 60 * 1000);
-  // 启动后自动检测更新，此后每 6 小时静默检测一次
-  setTimeout(() => checkUpdates(true), 1800);
-  setInterval(() => checkUpdates(true), 6 * 60 * 60 * 1000);
+  setInterval(() => refreshWeather(), 10 * 60 * 1000);
+  // 自动检测更新（可在设置中关闭），每 6 小时静默检测一次
+  if (state.updateAutoCheck) {
+    setTimeout(() => checkUpdates(true), 1800);
+  }
+  setInterval(() => {
+    if (state.updateAutoCheck) checkUpdates(true);
+  }, 6 * 60 * 60 * 1000);
 
   // 首次使用先完成配置；之后每天启动若今日尚未抽签，弹出全屏首抽引导
   if (!state.onboarded) {
@@ -613,6 +633,7 @@ async function refreshWeather() {
       state.weather = w;
       renderWeather(w);
       $('weatherStatus').textContent = state.weatherCity ? state.weatherCity : '自动定位';
+      if (!Array.isArray(w.hours) || !w.hours.length) loadHourlyForecast();
       return true;
     }
     $('weatherCard').hidden = true;
@@ -622,6 +643,17 @@ async function refreshWeather() {
   } catch (e) {
     return false;
   }
+}
+
+async function loadHourlyForecast() {
+  if (!bridge.getWeatherHourly) return;
+  try {
+    const res = await bridge.getWeatherHourly();
+    if (res && res.ok && Array.isArray(res.hours) && res.hours.length) {
+      if (state.weather) state.weather.hours = res.hours;
+      if (!$('weatherModal').hidden && state.weather) renderHourlyForecast(state.weather);
+    }
+  } catch (e) { /* 逐小时失败不影响主天气 */ }
 }
 
 /* ---------------- 天气详情与建议 ---------------- */
@@ -700,6 +732,18 @@ function openWeatherDetail() {
     box.appendChild(el);
   });
 
+  if (Array.isArray(w.hours) && w.hours.length) {
+    renderHourlyForecast(w);
+  } else {
+    const hourBox = $('wHourlyBox');
+    if (hourBox) hourBox.hidden = false;
+    const note = $('wHourlyNote');
+    if (note) note.textContent = '加载中…';
+    const list = $('wHours');
+    if (list) list.innerHTML = '<div class="w-hour-loading">正在获取逐小时天气…</div>';
+    loadHourlyForecast();
+  }
+
   const ul = $('wAdvice');
   ul.innerHTML = '';
   buildWeatherAdvice(w).forEach((text) => {
@@ -709,8 +753,34 @@ function openWeatherDetail() {
   });
 
   const t = new Date(w.updatedAt || Date.now());
-  $('wUpdated').textContent = `更新于 ${pad2(t.getHours())}:${pad2(t.getMinutes())} · 中国天气网`;
+  const sourceName = w.source === 'weather.com.cn' ? '中国天气网' : 'Open-Meteo';
+  $('wUpdated').textContent = `更新于 ${pad2(t.getHours())}:${pad2(t.getMinutes())} · ${sourceName}`;
   $('weatherModal').hidden = false;
+}
+
+/* 逐小时预报（24 小时） */
+function renderHourlyForecast(w) {
+  const box = $('wHourlyBox');
+  const list = $('wHours');
+  if (!box || !list) return;
+  const hours = Array.isArray(w.hours) ? w.hours.slice(0, 24) : [];
+  list.innerHTML = '';
+  if (!hours.length) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  $('wHourlyNote').textContent = `未来 ${hours.length} 小时`;
+  hours.forEach((h) => {
+    const el = document.createElement('div');
+    el.className = 'w-hour';
+    el.innerHTML =
+      `<span class="w-hour__label">${escapeHtml(h.label)}</span>` +
+      `<span class="w-hour__desc">${escapeHtml(h.desc || '天气')}</span>` +
+      `<span class="w-hour__temp">${h.temp}°</span>` +
+      `<span class="w-hour__pop">${h.pop ? '降水 ' + h.pop + '%' : '—'}</span>`;
+    list.appendChild(el);
+  });
 }
 
 function closeWeatherDetail() {
@@ -786,7 +856,67 @@ function closeTermModal() {
 }
 
 /* ---------------- 版本更新（自动检测 + 后台下载 + 手动安装） ---------------- */
+function updateHighlights() {
+  const info = state.updateInfo;
+  if (!info) return [];
+  if (Array.isArray(info.highlights) && info.highlights.length) return info.highlights.slice(0, 7);
+  if (info.notesFull) return String(info.notesFull).split(/[；;。]\s*/).map((s) => s.trim()).filter(Boolean).slice(0, 6);
+  return info.notes ? [info.notes] : [];
+}
+
+function renderUpdateBanner() {
+  const box = $('updateBanner');
+  if (!box) return;
+  const info = state.updateInfo;
+  const dl = state.updateDownload;
+  if (!info || !info.ok || !info.hasUpdate || state.updateBannerDismissed === info.latest) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  $('updateBannerTitle').textContent = `发现新版本 v${info.latest}`;
+  const list = $('updateBannerList');
+  const items = updateHighlights();
+  list.innerHTML = items.length
+    ? items.map((text) => `<li>${escapeHtml(text)}</li>`).join('')
+    : '<li>本次更新带来了一些改进与修复</li>';
+
+  let statusText = '可立即更新，或稍后再试';
+  if (dl.phase === 'downloading' || info.downloading) statusText = `正在后台下载 ${dl.percent || 0}%`;
+  else if (dl.phase === 'ready') statusText = '安装包已下载完成';
+  else if (dl.phase === 'error') statusText = '下载失败，可点击重试';
+  else if (info.notes) statusText = info.notes.slice(0, 46);
+  $('updateBannerStatus').textContent = statusText;
+
+  const nowBtn = $('btnUpdateNow');
+  nowBtn.disabled = dl.phase === 'downloading';
+  nowBtn.textContent = dl.phase === 'ready'
+    ? '立即安装'
+    : (dl.phase === 'downloading' ? '下载中…' : '现在更新');
+}
+
+function dismissUpdateBanner() {
+  const info = state.updateInfo;
+  if (info && info.latest) {
+    state.updateBannerDismissed = info.latest;
+    try { localStorage.setItem('gk-update-dismissed', info.latest); } catch (e) { /* 忽略 */ }
+  }
+  renderUpdateBanner();
+}
+
+function showUpdateReadyDialog() {
+  const dl = state.updateDownload;
+  if (!dl.filePath) return;
+  $('readyVersion').textContent = dl.version || (state.updateInfo && state.updateInfo.latest) || '';
+  $('updateReadyModal').hidden = false;
+}
+
+function hideUpdateReadyDialog() {
+  $('updateReadyModal').hidden = true;
+}
+
 function renderUpdateUI() {
+  renderUpdateBanner();
   const info = state.updateInfo;
   const dl = state.updateDownload;
   const btn = $('btnDownloadUpdate');
@@ -871,8 +1001,17 @@ async function startUpdateDownload(info) {
 async function checkUpdates(silent) {
   const status = $('updateStatus');
   if (status && !silent) status.textContent = '正在检查…';
+  // 手动检查时重新显示更新公告
+  if (!silent) {
+    state.updateBannerDismissed = '';
+    try { localStorage.removeItem('gk-update-dismissed'); } catch (e) { /* 忽略 */ }
+  }
   try {
     const res = await bridge.checkUpdate();
+    const now = new Date();
+    state.updateLastCheck = `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+    const lastEl = $('updateLastCheck');
+    if (lastEl) lastEl.textContent = `上次检查：${state.updateLastCheck}`;
     if (!res || !res.configured) {
       if (status) status.textContent = '更新服务未配置';
       return;
@@ -891,8 +1030,8 @@ async function checkUpdates(silent) {
     if (res.downloaded && res.downloadFilePath) {
       state.updateDownload = { phase: 'ready', percent: 100, filePath: res.downloadFilePath, version: res.latest };
       renderUpdateUI();
-    } else if (res.setupMirrors && res.setupMirrors.length) {
-      // 获取到新版本后在后台自动下载，下载完成后由用户点击安装
+    } else if (res.setupMirrors && res.setupMirrors.length && state.updateAutoDownload) {
+      // 自动下载开启时，在后台静默下载安装包
       startUpdateDownload(res);
     } else {
       state.updateDownload = { phase: 'idle', percent: 0, filePath: '', version: '' };
@@ -911,6 +1050,8 @@ function openSettings() {
   $('weatherStatus').textContent = state.weatherCity || '自动定位';
   $('curVersionLabel').textContent = 'v' + state.version;
   renderUpdateUI();
+  syncUpdatePrefsUI();
+  $('updateLastCheck').textContent = `上次检查：${state.updateLastCheck || '—'}`;
   $('inputScale').value = String(state.petScale);
   $('scaleLabel').textContent = Math.round(state.petScale * 100) + '%';
   renderSkinGrid();
@@ -1062,6 +1203,19 @@ function setAutoLaunchUI(on) {
   const el = $('switchAutoLaunch');
   el.classList.toggle('on', !!on);
   el.setAttribute('aria-pressed', String(!!on));
+}
+
+function syncUpdatePrefsUI() {
+  const check = $('switchUpdateCheck');
+  if (check) {
+    check.classList.toggle('on', state.updateAutoCheck);
+    check.setAttribute('aria-pressed', String(state.updateAutoCheck));
+  }
+  const dl = $('switchUpdateDownload');
+  if (dl) {
+    dl.classList.toggle('on', state.updateAutoDownload);
+    dl.setAttribute('aria-pressed', String(state.updateAutoDownload));
+  }
 }
 
 async function refreshLogs() {
@@ -1397,6 +1551,68 @@ function bindEvents() {
     bridge.openExternal('https://github.com/luoleiyong/gaokao-countdown');
   });
 
+  // 首页更新公告
+  $('btnUpdateBannerClose').addEventListener('click', dismissUpdateBanner);
+  $('btnUpdateBannerLater').addEventListener('click', () => {
+    dismissUpdateBanner();
+    toast('已收起更新公告，可在设置中更新');
+  });
+  $('btnUpdateNow').addEventListener('click', async () => {
+    const info = state.updateInfo;
+    const dl = state.updateDownload;
+    if (!info) return;
+    if (dl.phase === 'downloading') return toast('安装包正在下载，请稍候');
+    if (dl.phase === 'ready') return showUpdateReadyDialog();
+    if (info.setupMirrors && info.setupMirrors.length) {
+      startUpdateDownload(info);
+      toast('已开始后台下载更新');
+      return;
+    }
+    const urls = [];
+    if (Array.isArray(info.portableMirrors)) urls.push(...info.portableMirrors);
+    if (Array.isArray(info.mirrors)) urls.push(...info.mirrors);
+    if (info.url) urls.push(info.url);
+    if (urls.length) bridge.downloadUpdate(urls);
+    else toast('版本清单未提供下载地址');
+  });
+
+  // 更新下载完成弹窗
+  $('btnUpdateRestart').addEventListener('click', async () => {
+    const dl = state.updateDownload;
+    if (!dl.filePath) return;
+    state.updateInstallStarted = true;
+    hideUpdateReadyDialog();
+    toast('正在退出并启动安装程序…');
+    const res = await bridge.installUpdate(dl.filePath);
+    if (!res || !res.ok) {
+      state.updateInstallStarted = false;
+      toast((res && res.error) || '无法启动安装程序');
+    }
+  });
+  $('btnUpdateLater').addEventListener('click', async () => {
+    const dl = state.updateDownload;
+    if (!dl.filePath) return;
+    state.updateDeferred = true;
+    hideUpdateReadyDialog();
+    const res = await bridge.deferInstall(dl.filePath);
+    toast(res && res.ok ? '将在退出程序后自动安装' : '稍后安装设置失败');
+  });
+
+  // 更新设置
+  $('switchUpdateCheck').addEventListener('click', async () => {
+    state.updateAutoCheck = !state.updateAutoCheck;
+    syncUpdatePrefsUI();
+    try { await bridge.saveSettings({ updateAutoCheck: state.updateAutoCheck }); } catch (e) { /* 忽略 */ }
+    toast(state.updateAutoCheck ? '已开启自动检测更新' : '已关闭自动检测更新');
+    if (state.updateAutoCheck) checkUpdates(true);
+  });
+  $('switchUpdateDownload').addEventListener('click', async () => {
+    state.updateAutoDownload = !state.updateAutoDownload;
+    syncUpdatePrefsUI();
+    try { await bridge.saveSettings({ updateAutoDownload: state.updateAutoDownload }); } catch (e) { /* 忽略 */ }
+    toast(state.updateAutoDownload ? '已开启自动下载更新' : '已关闭自动下载更新');
+  });
+
   // 连续点击版本号 5 次进入管理员模式
   let versionClicks = 0;
   let versionClickTimer = null;
@@ -1450,7 +1666,8 @@ function bindEvents() {
   // 键盘
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (!$('settings').hidden) closeSettings();
+      if (!$('updateReadyModal').hidden) hideUpdateReadyDialog();
+      else if (!$('settings').hidden) closeSettings();
       else if (!$('drawModal').hidden) closeDrawModal();
       else if (!$('weatherModal').hidden) closeWeatherDetail();
       else if (!$('termModal').hidden) closeTermModal();
@@ -1471,7 +1688,7 @@ function createMockBridge() {
     store = JSON.parse(localStorage.getItem(KEY) || 'null') || {};
   } catch (e) { store = {}; }
   store = Object.assign(
-    { targetDate: '2027-06-07', skin: 'board', petScale: 1, autoLaunch: false, history: [], lastLaunchDate: '', debugMode: false, onboarded: true },
+    { targetDate: '2027-06-07', skin: 'board', petScale: 1, autoLaunch: false, history: [], lastLaunchDate: '', debugMode: false, onboarded: true, updateAutoCheck: true, updateAutoDownload: true },
     store
   );
   const today = dateKey();
@@ -1514,15 +1731,31 @@ function createMockBridge() {
           windLevel: winds[i].split(' ')[1]
         };
       });
+      const hours = Array.from({ length: 24 }, (_, i) => ({
+        label: i === 0 ? '现在' : `${String((base.getHours() + i) % 24).padStart(2, '0')}时`,
+        desc: descs[i % descs.length],
+        temp: 18 + Math.round(Math.sin(i / 3) * 3),
+        pop: i % 4 === 0 ? 20 : 0
+      }));
       return {
         ok: true, city: '杭州', temp: 18, humidity: 62, wind: 8, windDir: '东南风',
-        aqi: 42, code: 2, desc: '多云', days, updatedAt: Date.now()
+        aqi: 42, code: 2, desc: '多云', days, hours, updatedAt: Date.now()
       };
     },
+    getWeatherHourly: async () => ({
+      ok: true,
+      hours: Array.from({ length: 24 }, (_, i) => ({
+        label: i === 0 ? '现在' : `${String(i).padStart(2, '0')}时`,
+        desc: i % 3 === 0 ? '多云' : (i % 3 === 1 ? '晴' : '小雨'),
+        temp: 18 + Math.round(Math.sin(i / 3) * 3),
+        pop: i % 4 === 0 ? 20 : 0
+      }))
+    }),
     checkUpdate: async () => ({ configured: true, ok: true, current: '1.0.0-dev', latest: '1.0.0-dev', hasUpdate: false }),
     downloadUpdate: async () => ({ ok: true }),
     downloadUpdatePackage: async () => ({ ok: false, error: '浏览器预览不支持自动下载' }),
     installUpdate: async () => ({ ok: false, error: '浏览器预览不支持安装' }),
+    deferInstall: async () => ({ ok: false, error: '浏览器预览不支持安装' }),
     onUpdateProgress: () => {},
     onUpdateDownloaded: () => {},
     onUpdateError: () => {},

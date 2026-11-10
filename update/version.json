@@ -1,5 +1,5 @@
 {
-  "version": "1.6.1",
-  "notes": "安装包与用户协议、首次启动配置、后台自动下载更新、点名音效与姓名朗读；优化安装完成后的旧程序清理",
+  "version": "1.6.2",
+  "notes": "首页更新公告、后台静默下载与重启/稍后安装、更新设置；天气新增实时温度与未来 24 小时逐小时预报",
   "url": "https://github.com/luoleiyong/gaokao-countdown/releases/latest"
 }

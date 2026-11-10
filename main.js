@@ -571,10 +571,9 @@ async function resolveLocation() {
       'https://geocoding-api.open-meteo.com/v1/search?name=' +
         encodeURIComponent(cityPref) + '&count=1&language=zh&format=json',
       7000
-    );
+    ).catch(() => null);
     const hit = geo && geo.results && geo.results[0];
-    if (!hit) throw new Error('未找到城市：' + cityPref);
-    return { city: hit.name, lat: hit.latitude, lon: hit.longitude, source: 'city' };
+    if (hit) return { city: hit.name, lat: hit.latitude, lon: hit.longitude, source: 'city' };
   }
   try {
     const r = await fetchJson('https://ipwho.is/', 6000);
@@ -1965,6 +1964,10 @@ if (!gotLock) {
   app.whenReady().then(() => {
     ensureDirs();
     runPendingCleanup();
+    if (store.pendingInstallUpdate && !fs.existsSync(store.pendingInstallUpdate)) {
+      store.pendingInstallUpdate = '';
+      saveStore();
+    }
     const today = dateKey();
     firstTodayLaunch = store.lastLaunchDate !== today;
     store.lastLaunchDate = today;

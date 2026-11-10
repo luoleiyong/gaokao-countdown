@@ -16,13 +16,15 @@
       <span class="cls-seal">课</span>
       <span class="cls-brand__text">
         <b>课堂助手</b>
-        <i>随机点名 · 课程表</i>
+        <i>随机点名 · 分组 · 计时</i>
       </span>
     </div>
     <nav class="cls-tabs">
       <button class="cls-tab on" data-tab="roll">随机点名</button>
-      <button class="cls-tab" data-tab="timetable">课程表</button>
+      <button class="cls-tab" data-tab="group">随机分组</button>
+      <button class="cls-tab" data-tab="timer">课堂计时</button>
     </nav>
+    <button class="cls-project" id="btnProjection" title="全屏投影模式（Esc 退出）">投影</button>
   </header>
 
   <main class="cls-main">
@@ -57,33 +59,67 @@
           <button class="roll-count__btn" id="btnCountPlus" title="增加">＋</button>
         </div>
         <button class="roll-btn" id="btnRoll"><span>开 始 点 名</span></button>
-        <label class="voice-toggle" for="voiceToggle">
-          <input type="checkbox" id="voiceToggle" />
-          <span class="voice-toggle__dot"></span>
-          <span>朗读姓名</span>
-        </label>
+        <div class="roll-toggles">
+          <label class="voice-toggle" for="voiceToggle">
+            <input type="checkbox" id="voiceToggle" />
+            <span class="voice-toggle__dot"></span>
+            <span>朗读姓名</span>
+          </label>
+          <label class="voice-toggle" for="noRepeatToggle" title="一轮内不重复抽到同一个人">
+            <input type="checkbox" id="noRepeatToggle" />
+            <span class="voice-toggle__dot"></span>
+            <span>一轮不重复</span>
+          </label>
+        </div>
       </section>
     </section>
 
-    <!-- 课程表 -->
-    <section class="cls-page cls-tt" id="pageTimetable" hidden>
-      <div class="tt-head">
-        <input class="tt-title" id="ttTitle" maxlength="40" aria-label="课程表标题" />
-        <div class="tt-head__actions">
-          <button class="cls-ghost" id="btnTtImport">一键导入</button>
-          <button class="cls-ghost" id="btnTtAdd">增加一节</button>
+    <!-- 随机分组 -->
+    <section class="cls-page cls-group" id="pageGroup" hidden>
+      <div class="group-panel">
+        <div class="group-controls">
+          <div class="group-field">
+            <span>分组方式</span>
+            <select id="groupMode" class="group-select">
+              <option value="count">按组数</option>
+              <option value="size">按每组人数</option>
+            </select>
+          </div>
+          <div class="group-stepper">
+            <button class="roll-count__btn" id="btnGroupMinus" title="减少">−</button>
+            <b id="groupValue">4</b>
+            <button class="roll-count__btn" id="btnGroupPlus" title="增加">＋</button>
+          </div>
+          <button class="cls-primary group-go" id="btnGroupGenerate">随机分组</button>
+        </div>
+        <div class="group-stage" id="groupResult">
+          <p class="group-empty">使用当前名单随机分组，每组人数尽量平均</p>
         </div>
       </div>
-      <div class="tt-scroll">
-        <table class="tt-table" id="ttTable"></table>
+    </section>
+
+    <!-- 课堂计时 -->
+    <section class="cls-page cls-timer" id="pageTimer" hidden>
+      <div class="timer-panel">
+        <div class="timer-display" id="timerDisplay">05:00</div>
+        <div class="timer-presets" id="timerPresets">
+          <button data-min="1">1 分钟</button>
+          <button data-min="3">3 分钟</button>
+          <button data-min="5" class="on">5 分钟</button>
+          <button data-min="10">10 分钟</button>
+          <button data-min="15">15 分钟</button>
+        </div>
+        <div class="timer-actions">
+          <button class="cls-primary" id="btnTimerStart">开始计时</button>
+          <button class="cls-ghost" id="btnTimerReset">重置</button>
+        </div>
+        <p class="timer-tip" id="timerTip">选择时长后点击「开始计时」</p>
       </div>
-      <p class="tt-tip">点击单元格直接编辑，修改会自动保存。支持 Excel / CSV / txt 一键导入。</p>
     </section>
   </main>
 </div>
 
 <input type="file" id="fileRoster" accept=".txt,.csv,.xlsx,.xls" multiple hidden />
-<input type="file" id="fileTimetable" accept=".txt,.csv,.xlsx,.xls" hidden />
 
 <!-- 管理员模式 -->
 <div class="cls-modal" id="adminModal" hidden>
@@ -97,34 +133,7 @@
   </div>
 </div>
 
-<!-- 课程表导入 -->
-<div class="cls-modal" id="ttImportModal" hidden>
-  <div class="cls-modal__backdrop" data-close="tt"></div>
-  <div class="cls-modal__box cls-import-box">
-    <header class="cls-modal__head">
-      <h3>一键导入课程表</h3>
-      <button class="win-btn" data-close="tt" title="关闭">×</button>
-    </header>
-    <div class="cls-import-body">
-      <p class="cls-import-tip">粘贴课表内容，或选择 csv / txt / xlsx 文件。支持两种格式：</p>
-      <pre class="cls-import-demo">格式一（表格，第一行含星期）：
-节次,时间,周一,周二,周三,周四,周五
-第1节,08:00-08:45,语文,数学,英语,物理,化学
-
-格式二（逐行）：
-周一 第1节 08:00-08:45 语文</pre>
-      <textarea class="cls-textarea" id="ttImportText" placeholder="在这里粘贴课表内容…"></textarea>
-      <div class="cls-import-file-row">
-        <button class="cls-ghost" id="btnPickTtFile">选择文件</button>
-        <span class="cls-import-file" id="ttFileName">未选择文件</span>
-      </div>
-    </div>
-    <footer class="cls-modal__foot">
-      <button class="cls-ghost" data-close="tt">取消</button>
-      <button class="cls-primary" id="btnDoImportTt">导入</button>
-    </footer>
-  </div>
-</div>
+<!-- 课程表已移至首页独立页面 -->
 
 <div class="cls-toast" id="clsToast" hidden></div>
 <script src="sound.js"></script>

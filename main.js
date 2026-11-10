@@ -3,7 +3,7 @@
  * 高考倒计时 · 桌面宠物（Windows）
  * 主进程：窗口/宠物层级、托盘、开机自启、本地存储、启动日志
  */
-const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, dialog, net, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, dialog, net, shell, globalShortcut } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -55,6 +55,9 @@ const STORE_DEFAULTS = {
   pendingInstallUpdate: '',
   updateAutoCheck: true,
   updateAutoDownload: true,
+  events: [],
+  backupAuto: true,
+  lastBackupDate: '',
   classroom: null
 };
 
@@ -120,10 +123,11 @@ function normalizeTimetable(input) {
   return {
     title: String(t.title || def.title).slice(0, 40),
     days: Array.isArray(t.days) && t.days.length === 7 ? t.days.map((d) => String(d).slice(0, 6)) : def.days,
-    periods: t.periods.slice(0, 16).map((p, i) => ({
+    periods: t.periods.slice(0, 24).map((p, i) => ({
       id: typeof p.id === 'string' && p.id ? p.id : 'p' + (i + 1),
       label: String(p.label || `第${i + 1}节`).slice(0, 12),
       time: String(p.time || '').slice(0, 24),
+      night: !!p.night,
       cells: Array.from({ length: 7 }, (_, j) => {
         const v = Array.isArray(p.cells) ? p.cells[j] : '';
         return String(v == null ? '' : v).slice(0, 30);
@@ -150,7 +154,10 @@ function normalizeRoster(input) {
     name: String(input.name || '未命名名单').slice(0, 40),
     createdAt: Number(input.createdAt) || Date.now(),
     names,
-    lastPickId: typeof input.lastPickId === 'string' ? input.lastPickId : ''
+    lastPickId: typeof input.lastPickId === 'string' ? input.lastPickId : '',
+    roundIds: Array.isArray(input.roundIds)
+      ? Array.from(new Set(input.roundIds.filter((id) => names.some((n) => n.id === id))))
+      : []
   };
 }
 function defaultClassroom() {
@@ -168,6 +175,54 @@ function normalizeClassroom(input) {
   }
   out.timetable = normalizeTimetable(c.timetable);
   return out;
+}
+function normalizeEvents(input) {
+  return (Array.isArray(input) ? input : []).map((e) => {
+    if (!e || typeof e !== 'object') return null;
+    const name = String(e.name || '').trim().slice(0, 30);
+    const date = String(e.date || '');
+    if (!name || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    return { id: typeof e.id === 'string' && e.id ? e.id : uid('e'), name, date };
+  }).filter(Boolean).slice(0, 30);
+}
+function backupDir() {
+  return path.join(USER_DIR, 'backups');
+}
+/* 每天首次启动自动备份 store.json，保留最近 7 份 */
+function runAutoBackup(force) {
+  if (!store.backupAuto && !force) return null;
+  const today = dateKey();
+  if (!force && store.lastBackupDate === today) return null;
+  try {
+    if (!fs.existsSync(STORE_FILE)) return null;
+    fs.mkdirSync(backupDir(), { recursive: true });
+    const file = path.join(backupDir(), `store-${today}.json`);
+    fs.copyFileSync(STORE_FILE, file);
+    const files = fs.readdirSync(backupDir())
+      .filter((f) => /^store-\d{4}-\d{2}-\d{2}\.json$/.test(f))
+      .sort();
+    while (files.length > 7) {
+      try { fs.unlinkSync(path.join(backupDir(), files.shift())); } catch { /* 忽略 */ }
+    }
+    store.lastBackupDate = today;
+    saveStore();
+    appendLog('BACKUP_AUTO', { file, count: files.length });
+    return file;
+  } catch (e) {
+    appendLog('BACKUP_ERR', { message: e.message });
+    return null;
+  }
+}
+function latestBackupInfo() {
+  try {
+    const files = fs.readdirSync(backupDir())
+      .filter((f) => /^store-\d{4}-\d{2}-\d{2}\.json$/.test(f))
+      .sort();
+    if (!files.length) return { count: 0, latest: '' };
+    return { count: files.length, latest: files[files.length - 1].replace(/^store-|\.json$/g, '') };
+  } catch {
+    return { count: 0, latest: '' };
+  }
 }
 function hashPassword(password, salt) {
   return crypto.createHash('sha256').update(salt + '|' + String(password)).digest('hex');
@@ -197,6 +252,9 @@ function loadStore() {
     merged.pendingInstallUpdate = typeof data.pendingInstallUpdate === 'string' ? data.pendingInstallUpdate : '';
     merged.updateAutoCheck = merged.updateAutoCheck !== false;
     merged.updateAutoDownload = merged.updateAutoDownload !== false;
+    merged.events = normalizeEvents(data.events);
+    merged.backupAuto = merged.backupAuto !== false;
+    merged.lastBackupDate = typeof data.lastBackupDate === 'string' ? data.lastBackupDate : '';
     // 更新源固定为项目仓库，避免旧配置残留
     merged.updateUrl = DEFAULT_UPDATE_URL;
     return merged;
@@ -228,6 +286,7 @@ const LOG_LABELS = {
   DEBUG_MODE: '调试模式变更',
   KNOWLEDGE_OPEN: '打开学科知识签',
   CLASSROOM_OPEN: '打开课堂点名',
+  TIMETABLE_OPEN: '打开课程表',
   WEATHER_OK: '天气获取成功',
   WEATHER_ERR: '天气获取失败',
   WEATHER_CN_FAIL: '中国天气网获取失败',
@@ -254,6 +313,15 @@ const LOG_LABELS = {
   SIGN_DRAW: '开启幸运签',
   HISTORY_CLEAR: '清空签运簿',
   HISTORY_RESTORE: '恢复签运簿',
+  BACKUP_AUTO: '自动备份数据',
+  BACKUP_ERR: '自动备份失败',
+  DATA_EXPORT: '导出数据',
+  DATA_IMPORT: '导入数据',
+  EVENT_SAVE: '保存重要日子',
+  GROUP_DRAW: '随机分组',
+  TIMER_DONE: '课堂计时结束',
+  SHORTCUT_FAIL: '全局快捷键注册失败',
+  PET_ENCOURAGE: '桌面宠物课程提示',
   DWM_ERR: '窗口特效设置失败',
   CLIENT: '客户端事件'
 };
@@ -901,7 +969,7 @@ function rememberBounds() {
 }
 
 function petSize(scale) {
-  return { width: Math.round(282 * scale), height: Math.round(252 * scale) };
+  return { width: Math.round(300 * scale), height: Math.round(368 * scale) };
 }
 
 function applyPetMode(on) {
@@ -1010,7 +1078,9 @@ function navigateToView(view, extraQuery) {
 
   const size = view === 'knowledge'
     ? { width: 920, height: 680, minWidth: 780, minHeight: 560 }
-    : { width: 1120, height: 760, minWidth: 940, minHeight: 620 };
+    : (view === 'timetable'
+      ? { width: 1180, height: 780, minWidth: 980, minHeight: 640 }
+      : { width: 1120, height: 760, minWidth: 940, minHeight: 620 });
   const area = screen.getPrimaryDisplay().workArea;
   const width = Math.min(size.width, area.width - 16);
   const height = Math.min(size.height, area.height - 16);
@@ -1026,11 +1096,13 @@ function navigateToView(view, extraQuery) {
   win.loadFile(path.join(__dirname, 'renderer', view + '.html'), {
     query: Object.assign({ skin: store.skin }, extraQuery || {})
   });
-  appendLog(view === 'knowledge' ? 'KNOWLEDGE_OPEN' : 'CLASSROOM_OPEN', {});
+  appendLog(view === 'knowledge' ? 'KNOWLEDGE_OPEN'
+    : (view === 'timetable' ? 'TIMETABLE_OPEN' : 'CLASSROOM_OPEN'), {});
 }
 
 function goHomeView() {
   if (!win || win.isDestroyed()) return;
+  if (win.isFullScreen()) win.setFullScreen(false);
   currentView = 'home';
   classroomUnlocked = false;
   win.setResizable(false);
@@ -1073,6 +1145,16 @@ function openClassroomWindow(options) {
     return;
   }
   navigateToView('classroom', options && options.admin ? { admin: '1' } : undefined);
+}
+
+function openTimetableView() {
+  if (!win || win.isDestroyed()) return;
+  if (currentView === 'timetable') {
+    win.show();
+    win.focus();
+    return;
+  }
+  navigateToView('timetable');
 }
 
 const NAME_HEADER_RE = /^(姓名|名字|学生姓名|学生|name|序号|编号|学号|班级|性别)$/i;
@@ -1224,41 +1306,79 @@ function classroomAdminData() {
   data.historyBackupCount = historyBackup ? historyBackup.length : 0;
   return data;
 }
-function drawFromRoster(rosterId, count) {
+function weightedPick(candidates) {
+  const total = candidates.reduce((sum, n) => sum + n.weight, 0);
+  let r = Math.random() * total;
+  let hit = candidates[candidates.length - 1];
+  for (const n of candidates) {
+    r -= n.weight;
+    if (r <= 0) { hit = n; break; }
+  }
+  return hit;
+}
+function drawFromRoster(rosterId, count, options) {
   const roster = store.classroom.rosters.find((r) => r.id === rosterId);
   if (!roster) return { ok: false, error: '名单不存在' };
   if (!roster.names.length) return { ok: false, error: '名单里还没有学生' };
   const pool = roster.names.filter((n) => n.weight > 0);
   if (!pool.length) return { ok: false, error: '权重都为 0，无法点名' };
   const want = Math.max(1, Math.min(parseInt(count, 10) || 1, pool.length));
-  let candidates = pool.slice();
-  // 多人抽取时尽量避开上一次最后抽到的学生
-  if (pool.length > want) candidates = candidates.filter((n) => n.id !== roster.lastPickId);
-  if (!candidates.length) candidates = pool.slice();
-
+  const noRepeat = !!(options && options.noRepeat);
   const picked = [];
-  for (let i = 0; i < want && candidates.length; i++) {
-    const total = candidates.reduce((sum, n) => sum + n.weight, 0);
-    let r = Math.random() * total;
-    let hit = candidates[candidates.length - 1];
-    for (const n of candidates) {
-      r -= n.weight;
-      if (r <= 0) { hit = n; break; }
+  let wrapped = false;
+
+  if (noRepeat) {
+    let round = new Set(
+      (Array.isArray(roster.roundIds) ? roster.roundIds : []).filter((id) => pool.some((n) => n.id === id))
+    );
+    while (picked.length < want) {
+      let remain = pool.filter((n) => !round.has(n.id));
+      if (!remain.length) {
+        round = new Set();
+        wrapped = picked.length > 0;
+        remain = pool.slice();
+      }
+      if (pool.length > 1 && picked.length === 0 && remain.length > 1) {
+        const filtered = remain.filter((n) => n.id !== roster.lastPickId);
+        if (filtered.length) remain = filtered;
+      }
+      const hit = weightedPick(remain);
+      round.add(hit.id);
+      hit.count += 1;
+      hit.pickedAt = Date.now();
+      picked.push(hit);
+      roster.roundIds = Array.from(round);
+      if (picked.length >= pool.length) break;
     }
-    hit.count += 1;
-    hit.pickedAt = Date.now();
-    picked.push(hit);
-    candidates = candidates.filter((n) => n.id !== hit.id);
+  } else {
+    let candidates = pool.slice();
+    // 多人抽取时尽量避开上一次最后抽到的学生
+    if (pool.length > want) candidates = candidates.filter((n) => n.id !== roster.lastPickId);
+    if (!candidates.length) candidates = pool.slice();
+    for (let i = 0; i < want && candidates.length; i++) {
+      const hit = weightedPick(candidates);
+      hit.count += 1;
+      hit.pickedAt = Date.now();
+      picked.push(hit);
+      candidates = candidates.filter((n) => n.id !== hit.id);
+    }
+    roster.roundIds = [];
   }
+
   if (!picked.length) return { ok: false, error: '点名失败，请重试' };
   roster.lastPickId = picked[picked.length - 1].id;
   saveStore();
+  const roundSet = new Set(roster.roundIds || []);
+  const roundLeft = noRepeat ? pool.filter((n) => !roundSet.has(n.id)).length : 0;
   return {
     ok: true,
     name: picked[0].name,
     names: picked.map((n) => n.name),
     roster: roster.name,
-    rosterId: roster.id
+    rosterId: roster.id,
+    noRepeat,
+    wrapped,
+    roundLeft
   };
 }
 function broadcastDebugMode() {
@@ -1332,6 +1452,7 @@ function updateTrayMenu() {
   const menu = Menu.buildFromTemplate([
     { label: '打开主界面', click: showPanel },
     { label: '课堂助手', click: () => openClassroomWindow() },
+    { label: '课程表', click: () => openTimetableView() },
     { label: '学科知识签', click: () => openKnowledgeWindow() },
     { label: '桌面宠物模式', click: () => { showPanel(); setTimeout(() => applyPetMode(true), 200); } },
     { type: 'separator' },
@@ -1346,6 +1467,7 @@ function petContextMenu() {
   const template = [
     { label: '回到主界面', click: () => applyPetMode(false) },
     { label: '课堂助手', click: () => openClassroomWindow() },
+    { label: '课程表', click: () => openTimetableView() },
     { label: '学科知识签屋', click: () => openKnowledgeWindow() },
     {
       label: '更换皮肤',
@@ -1379,7 +1501,12 @@ function wireIpc() {
       onboarded: !!store.onboarded,
       updateAutoCheck: !!store.updateAutoCheck,
       updateAutoDownload: !!store.updateAutoDownload,
-      pendingInstallUpdate: store.pendingInstallUpdate || ''
+      pendingInstallUpdate: store.pendingInstallUpdate || '',
+      events: store.events,
+      timetable: store.classroom.timetable,
+      backupAuto: store.backupAuto !== false,
+      lastBackupDate: store.lastBackupDate || '',
+      backupInfo: latestBackupInfo()
     },
     isFirstToday: firstTodayLaunch,
     today: dateKey(),
@@ -1411,6 +1538,7 @@ function wireIpc() {
     if (typeof patch.onboarded === 'boolean') store.onboarded = patch.onboarded;
     if (typeof patch.updateAutoCheck === 'boolean') store.updateAutoCheck = patch.updateAutoCheck;
     if (typeof patch.updateAutoDownload === 'boolean') store.updateAutoDownload = patch.updateAutoDownload;
+    if (typeof patch.backupAuto === 'boolean') store.backupAuto = patch.backupAuto;
     saveStore();
     appendLog('SETTINGS', { targetDate: store.targetDate, petScale });
     return {
@@ -1440,6 +1568,77 @@ function wireIpc() {
     saveStore();
     appendLog('SIGN_DRAW', { date: entry.date, no: entry.no, level: entry.level, daysLeft: entry.daysLeft });
     return { ok: true, history: store.history };
+  });
+
+  /* 重要日子（多事件倒计时） */
+  ipcMain.handle('app:save-events', (_e, list) => {
+    store.events = normalizeEvents(list);
+    saveStore();
+    appendLog('EVENT_SAVE', { count: store.events.length });
+    return { ok: true, events: store.events };
+  });
+
+  /* 数据导出 / 导入 */
+  ipcMain.handle('app:export-data', async () => {
+    try {
+      const res = await dialog.showSaveDialog(win, {
+        title: '导出高考倒计时数据',
+        defaultPath: path.join(app.getPath('documents'), `高考倒计时数据-${dateKey()}.json`),
+        filters: [{ name: 'JSON 数据文件', extensions: ['json'] }]
+      });
+      if (res.canceled || !res.filePath) return { ok: false, canceled: true };
+      fs.writeFileSync(res.filePath, JSON.stringify(store, null, 2), 'utf8');
+      appendLog('DATA_EXPORT', { file: res.filePath });
+      return { ok: true, filePath: res.filePath };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('app:import-data', async () => {
+    try {
+      const res = await dialog.showOpenDialog(win, {
+        title: '导入高考倒计时数据',
+        properties: ['openFile'],
+        filters: [{ name: 'JSON 数据文件', extensions: ['json'] }]
+      });
+      if (res.canceled || !res.filePaths.length) return { ok: false, canceled: true };
+      const raw = fs.readFileSync(res.filePaths[0], 'utf8');
+      const data = JSON.parse(raw);
+      if (!data || typeof data !== 'object') return { ok: false, error: '文件内容不是有效的数据' };
+      runAutoBackup(true);
+      if (typeof data.targetDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data.targetDate)) store.targetDate = data.targetDate;
+      if (SKINS.some((s) => s.id === data.skin)) store.skin = data.skin;
+      if (data.petScale != null) {
+        petScale = clampScale(data.petScale);
+        store.petScale = petScale;
+      }
+      if (Array.isArray(data.history)) {
+        store.history = data.history.filter((h) => h && typeof h === 'object' && h.date).slice(0, 400);
+      }
+      if (Array.isArray(data.selectedSubjects)) store.selectedSubjects = normalizeSubjects(data.selectedSubjects);
+      if (Array.isArray(data.events)) store.events = normalizeEvents(data.events);
+      if (data.classroom && typeof data.classroom === 'object') store.classroom = normalizeClassroom(data.classroom);
+      if (typeof data.weatherCity === 'string') {
+        store.weatherCity = data.weatherCity.trim().slice(0, 60);
+        store.weatherCache = null;
+      }
+      if (typeof data.onboarded === 'boolean') store.onboarded = data.onboarded;
+      if (typeof data.updateAutoCheck === 'boolean') store.updateAutoCheck = data.updateAutoCheck;
+      if (typeof data.updateAutoDownload === 'boolean') store.updateAutoDownload = data.updateAutoDownload;
+      if (typeof data.backupAuto === 'boolean') store.backupAuto = data.backupAuto;
+      saveStore();
+      appendLog('DATA_IMPORT', { file: res.filePaths[0] });
+      return { ok: true, filePath: res.filePaths[0] };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('window:set-fullscreen', (_e, on) => {
+    if (!win || win.isDestroyed()) return { ok: false };
+    win.setFullScreen(!!on);
+    return { ok: true, fullscreen: win.isFullScreen() };
   });
 
   ipcMain.handle('weather:get', async () => {
@@ -1793,6 +1992,13 @@ function wireIpc() {
   });
   ipcMain.on('classroom:close', () => goHomeView());
 
+  /* 课程表（独立页面） */
+  ipcMain.handle('timetable:open', () => {
+    openTimetableView();
+    return { ok: true };
+  });
+  ipcMain.on('timetable:close', () => goHomeView());
+
   ipcMain.handle('classroom:get', () => classroomPublicData());
 
   ipcMain.handle('classroom:admin-status', () => ({
@@ -1945,16 +2151,18 @@ function wireIpc() {
     if (!roster) return { ok: false };
     roster.names.forEach((n) => { n.count = 0; n.pickedAt = 0; });
     roster.lastPickId = '';
+    roster.roundIds = [];
     saveStore();
     return { ok: true, data: classroomAdminData() };
   });
 
-  ipcMain.handle('classroom:draw', (_e, rosterId, count) => drawFromRoster(rosterId, count));
+  ipcMain.handle('classroom:draw', (_e, rosterId, count, options) => drawFromRoster(rosterId, count, options));
 
   /* 管理员：清空 / 恢复签运簿（误触可回退） */
   ipcMain.handle('classroom:clear-history', () => {
     const guard = adminGuard();
     if (guard) return guard;
+    runAutoBackup(true);
     historyBackup = store.history.slice();
     store.history = [];
     saveStore();
@@ -2009,6 +2217,21 @@ function wireIpc() {
   });
 }
 
+/* ---------------- 全局快捷键 ---------------- */
+function registerGlobalShortcuts() {
+  const list = [
+    ['CommandOrControl+Alt+K', () => openClassroomWindow()],
+    ['CommandOrControl+Alt+G', () => showPanel()]
+  ];
+  list.forEach(([accel, handler]) => {
+    try {
+      if (!globalShortcut.register(accel, handler)) appendLog('SHORTCUT_FAIL', { accel });
+    } catch (e) {
+      appendLog('SHORTCUT_FAIL', { accel, message: e.message });
+    }
+  });
+}
+
 /* ---------------- 生命周期 ---------------- */
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -2037,11 +2260,13 @@ if (!gotLock) {
     store.autoLaunch = readAutoLaunch();
     saveStore();
     appendLog('APP_START', { firstToday: firstTodayLaunch, pet: process.argv.includes('--pet'), version: app.getVersion() });
+    runAutoBackup(false);
 
     app.setAppUserModelId('com.trae.gaokao.countdown');
     createWindow();
     createTray();
     wireIpc();
+    registerGlobalShortcuts();
     if (process.argv.includes('--classroom')) {
       setTimeout(() => openClassroomWindow(), 500);
     }
@@ -2054,6 +2279,10 @@ if (!gotLock) {
   app.on('window-all-closed', () => {
     // 托盘常驻：不退出
     if (process.platform !== 'win32') app.quit();
+  });
+
+  app.on('will-quit', () => {
+    try { globalShortcut.unregisterAll(); } catch { /* 忽略 */ }
   });
 
   app.on('before-quit', () => {

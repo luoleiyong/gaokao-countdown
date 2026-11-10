@@ -16,7 +16,12 @@ const state = {
   ttFile: null,
   debugMode: false,
   voice: false,
-  drawCount: 1
+  noRepeat: false,
+  drawCount: 1,
+  projection: false,
+  groupMode: 'count',
+  groupValue: 4,
+  timer: { total: 300, left: 300, running: false, tick: null }
 };
 
 function esc(v) {
@@ -65,6 +70,9 @@ async function boot() {
   try {
     state.drawCount = Math.max(1, Math.min(20, parseInt(localStorage.getItem('cls-draw-count'), 10) || 1));
   } catch (e) { state.drawCount = 1; }
+  try {
+    state.noRepeat = localStorage.getItem('cls-no-repeat') === '1';
+  } catch (e) { state.noRepeat = false; }
   bindStaticEvents();
   await reload();
   if (params.get('admin') === '1') {
@@ -90,7 +98,6 @@ function activeRoster() {
 function renderAll() {
   renderRosterList();
   resetStage();
-  renderTimetable();
 }
 
 /* ---------------- 名单 ---------------- */
@@ -182,7 +189,7 @@ async function rollOnce() {
 
   let res;
   try {
-    res = await bridge.classroomDraw(roster.id, state.drawCount);
+    res = await bridge.classroomDraw(roster.id, state.drawCount, { noRepeat: state.noRepeat });
   } catch (e) {
     res = { ok: false, error: e.message };
   }
@@ -209,7 +216,14 @@ async function rollOnce() {
   }
   nameEl.classList.remove('rolling');
   nameEl.classList.add('landed');
-  $('rollSub').textContent = roster.name;
+  let subText = roster.name;
+  if (state.noRepeat) {
+    if (res.wrapped) subText = `${roster.name} · 本轮已抽完，已开启新一轮`;
+    else if (typeof res.roundLeft === 'number' && res.roundLeft === 0) subText = `${roster.name} · 本轮已全部抽完`;
+    else if (typeof res.roundLeft === 'number') subText = `${roster.name} · 本轮还剩 ${res.roundLeft} 人`;
+  }
+  $('rollSub').textContent = subText;
+  if (res.wrapped) toast('本轮已抽完，已自动开启新一轮');
   if (window.GkSound) {
     try { GkSound.playDrawDone(); } catch (e) { /* 忽略音效失败 */ }
   }
@@ -708,6 +722,156 @@ async function doImportTimetable() {
   toast(`课程表已导入，共 ${periods.length} 节`);
 }
 
+/* ---------------- 全屏投影 ---------------- */
+async function setProjection(on) {
+  state.projection = !!on;
+  document.body.classList.toggle('projection', state.projection);
+  try {
+    if (bridge.setFullScreen) await bridge.setFullScreen(state.projection);
+  } catch (e) { /* 忽略 */ }
+  if (state.projection) toast('投影模式 · 按 Esc 退出');
+}
+
+/* ---------------- 随机分组 ---------------- */
+function clampGroupValue() {
+  const roster = activeRoster();
+  const total = roster && roster.names.length ? roster.names.length : 4;
+  const max = Math.max(2, Math.min(20, total));
+  state.groupValue = Math.min(max, Math.max(2, state.groupValue));
+  $('groupValue').textContent = String(state.groupValue);
+}
+
+function changeGroupValue(delta) {
+  state.groupValue += delta;
+  clampGroupValue();
+  renderGroupPlaceholder();
+}
+
+function renderGroupPlaceholder() {
+  clampGroupValue();
+  const roster = activeRoster();
+  const box = $('groupResult');
+  if (!roster || !roster.names.length) {
+    box.innerHTML = '<p class="group-empty">请先在「随机点名」中选择或导入名单</p>';
+    return;
+  }
+  const unit = state.groupMode === 'count' ? '组' : '人';
+  box.innerHTML = `<p class="group-empty">当前名单「${esc(roster.name)}」共 ${roster.names.length} 人，每组目标 ${state.groupValue} ${unit}，点击「随机分组」</p>`;
+}
+
+function shuffled(list) {
+  const arr = list.slice();
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function generateGroups() {
+  const roster = activeRoster();
+  if (!roster || !roster.names.length) return toast('请先选择有学生的名单');
+  clampGroupValue();
+  const names = shuffled(roster.names.map((n) => n.name));
+  const total = names.length;
+  let groups = [];
+  if (state.groupMode === 'size') {
+    const size = Math.max(1, Math.min(state.groupValue, total));
+    for (let i = 0; i < total; i += size) groups.push(names.slice(i, i + size));
+  } else {
+    const count = Math.max(1, Math.min(state.groupValue, total));
+    groups = Array.from({ length: count }, () => []);
+    names.forEach((n, i) => groups[i % count].push(n));
+  }
+  const html = groups.map((g, i) => (
+    `<section class="group-card">
+      <div class="group-card__head"><b>第 ${i + 1} 组</b><span>${g.length} 人</span></div>
+      <div class="group-card__names">${g.map((n) => `<span>${esc(n)}</span>`).join('')}</div>
+    </section>`
+  )).join('');
+  $('groupResult').innerHTML = `<div class="group-grid">${html}</div>`;
+  if (bridge.log) bridge.log('GROUP_DRAW', { mode: state.groupMode, value: state.groupValue, groups: groups.length });
+  toast(`已随机分为 ${groups.length} 组`);
+}
+
+/* ---------------- 课堂计时 ---------------- */
+function fmtTimer(sec) {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function renderTimer() {
+  $('timerDisplay').textContent = fmtTimer(state.timer.left);
+  $('btnTimerStart').textContent = state.timer.running
+    ? '暂停'
+    : (state.timer.left < state.timer.total && state.timer.left > 0 ? '继续计时' : '开始计时');
+  document.body.classList.toggle('timer-running', state.timer.running);
+}
+
+function stopTimerTick() {
+  if (state.timer.tick) {
+    clearInterval(state.timer.tick);
+    state.timer.tick = null;
+  }
+}
+
+function setTimerMinutes(min) {
+  stopTimerTick();
+  state.timer.running = false;
+  state.timer.total = Math.max(60, (Number(min) || 5) * 60);
+  state.timer.left = state.timer.total;
+  renderTimer();
+  $('timerTip').textContent = `已选择 ${Math.round(state.timer.total / 60)} 分钟`;
+}
+
+function onTimerDone() {
+  if (window.GkSound) {
+    try {
+      GkSound.unlock();
+      GkSound.playDrawDone();
+    } catch (e) { /* 忽略 */ }
+  }
+  toast('时间到！');
+  document.body.classList.add('timer-flash');
+  setTimeout(() => document.body.classList.remove('timer-flash'), 1600);
+  if (bridge.log) bridge.log('TIMER_DONE', { total: state.timer.total });
+}
+
+function toggleTimer() {
+  if (state.timer.running) {
+    stopTimerTick();
+    state.timer.running = false;
+    renderTimer();
+    $('timerTip').textContent = '已暂停';
+    return;
+  }
+  if (state.timer.left <= 0) state.timer.left = state.timer.total;
+  state.timer.running = true;
+  state.timer.tick = setInterval(() => {
+    state.timer.left -= 1;
+    if (state.timer.left <= 0) {
+      state.timer.left = 0;
+      stopTimerTick();
+      state.timer.running = false;
+      renderTimer();
+      onTimerDone();
+      return;
+    }
+    renderTimer();
+  }, 1000);
+  renderTimer();
+  $('timerTip').textContent = '计时中…';
+}
+
+function resetTimer() {
+  stopTimerTick();
+  state.timer.running = false;
+  state.timer.left = state.timer.total;
+  renderTimer();
+  $('timerTip').textContent = '已重置';
+}
+
 /* ---------------- 事件绑定 ---------------- */
 function bindStaticEvents() {
   $('btnBackHome').addEventListener('click', () => bridge.closeClassroom());
@@ -735,20 +899,47 @@ function bindStaticEvents() {
     if (state.voice) speakName('朗读已开启');
   });
 
+  // 一轮不重复
+  $('noRepeatToggle').checked = state.noRepeat;
+  $('noRepeatToggle').addEventListener('change', (e) => {
+    state.noRepeat = !!e.target.checked;
+    try { localStorage.setItem('cls-no-repeat', state.noRepeat ? '1' : '0'); } catch (err) { /* 忽略 */ }
+    resetStage();
+    toast(state.noRepeat ? '已开启一轮不重复' : '已关闭一轮不重复');
+  });
+
+  // 投影 / 分组 / 计时
+  $('btnProjection').addEventListener('click', () => setProjection(!state.projection));
+  $('btnGroupGenerate').addEventListener('click', generateGroups);
+  $('btnGroupMinus').addEventListener('click', () => changeGroupValue(-1));
+  $('btnGroupPlus').addEventListener('click', () => changeGroupValue(1));
+  $('groupMode').addEventListener('change', (e) => {
+    state.groupMode = e.target.value;
+    renderGroupPlaceholder();
+  });
+  $('btnTimerStart').addEventListener('click', toggleTimer);
+  $('btnTimerReset').addEventListener('click', resetTimer);
+  $('timerPresets').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-min]');
+    if (!btn) return;
+    $('timerPresets').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === btn));
+    setTimerMinutes(Number(btn.dataset.min) || 5);
+  });
+
   document.querySelectorAll('.cls-tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('.cls-tab').forEach((t) => t.classList.toggle('on', t === tab));
       const name = tab.dataset.tab;
       $('pageRoll').hidden = name !== 'roll';
-      $('pageTimetable').hidden = name !== 'timetable';
-      if (name === 'timetable') renderTimetable();
+      $('pageGroup').hidden = name !== 'group';
+      $('pageTimer').hidden = name !== 'timer';
+      if (name === 'group') renderGroupPlaceholder();
     });
   });
 
   $('btnAdmin') && $('btnAdmin').addEventListener('click', openAdmin);
   if (bridge.onAdminOpen) bridge.onAdminOpen(() => openAdmin());
   document.querySelectorAll('[data-close="admin"]').forEach((el) => el.addEventListener('click', closeAdmin));
-  document.querySelectorAll('[data-close="tt"]').forEach((el) => el.addEventListener('click', closeTtImport));
 
   $('btnImportRoster').addEventListener('click', () => $('fileRoster').click());
   $('fileRoster').addEventListener('change', async (e) => {
@@ -796,36 +987,6 @@ function bindStaticEvents() {
     });
   });
 
-  $('btnTtImport').addEventListener('click', openTtImport);
-  $('btnDoImportTt').addEventListener('click', doImportTimetable);
-  $('btnPickTtFile').addEventListener('click', () => $('fileTimetable').click());
-  $('fileTimetable').addEventListener('change', async (e) => {
-    const file = e.target.files && e.target.files[0];
-    e.target.value = '';
-    if (!file) return;
-    state.ttFile = file;
-    state.ttRows = null;
-    $('ttFileName').textContent = file.name;
-    const ext = (file.name.split('.').pop() || '').toLowerCase();
-    if (ext === 'xlsx' || ext === 'xls') {
-      const path = bridge.getFilePath(file);
-      const res = await bridge.classroomParseSheet(path);
-      if (res && res.ok) {
-        state.ttRows = res.rows;
-        $('ttImportText').value = '';
-        toast('已读取表格，点击「导入」应用');
-      } else {
-        toast((res && res.error) || '读取表格失败');
-      }
-    } else {
-      try {
-        $('ttImportText').value = await file.text();
-      } catch (err) {
-        toast('读取文件失败');
-      }
-    }
-  });
-
   bridge.onSkinChanged((data) => {
     if (data && SKINS.includes(data.skin)) document.body.setAttribute('data-skin', data.skin);
   });
@@ -833,7 +994,7 @@ function bindStaticEvents() {
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (!$('adminModal').hidden) return closeAdmin();
-    if (!$('ttImportModal').hidden) return closeTtImport();
+    if (state.projection) return setProjection(false);
     bridge.closeClassroom();
   });
 }
@@ -926,5 +1087,4 @@ function createMockBridge() {
   };
 }
 
-wireTimetable();
 boot();

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';" />
+<title>课程表</title>
+<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="timetable.css" />
+</head>
+<body data-skin="board">
+<div class="tt-page">
+  <header class="tt-top">
+    <button class="tt-back" id="btnBackHome" title="返回主界面">‹ 返回</button>
+    <div class="tt-brand">
+      <span class="tt-seal">课</span>
+      <span class="tt-brand__text">
+        <b>课程表</b>
+        <i>周一至周日 · 支持晚自习</i>
+      </span>
+    </div>
+    <div class="tt-actions">
+      <button class="tt-ghost" id="btnAddNight">＋ 晚自习</button>
+      <button class="tt-ghost" id="btnTtAdd">＋ 加一节</button>
+      <button class="tt-ghost" id="btnTtImport">一键导入</button>
+      <label class="tt-toggle" title="显示或隐藏晚自习课次">
+        <input type="checkbox" id="showNight" checked />
+        <span>显示晚自习</span>
+      </label>
+    </div>
+  </header>
+
+  <main class="tt-body">
+    <div class="tt-head">
+      <input class="tt-title" id="ttTitle" maxlength="40" aria-label="课程表标题" />
+      <span class="tt-count" id="ttCount">共 0 节</span>
+    </div>
+    <div class="tt-scroll">
+      <table class="tt-table" id="ttTable"></table>
+    </div>
+    <p class="tt-tip">点击单元格直接编辑，修改会自动保存。晚自习课次可在桌面宠物中一起显示。</p>
+  </main>
+</div>
+
+<input type="file" id="fileTimetable" accept=".txt,.csv,.xlsx,.xls" hidden />
+
+<!-- 课程表导入 -->
+<div class="tt-modal" id="ttImportModal" hidden>
+  <div class="tt-modal__backdrop" data-close="tt"></div>
+  <div class="tt-modal__box">
+    <header class="tt-modal__head">
+      <h3>一键导入课程表</h3>
+      <button class="tt-close" data-close="tt" title="关闭">×</button>
+    </header>
+    <div class="tt-modal__body">
+      <p class="tt-tip">粘贴课表内容，或选择 csv / txt / xlsx 文件。支持两种格式：</p>
+      <pre class="tt-demo">格式一（表格，第一行含星期）：
+节次,时间,周一,周二,周三,周四,周五
+第1节,08:00-08:45,语文,数学,英语,物理,化学
+
+格式二（逐行）：
+周一 第1节 08:00-08:45 语文</pre>
+      <textarea class="tt-textarea" id="ttImportText" placeholder="在这里粘贴课表内容…"></textarea>
+      <div class="tt-file-row">
+        <button class="tt-ghost" id="btnPickTtFile">选择文件</button>
+        <span class="tt-file" id="ttFileName">未选择文件</span>
+      </div>
+    </div>
+    <footer class="tt-modal__foot">
+      <button class="tt-ghost" data-close="tt">取消</button>
+      <button class="tt-primary" id="btnDoImportTt">导入</button>
+    </footer>
+  </div>
+</div>
+
+<div class="tt-toast" id="ttToast" hidden></div>
+<script src="timetable.js"></script>
+</body>
+</html>

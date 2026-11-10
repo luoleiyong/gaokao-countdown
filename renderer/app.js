@@ -57,7 +57,13 @@ const state = {
   updateInstallStarted: false,
   version: '',
   selectedSubjects: [],
-  historyExpanded: false
+  historyExpanded: false,
+  events: [],
+  timetable: null,
+  backupAuto: true,
+  lastBackupDate: '',
+  backupInfo: { count: 0, latest: '' },
+  lastCourseKey: ''
 };
 
 const bridge = window.gaokao || createMockBridge();
@@ -155,6 +161,11 @@ async function boot() {
     .filter((id) => SUBJECT_META.some((x) => x.id === id))
     .slice(0, 6);
   if (!state.selectedSubjects.length) state.selectedSubjects = DEFAULT_SUBJECTS.slice();
+  state.events = Array.isArray(s.events) ? s.events.filter((e) => e && e.name && e.date) : [];
+  state.timetable = s.timetable && Array.isArray(s.timetable.periods) ? s.timetable : null;
+  state.backupAuto = s.backupAuto !== false;
+  state.lastBackupDate = s.lastBackupDate || '';
+  state.backupInfo = s.backupInfo || { count: 0, latest: '' };
   state.debug = !!s.debugMode;
   state.onboarded = !!s.onboarded;
   state.onboardAutoLaunch = state.autoLaunch;
@@ -253,10 +264,18 @@ function milestoneText(days) {
   return '';
 }
 
+/* 今天剩余时间（到本地零点） */
+function todayRemainClock() {
+  const now = new Date();
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+  const secs = Math.max(0, Math.floor((end.getTime() - now.getTime()) / 1000));
+  return `${pad2(Math.floor(secs / 3600))} : ${pad2(Math.floor(secs / 60) % 60)} : ${pad2(secs % 60)}`;
+}
+
 function renderCountdown() {
   const c = calc();
   $('daysNum').textContent = c.days;
-  $('clock').textContent = c.clock;
+  $('clock').textContent = todayRemainClock();
   $('targetLabel').textContent = fmtTargetCN(c.target);
   $('progressText').textContent = Math.round(c.progress) + '%';
   $('progressFill').style.width = c.progress.toFixed(1) + '%';
@@ -371,6 +390,196 @@ function renderHistory() {
 }
 
 /* ---------------- 渲染：宠物 ---------------- */
+/* ---------------- 渲染：重要日子 ---------------- */
+function eventDayText(dateStr) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const [y, m, d] = String(dateStr).split('-').map(Number);
+  const target = new Date(y, m - 1, d);
+  const diff = Math.round((target.getTime() - today.getTime()) / 86400000);
+  if (diff === 0) return '今天';
+  if (diff === 1) return '明天';
+  if (diff > 1) return `${diff} 天后`;
+  return `已过 ${-diff} 天`;
+}
+
+function sortedEvents() {
+  return state.events.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+
+function renderEvents() {
+  const box = $('eventsList');
+  if (!box) return;
+  const list = sortedEvents().filter((e) => !eventDayText(e.date).startsWith('已过'));
+  box.innerHTML = '';
+  if (!list.length) {
+    box.innerHTML = '<span class="events-empty">还没有添加事件，点击「管理」添加</span>';
+    return;
+  }
+  list.slice(0, 3).forEach((e) => {
+    const row = document.createElement('div');
+    row.className = 'event-row' + (eventDayText(e.date) === '今天' ? ' on' : '');
+    row.innerHTML =
+      `<b>${escapeHtml(e.name)}</b>` +
+      `<span>${e.date.replace(/-/g, '.')}</span>` +
+      `<em>${eventDayText(e.date)}</em>`;
+    box.appendChild(row);
+  });
+  if (list.length > 3) {
+    const more = document.createElement('button');
+    more.className = 'events-more';
+    more.textContent = `还有 ${list.length - 3} 个事件`;
+    more.addEventListener('click', openEventsModal);
+    box.appendChild(more);
+  }
+}
+
+function renderEventManage() {
+  const box = $('eventManageList');
+  if (!box) return;
+  box.innerHTML = '';
+  const list = sortedEvents();
+  if (!list.length) {
+    box.innerHTML = '<p class="hint">还没有添加事件</p>';
+    return;
+  }
+  list.forEach((e) => {
+    const row = document.createElement('div');
+    row.className = 'event-manage-row';
+    row.innerHTML =
+      `<span><b>${escapeHtml(e.name)}</b><i>${e.date.replace(/-/g, '.')} · ${eventDayText(e.date)}</i></span>` +
+      '<button class="btn-ghost btn-small">删除</button>';
+    row.querySelector('button').addEventListener('click', async () => {
+      state.events = state.events.filter((x) => x.id !== e.id);
+      await persistEvents();
+      renderEventManage();
+      renderEvents();
+      toast('已删除：' + e.name);
+    });
+    box.appendChild(row);
+  });
+}
+
+async function persistEvents() {
+  try {
+    const res = await bridge.saveEvents(state.events);
+    if (res && res.ok && Array.isArray(res.events)) state.events = res.events;
+  } catch (e) {
+    toast('事件保存失败，请重试');
+  }
+}
+
+function openEventsModal() {
+  renderEventManage();
+  $('eventsModal').hidden = false;
+}
+
+function closeEventsModal() {
+  $('eventsModal').hidden = true;
+}
+
+async function addEvent() {
+  const name = $('eventName').value.trim();
+  const date = $('eventDate').value;
+  if (!name) return toast('请填写事件名称');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast('请选择事件日期');
+  if (state.events.length >= 30) return toast('最多添加 30 个事件');
+  state.events.push({ id: 'e' + Date.now().toString(36), name: name.slice(0, 30), date });
+  $('eventName').value = '';
+  await persistEvents();
+  renderEvents();
+  renderEventManage();
+  toast('已添加：' + name);
+}
+
+/* ---------------- 渲染：桌面宠物课程 ---------------- */
+const PET_MOTTOS = Array.isArray(window.PET_MOTTOS) ? window.PET_MOTTOS : [];
+
+function parseCourseRange(text) {
+  const m = String(text || '').match(/(\d{1,2})\s*[:：]\s*(\d{2})\s*[-~—至]\s*(\d{1,2})\s*[:：]\s*(\d{2})/);
+  if (!m) return null;
+  return { start: Number(m[1]) * 60 + Number(m[2]), end: Number(m[3]) * 60 + Number(m[4]) };
+}
+
+function dayPeriods(dayIdx) {
+  const t = state.timetable;
+  if (!t || !Array.isArray(t.periods)) return [];
+  return t.periods.map((p, i) => {
+    const subject = String((p.cells && p.cells[dayIdx]) || '').trim();
+    const range = parseCourseRange(p.time);
+    if (!subject || !range) return null;
+    return {
+      label: p.label || `第${i + 1}节`,
+      subject,
+      time: String(p.time),
+      start: range.start,
+      end: range.end
+    };
+  }).filter(Boolean).sort((a, b) => a.start - b.start);
+}
+
+function petMotto() {
+  if (!PET_MOTTOS.length) return '今天也辛苦了，早点休息。';
+  const now = new Date();
+  const seed = now.getFullYear() * 372 + (now.getMonth() + 1) * 31 + now.getDate();
+  return PET_MOTTOS[seed % PET_MOTTOS.length];
+}
+
+function courseRowHtml(tag, course, extraClass) {
+  return (
+    `<div class="pet-course__row${extraClass ? ' ' + extraClass : ''}">` +
+    `<span class="pet-course__tag">${tag}</span>` +
+    `<b>${escapeHtml(course.subject)}</b>` +
+    `<i>${escapeHtml(course.time)}</i>` +
+    '</div>'
+  );
+}
+
+function renderPetCourse() {
+  const listEl = $('petCourseList');
+  if (!listEl) return;
+  const now = new Date();
+  const dayIdx = (now.getDay() + 6) % 7;
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const key = `${dayIdx}-${nowMin}-${state.timetable ? state.timetable.periods.length : 0}`;
+  if (key === state.lastCourseKey) return;
+  state.lastCourseKey = key;
+
+  const today = dayPeriods(dayIdx);
+  if (!today.length) {
+    $('petCourseDay').textContent = '今天';
+    listEl.innerHTML = '<div class="pet-course__empty">今天没有课程，好好休息</div>';
+    return;
+  }
+
+  const currentIdx = today.findIndex((p) => nowMin >= p.start && nowMin < p.end);
+  const upcoming = today.filter((p) => p.start > nowMin);
+  const tomorrow = dayPeriods((dayIdx + 1) % 7);
+  const rows = [];
+
+  if (currentIdx >= 0) {
+    rows.push(courseRowHtml('本节课', today[currentIdx], 'now'));
+    const rest = today.slice(currentIdx + 1);
+    if (rest.length) {
+      rest.slice(0, 2).forEach((p, i) => rows.push(courseRowHtml(i === 0 ? '下节课' : '随后', p, '')));
+    } else if (tomorrow.length) {
+      rows.push(courseRowHtml('明天', tomorrow[0], 'next-day'));
+    }
+  } else if (upcoming.length) {
+    upcoming.slice(0, 3).forEach((p, i) => rows.push(courseRowHtml(i === 0 ? '下节课' : '随后', p, '')));
+  } else {
+    // 今日课程全部结束
+    $('petCourseDay').textContent = '今天';
+    listEl.innerHTML =
+      '<div class="pet-course__done"><b>今日课程已完成</b>' +
+      `<span>${escapeHtml(petMotto())}</span></div>`;
+    return;
+  }
+
+  $('petCourseDay').textContent = '今天';
+  listEl.innerHTML = rows.join('');
+}
+
 function renderPet() {
   const c = calc();
   $('petDays').textContent = c.days;
@@ -385,6 +594,7 @@ function renderPet() {
     $('petSignLevel').textContent = '今日签 · 待开启';
     $('petSignPoem').textContent = '摇一签，看看今天的气运';
   }
+  renderPetCourse();
 }
 
 function renderVersion(v) {
@@ -393,9 +603,11 @@ function renderVersion(v) {
 
 function renderAll() {
   state.lastDays = null;
+  state.lastCourseKey = '';
   renderCountdown();
   renderToday();
   renderHistory();
+  renderEvents();
   renderPet();
 }
 
@@ -1409,6 +1621,7 @@ function bindEvents() {
   $('btnDraw').addEventListener('click', () => startDrawFlow(false));
   $('btnDrawSide').addEventListener('click', () => startDrawFlow(false));
   $('btnKnowledge').addEventListener('click', () => bridge.openKnowledge());
+  $('btnTimetable').addEventListener('click', () => bridge.openTimetable());
   $('btnClassroom').addEventListener('click', () => bridge.openClassroom());
   $('btnTerm').addEventListener('click', () => openTermModal(false));
   $('btnTermRandom').addEventListener('click', () => openTermModal(true));
@@ -1662,6 +1875,46 @@ function bindEvents() {
     toast('宠物大小已保存');
   });
   $('authorMail').addEventListener('click', copyAuthorMail);
+  $('btnEventsManage').addEventListener('click', openEventsModal);
+  $('btnAddEvent').addEventListener('click', addEvent);
+  $('eventName').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addEvent();
+  });
+  $('eventDate').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addEvent();
+  });
+  document.querySelectorAll('[data-close="events"]').forEach((el) => {
+    el.addEventListener('click', closeEventsModal);
+  });
+
+  // 数据与备份
+  $('switchBackup').classList.toggle('on', state.backupAuto);
+  $('switchBackup').setAttribute('aria-pressed', String(state.backupAuto));
+  $('switchBackup').addEventListener('click', async () => {
+    state.backupAuto = !state.backupAuto;
+    $('switchBackup').classList.toggle('on', state.backupAuto);
+    $('switchBackup').setAttribute('aria-pressed', String(state.backupAuto));
+    try { await bridge.saveSettings({ backupAuto: state.backupAuto }); } catch (e) { /* 忽略 */ }
+    toast(state.backupAuto ? '已开启每日自动备份' : '已关闭自动备份');
+  });
+  const backupText = state.backupInfo && state.backupInfo.latest
+    ? `最近备份：${state.backupInfo.latest}（共 ${state.backupInfo.count} 份）`
+    : '每天启动时自动备份，保留最近 7 天';
+  $('backupStatus').textContent = backupText;
+  $('btnExportData').addEventListener('click', async () => {
+    const res = await bridge.exportData();
+    if (res && res.ok) toast('数据已导出');
+    else if (res && !res.canceled) toast((res && res.error) || '导出失败');
+  });
+  $('btnImportData').addEventListener('click', async () => {
+    const res = await bridge.importData();
+    if (res && res.ok) {
+      toast('数据已导入，正在刷新…');
+      setTimeout(() => location.reload(), 700);
+    } else if (res && !res.canceled) {
+      toast((res && res.error) || '导入失败');
+    }
+  });
   $('btnAgreement').addEventListener('click', () => { $('agreementModal').hidden = false; });
   $('btnAgreementCancel').addEventListener('click', closeAgreementModal);
   $('btnAgreementOk').addEventListener('click', closeAgreementModal);
@@ -1673,6 +1926,7 @@ function bindEvents() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       if (!$('agreementModal').hidden) closeAgreementModal();
+      else if (!$('eventsModal').hidden) closeEventsModal();
       else if (!$('updateReadyModal').hidden) hideUpdateReadyDialog();
       else if (!$('settings').hidden) closeSettings();
       else if (!$('drawModal').hidden) closeDrawModal();
@@ -1695,7 +1949,7 @@ function createMockBridge() {
     store = JSON.parse(localStorage.getItem(KEY) || 'null') || {};
   } catch (e) { store = {}; }
   store = Object.assign(
-    { targetDate: '2027-06-07', skin: 'board', petScale: 1, autoLaunch: false, history: [], lastLaunchDate: '', debugMode: false, onboarded: true, updateAutoCheck: true, updateAutoDownload: true },
+    { targetDate: '2027-06-07', skin: 'board', petScale: 1, autoLaunch: false, history: [], lastLaunchDate: '', debugMode: false, onboarded: true, updateAutoCheck: true, updateAutoDownload: true, events: [], timetable: null, backupAuto: true },
     store
   );
   const today = dateKey();
@@ -1714,6 +1968,18 @@ function createMockBridge() {
       platform: 'preview'
     }),
     saveSettings: async (patch) => Object.assign(store, patch) && save(),
+    saveEvents: async (list) => {
+      store.events = list;
+      save();
+      return { ok: true, events: list };
+    },
+    exportData: async () => ({ ok: false, error: '浏览器预览不支持导出' }),
+    importData: async () => ({ ok: false, error: '浏览器预览不支持导入' }),
+    setFullScreen: async () => ({ ok: false }),
+    openTimetable: () => {
+      window.open('timetable.html', '_blank', 'width=1180,height=780');
+    },
+    closeTimetable: () => {},
     setAutoLaunch: async (v) => ({ ok: true, enabled: v, actual: false }),
     addHistory: async (entry) => {
       store.history = [entry].concat(store.history.filter((h) => h.date !== entry.date));

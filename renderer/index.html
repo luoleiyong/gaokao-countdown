@@ -57,7 +57,7 @@
             <div class="weather-card__days" id="weatherDays"></div>
           </div>
         </div>
-        <div class="cd-clock"><span id="clock">-- : -- : --</span></div>
+        <div class="cd-clock"><span class="cd-clock__label">今日还剩</span><span id="clock">-- : -- : --</span></div>
         <div class="cd-target" id="targetLabel">—</div>
 
         <div class="progress">
@@ -75,10 +75,20 @@
         <div class="cd-actions">
           <button class="btn-primary" id="btnDraw">开启今日幸运签</button>
           <button class="btn-ghost" id="btnKnowledge">学科知识签</button>
+          <button class="btn-ghost" id="btnTimetable">课程表</button>
           <button class="btn-ghost" id="btnTerm">二十四节气签</button>
           <button class="btn-ghost" id="btnClassroom">课堂点名</button>
           <button class="btn-ghost" id="btnViewToday" hidden>查看今日签</button>
         </div>
+
+        <section class="events-card" id="eventsCard">
+          <div class="events-card__head">
+            <span class="events-card__title">重要日子</span>
+            <button class="events-card__manage" id="btnEventsManage">管理</button>
+          </div>
+          <div class="events-card__list" id="eventsList"></div>
+        </section>
+
         <div class="milestone" id="milestone" hidden></div>
       </section>
 
@@ -172,6 +182,14 @@
       <div class="pet-sign">
         <span class="pet-sign__level" id="petSignLevel">今日签 · 待开启</span>
         <span class="pet-sign__poem" id="petSignPoem">摇一签，看看今天的气运</span>
+      </div>
+      <div class="pet-sep"></div>
+      <div class="pet-course" id="petCourse">
+        <div class="pet-course__head">
+          <span>课程</span>
+          <i id="petCourseDay">今天</i>
+        </div>
+        <div class="pet-course__list" id="petCourseList"></div>
       </div>
       <div class="pet-actions">
         <button data-pet-act="minus" title="缩小">−</button>
@@ -315,6 +333,24 @@
     </div>
   </div>
 
+  <!-- ======================= 重要日子 ======================= -->
+  <div class="modal" id="eventsModal" hidden>
+    <div class="modal__backdrop" data-close="events"></div>
+    <div class="modal__box events-box">
+      <div class="events-box__head">
+        <b>重要日子</b>
+        <button class="win-btn" data-close="events" title="关闭">×</button>
+      </div>
+      <div class="events-form">
+        <input class="input" id="eventName" maxlength="20" placeholder="名称，如：一模考试" />
+        <input class="input" type="date" id="eventDate" />
+        <button class="btn-primary" id="btnAddEvent">添加</button>
+      </div>
+      <div class="events-box__list" id="eventManageList"></div>
+      <p class="hint">最多添加 30 个事件，首页按日期从近到远展示最近 3 个。</p>
+    </div>
+  </div>
+
   <!-- ======================= 首次配置 ======================= -->
   <div class="onboard" id="onboard" hidden>
     <div class="onboard__card">
@@ -445,6 +481,20 @@
           <p class="hint" id="updateLastCheck">上次检查：—</p>
         </section>
 
+        <section class="setting">
+          <label class="setting__label">数据与备份</label>
+          <div class="update-pref">
+            <div>
+              <b>自动备份</b>
+              <span id="backupStatus">每天启动时自动备份，保留最近 7 天</span>
+            </div>
+            <button class="switch" id="switchBackup" aria-pressed="true"><i></i></button>
+          </div>
+          <button class="btn-ghost btn-wide setting-action" id="btnExportData">导出数据</button>
+          <button class="btn-ghost btn-wide setting-action" id="btnImportData">导入数据</button>
+          <p class="hint">导出为 JSON 文件，可用于换机迁移；导入会覆盖当前名单、签运簿、课程表与设置。</p>
+        </section>
+
         <section class="setting setting--author">
           <label class="setting__label">联系作者</label>
           <button class="author-mail" id="authorMail" title="点击复制邮箱">3270423617@qq.com</button>
@@ -484,6 +534,7 @@
 <script src="sound.js"></script>
 <script src="solar-terms.js"></script>
 <script src="signs.js"></script>
+<script src="mottos.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

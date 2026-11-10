@@ -342,6 +342,189 @@ body { background: transparent; }
 .voice-toggle input:checked + .voice-toggle__dot { background: rgba(217, 182, 74, .34); }
 .voice-toggle input:checked + .voice-toggle__dot::after { left: 14px; background: var(--gold); }
 
+/* ---------------- 底部开关组 ---------------- */
+.roll-toggles {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+/* ---------------- 投影按钮 / 全屏投影 ---------------- */
+.cls-project {
+  margin-left: auto;
+  padding: 7px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--dim);
+  font-size: 12.5px;
+  letter-spacing: .12em;
+  transition: .2s;
+  -webkit-app-region: no-drag;
+}
+.cls-project:hover { color: var(--gold); border-color: rgba(217, 182, 74, .5); background: var(--gold-soft); }
+
+body.projection .cls-top,
+body.projection .roster-pane { display: none; }
+body.projection .roll-stage { padding: 2vh 3vw; }
+body.projection .roll-roster { font-size: 22px; letter-spacing: .28em; }
+body.projection .roll-name { font-size: clamp(96px, 12vw, 220px); }
+body.projection .roll-name.multiple {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  font-size: clamp(40px, 5.4vw, 96px);
+  gap: 4px 26px;
+}
+body.projection .roll-sub { font-size: 18px; }
+body.projection .roll-count,
+body.projection .roll-toggles { transform: scale(1.25); transform-origin: center; }
+body.projection .roll-btn { font-size: 22px; padding: 20px 64px; }
+body.projection::after {
+  content: "按 Esc 退出投影";
+  position: fixed;
+  right: 22px;
+  bottom: 18px;
+  font-size: 12px;
+  letter-spacing: .14em;
+  color: rgba(242, 239, 233, .42);
+  pointer-events: none;
+}
+
+/* ---------------- 随机分组 ---------------- */
+.cls-group, .cls-timer { padding: 20px 24px; }
+.group-panel, .timer-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .025);
+  padding: 18px 20px;
+}
+.group-controls {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.group-field { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--dim); letter-spacing: .1em; }
+.group-select {
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: rgba(0, 0, 0, .22);
+  color: var(--text);
+  font-size: 12.5px;
+  outline: none;
+}
+.group-select:focus { border-color: rgba(217, 182, 74, .55); }
+.group-select option { background: var(--bg-deep); color: var(--text); }
+.group-stepper { display: flex; align-items: center; gap: 12px; }
+.group-stepper b {
+  min-width: 34px;
+  text-align: center;
+  font-family: var(--font-title);
+  font-size: 22px;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+}
+.group-go { margin-left: auto; }
+.group-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-top: 16px;
+}
+.group-empty {
+  margin: 0;
+  padding: 30px 0;
+  text-align: center;
+  font-size: 12.5px;
+  letter-spacing: .1em;
+  color: var(--faint);
+}
+.group-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.group-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .04);
+  padding: 10px 12px 12px;
+}
+.group-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.group-card__head b {
+  font-family: var(--font-title);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: .1em;
+  color: var(--gold);
+}
+.group-card__head span { font-size: 10.5px; color: var(--faint); }
+.group-card__names { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.group-card__names span {
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--text);
+  background: rgba(0, 0, 0, .14);
+}
+
+/* ---------------- 课堂计时 ---------------- */
+.cls-timer { align-items: stretch; }
+.timer-panel { align-items: center; justify-content: center; gap: 20px; }
+.timer-display {
+  font-family: var(--font-title);
+  font-size: clamp(84px, 11vw, 150px);
+  line-height: 1;
+  letter-spacing: .06em;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 26px rgba(217, 182, 74, .28);
+}
+.timer-presets { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.timer-presets button {
+  padding: 7px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 12.5px;
+  letter-spacing: .08em;
+  transition: .18s;
+}
+.timer-presets button:hover { color: var(--text); border-color: var(--line-strong); }
+.timer-presets button.on {
+  color: var(--gold);
+  border-color: rgba(217, 182, 74, .45);
+  background: var(--gold-soft);
+}
+.timer-actions { display: flex; gap: 12px; }
+.timer-tip { margin: 0; font-size: 12px; letter-spacing: .12em; color: var(--faint); }
+body.timer-running .timer-display { animation: timer-pulse 1.6s ease-in-out infinite; }
+@keyframes timer-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .62; }
+}
+body.timer-flash .cls-main { animation: timer-flash 0.5s ease-in-out 3; }
+@keyframes timer-flash {
+  0%, 100% { background: transparent; }
+  50% { background: rgba(217, 182, 74, .16); }
+}
+
 /* ---------------- 课程表 ---------------- */
 .cls-tt { flex-direction: column; padding: 20px 24px 16px; gap: 12px; }
 .tt-head { display: flex; align-items: center; gap: 14px; }

@@ -1056,7 +1056,6 @@ function openSettings() {
   $('scaleLabel').textContent = Math.round(state.petScale * 100) + '%';
   renderSkinGrid();
   renderSubjectGrid();
-  refreshLogs();
   $('settings').hidden = false;
 }
 
@@ -1216,15 +1215,6 @@ function syncUpdatePrefsUI() {
     dl.classList.toggle('on', state.updateAutoDownload);
     dl.setAttribute('aria-pressed', String(state.updateAutoDownload));
   }
-}
-
-async function refreshLogs() {
-  let logs = [];
-  try {
-    logs = await bridge.getLogs();
-  } catch (e) { /* 忽略 */ }
-  const box = $('logsBox');
-  box.textContent = logs && logs.length ? logs.slice(0, 20).join('\n') : '暂无日志';
 }
 
 /* ---------------- 桌面宠物操作 ---------------- */
@@ -1390,6 +1380,28 @@ function toast(msg) {
     el.classList.remove('show');
     setTimeout(() => { el.hidden = true; }, 280);
   }, 2400);
+}
+
+async function copyAuthorMail() {
+  const email = '3270423617@qq.com';
+  let ok = false;
+  try {
+    if (bridge.copyText) {
+      const res = await bridge.copyText(email);
+      ok = !!(res && res.ok);
+    }
+  } catch (e) { /* 尝试浏览器剪贴板 */ }
+  if (!ok) {
+    try {
+      await navigator.clipboard.writeText(email);
+      ok = true;
+    } catch (e) { /* 复制失败 */ }
+  }
+  toast(ok ? '邮箱已复制：' + email : '复制失败，请手动选择邮箱');
+}
+
+function closeAgreementModal() {
+  $('agreementModal').hidden = true;
 }
 
 /* ---------------- 事件绑定 ---------------- */
@@ -1649,24 +1661,19 @@ function bindEvents() {
     await bridge.saveSettings({ petScale: v });
     toast('宠物大小已保存');
   });
-  $('btnClearHistory').addEventListener('click', async () => {
-    if (!window.confirm('确定清空签运簿？所有抽签记录都会被删除。')) return;
-    try {
-      await bridge.clearHistory();
-      state.history = [];
-      renderToday();
-      renderHistory();
-      toast('签运簿已清空');
-    } catch (e) {
-      toast('清空失败');
-    }
-  });
+  $('authorMail').addEventListener('click', copyAuthorMail);
+  $('btnAgreement').addEventListener('click', () => { $('agreementModal').hidden = false; });
+  $('btnAgreementCancel').addEventListener('click', closeAgreementModal);
+  $('btnAgreementOk').addEventListener('click', closeAgreementModal);
+  const agreementBackdrop = document.querySelector('[data-close="agreement"]');
+  if (agreementBackdrop) agreementBackdrop.addEventListener('click', closeAgreementModal);
   $('btnQuit').addEventListener('click', () => bridge.quit());
 
   // 键盘
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (!$('updateReadyModal').hidden) hideUpdateReadyDialog();
+      if (!$('agreementModal').hidden) closeAgreementModal();
+      else if (!$('updateReadyModal').hidden) hideUpdateReadyDialog();
       else if (!$('settings').hidden) closeSettings();
       else if (!$('drawModal').hidden) closeDrawModal();
       else if (!$('weatherModal').hidden) closeWeatherDetail();
@@ -1713,8 +1720,6 @@ function createMockBridge() {
       save();
       return { ok: true, history: store.history };
     },
-    clearHistory: async () => { store.history = []; save(); return { ok: true }; },
-    getLogs: async () => ['[preview] 浏览器预览模式'],
     getWeather: async () => {
       const base = new Date();
       const descs = ['多云', '晴', '小雨'];
@@ -1763,9 +1768,10 @@ function createMockBridge() {
       window.open('classroom.html', '_blank', 'width=1120,height=760');
     },
     openClassroomAdmin: () => {
-      window.open('classroom.html', '_blank', 'width=1120,height=760');
+      window.open('classroom.html?admin=1', '_blank', 'width=1120,height=760');
     },
     openExternal: () => {},
+    copyText: async () => ({ ok: true }),
     saveImage: async (dataUrl, name) => {
       const a = document.createElement('a');
       a.href = dataUrl;

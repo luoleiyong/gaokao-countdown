@@ -32,6 +32,17 @@ body { background: transparent; }
   -webkit-app-region: drag;
 }
 .cls-brand { display: flex; align-items: center; gap: 12px; min-width: 220px; }
+.cls-back {
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--dim);
+  font-size: 13px;
+  letter-spacing: .08em;
+  transition: .2s;
+  -webkit-app-region: no-drag;
+}
+.cls-back:hover { color: var(--gold); border-color: rgba(217, 182, 74, .5); background: var(--gold-soft); }
 .cls-seal {
   display: grid;
   place-items: center;
@@ -218,6 +229,60 @@ body { background: transparent; }
   100% { transform: scale(1); }
 }
 .roll-sub { position: relative; font-size: 13px; letter-spacing: .12em; color: var(--faint); min-height: 20px; }
+
+/* 抽取人数 */
+.roll-count {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+.roll-count > span { font-size: 11.5px; letter-spacing: .1em; color: var(--faint); }
+.roll-count b {
+  min-width: 24px;
+  font-family: var(--font-title);
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--gold);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.roll-count__btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  color: var(--dim);
+  font-size: 15px;
+  line-height: 1;
+  transition: .18s;
+}
+.roll-count__btn:hover { color: var(--gold); border-color: rgba(217, 182, 74, .5); background: var(--gold-soft); }
+.roll-count__btn:disabled { opacity: .35; cursor: default; }
+
+/* 多人点名结果 */
+.roll-name.multiple {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px 14px;
+  min-height: 120px;
+  font-size: clamp(24px, 3.4vw, 44px);
+  line-height: 1.25;
+  letter-spacing: .06em;
+}
+.roll-name.multiple span {
+  padding: 4px 18px;
+  border-radius: 14px;
+  border: 1px solid rgba(217, 182, 74, .3);
+  background: rgba(217, 182, 74, .06);
+}
 .roll-btn {
   position: relative;
   margin-top: 6px;
@@ -379,6 +444,9 @@ body { background: transparent; }
   transition: .2s;
 }
 .cls-ghost:hover { color: var(--gold); border-color: rgba(217, 182, 74, .5); background: var(--gold-soft); }
+.cls-ghost:disabled { opacity: .35; cursor: default; pointer-events: none; }
+.admin-history { justify-content: flex-start; }
+.admin-history .admin-hint b { color: var(--gold); font-weight: 500; }
 .cls-primary {
   padding: 10px 26px;
   border-radius: 999px;

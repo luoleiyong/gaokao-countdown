@@ -287,6 +287,34 @@
     </div>
   </div>
 
+  <!-- ======================= 用户协议 ======================= -->
+  <div class="modal" id="agreementModal" hidden>
+    <div class="modal__backdrop" data-close="agreement"></div>
+    <div class="modal__box agreement-modal">
+      <div class="agreement-modal__head">高考倒计时 · 用户协议</div>
+      <div class="agreement-modal__body">
+        <p><b>一、使用范围</b></p>
+        <p>1. 本软件仅供个人学习、教学等非商业用途使用。</p>
+        <p>2. 严禁将本软件用于任何商业用途，包括但不限于销售、付费分发、捆绑销售、商业培训、以本软件名义承接有偿服务，或将其集成到商业产品中。</p>
+        <p>3. 未经作者书面许可，不得对本软件进行反向工程、反编译、修改、出租或出借。</p>
+        <p><b>二、分发与署名</b></p>
+        <p>分发时须保持软件完整并保留本协议、版权信息与作者联系方式，不得以作者名义进行误导性宣传。</p>
+        <p><b>三、数据与隐私</b></p>
+        <p>名单、抽签记录、课程表与管理员密码仅保存在本机，不会上传服务器；软件仅访问天气与版本更新接口。</p>
+        <p><b>四、免责声明</b></p>
+        <p>本软件按“现状”提供，作者尽力保证功能可用，但不对无中断、无错误作出保证；因使用或无法使用本软件造成的直接或间接损失，作者不承担责任，请自行备份重要数据。</p>
+        <p><b>五、协议变更</b></p>
+        <p>作者可能随版本更新调整本协议，继续使用新版本即视为接受更新后的协议。</p>
+        <p><b>六、作者联系方式</b></p>
+        <p>邮箱：3270423617@qq.com</p>
+      </div>
+      <div class="agreement-modal__foot">
+        <button class="btn-ghost" id="btnAgreementCancel">取消</button>
+        <button class="btn-primary" id="btnAgreementOk">确定</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ======================= 首次配置 ======================= -->
   <div class="onboard" id="onboard" hidden>
     <div class="onboard__card">
@@ -417,33 +445,18 @@
           <p class="hint" id="updateLastCheck">上次检查：—</p>
         </section>
 
-        <section class="setting">
-          <label class="setting__label">启动日志</label>
-          <p class="hint">每天启动时若今日签尚未抽取，会出现全屏首抽引导；也可右上角跳过后在主页抽取。</p>
-          <pre class="logs" id="logsBox">—</pre>
-        </section>
-
-        <section class="setting">
-          <label class="setting__label">数据</label>
-          <button class="btn-danger" id="btnClearHistory">清空签运簿</button>
-        </section>
-
         <section class="setting setting--author">
           <label class="setting__label">联系作者</label>
-          <p class="author-mail" id="authorMail">3270423617@qq.com</p>
+          <button class="author-mail" id="authorMail" title="点击复制邮箱">3270423617@qq.com</button>
+          <p class="hint">点击邮箱即可一键复制</p>
         </section>
 
         <section class="setting setting--agreement">
           <label class="setting__label">用户协议</label>
-          <div class="agreement" id="agreementBox">
-            <p><b>高考倒计时 · 用户协议</b></p>
-            <p>1. 本软件仅供个人学习、教学等非商业用途使用，禁止任何形式的商业使用，包括但不限于销售、付费分发、捆绑销售、商业培训、以本软件名义承接有偿服务等。</p>
-            <p>2. 软件按“现状”提供，作者尽力保证功能可用，但不对使用过程中产生的任何直接或间接损失承担责任。</p>
-            <p>3. 名单、抽签记录、课程表与管理员密码仅保存在本机，不会上传服务器。</p>
-            <p>4. 请勿删除或修改软件中的版权与协议说明；分发时须保持软件完整。</p>
-            <p>5. 使用本软件即视为已阅读并同意本协议。</p>
-            <p>作者联系方式：3270423617@qq.com</p>
-          </div>
+          <button class="agreement-link" id="btnAgreement">
+            <span>查看《高考倒计时用户协议》</span>
+            <i>›</i>
+          </button>
         </section>
       </div>
       <footer class="settings__foot">

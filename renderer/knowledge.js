@@ -122,7 +122,7 @@ async function init() {
 
   $('kDraw').addEventListener('click', () => beginDraw(false));
   $('kDraw10').addEventListener('click', () => beginDraw(true));
-  $('kClose').addEventListener('click', () => bridge.closeKnowledge());
+  $('kBack').addEventListener('click', () => bridge.closeKnowledge());
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') bridge.closeKnowledge();

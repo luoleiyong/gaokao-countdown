@@ -11,6 +11,7 @@
 <body data-skin="board">
 <div class="cls">
   <header class="cls-top">
+    <button class="cls-back" id="btnBackHome" title="返回主界面">‹ 返回</button>
     <div class="cls-brand">
       <span class="cls-seal">课</span>
       <span class="cls-brand__text">
@@ -22,9 +23,6 @@
       <button class="cls-tab on" data-tab="roll">随机点名</button>
       <button class="cls-tab" data-tab="timetable">课程表</button>
     </nav>
-    <div class="cls-top__actions">
-      <button class="win-btn" id="btnCloseWindow" title="关闭">×</button>
-    </div>
   </header>
 
   <main class="cls-main">
@@ -52,6 +50,12 @@
         <div class="roll-roster" id="rollRoster">未选择名单</div>
         <div class="roll-name" id="rollName"><span>课堂</span><span>点名</span></div>
         <div class="roll-sub" id="rollSub">选择左侧名单，然后开始点名</div>
+        <div class="roll-count">
+          <span>抽取人数</span>
+          <button class="roll-count__btn" id="btnCountMinus" title="减少">−</button>
+          <b id="rollCount">1</b>
+          <button class="roll-count__btn" id="btnCountPlus" title="增加">＋</button>
+        </div>
         <button class="roll-btn" id="btnRoll"><span>开 始 点 名</span></button>
         <label class="voice-toggle" for="voiceToggle">
           <input type="checkbox" id="voiceToggle" />

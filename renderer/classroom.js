@@ -15,7 +15,8 @@ const state = {
   ttRows: null,
   ttFile: null,
   debugMode: false,
-  voice: false
+  voice: false,
+  drawCount: 1
 };
 
 function esc(v) {
@@ -58,10 +59,17 @@ function speakName(name) {
 
 /* ---------------- 启动 ---------------- */
 async function boot() {
-  const skin = new URLSearchParams(location.search).get('skin');
+  const params = new URLSearchParams(location.search);
+  const skin = params.get('skin');
   if (SKINS.includes(skin)) document.body.setAttribute('data-skin', skin);
+  try {
+    state.drawCount = Math.max(1, Math.min(20, parseInt(localStorage.getItem('cls-draw-count'), 10) || 1));
+  } catch (e) { state.drawCount = 1; }
   bindStaticEvents();
   await reload();
+  if (params.get('admin') === '1') {
+    setTimeout(() => openAdmin(), 320);
+  }
 }
 
 async function reload() {
@@ -115,15 +123,30 @@ async function selectRoster(id) {
   resetStage();
 }
 
+function maxDrawCount() {
+  const roster = activeRoster();
+  return Math.max(1, Math.min(20, roster ? roster.names.length : 1));
+}
+
+function renderDrawCount() {
+  const max = maxDrawCount();
+  state.drawCount = Math.min(Math.max(1, state.drawCount), max);
+  $('rollCount').textContent = String(state.drawCount);
+  $('btnCountMinus').disabled = state.drawCount <= 1;
+  $('btnCountPlus').disabled = state.drawCount >= max;
+}
+
 function resetStage() {
   const roster = activeRoster();
   const nameEl = $('rollName');
-  nameEl.classList.remove('rolling', 'landed');
+  nameEl.classList.remove('rolling', 'landed', 'multiple');
   if (!roster) {
     nameEl.innerHTML = '<span>课堂</span><span>点名</span>';
     $('rollRoster').textContent = '未选择名单';
     $('rollSub').textContent = '选择左侧名单，然后开始点名';
     $('btnRoll').querySelector('span').textContent = '开 始 点 名';
+    state.drawCount = 1;
+    renderDrawCount();
     return;
   }
   nameEl.innerHTML = '<span>课堂</span><span>点名</span>';
@@ -132,6 +155,7 @@ function resetStage() {
     ? '准备好了，点击开始点名'
     : '名单为空，请导入名单或让管理员添加学生';
   $('btnRoll').querySelector('span').textContent = '开 始 点 名';
+  renderDrawCount();
 }
 
 /* ---------------- 点名 ---------------- */
@@ -146,7 +170,7 @@ async function rollOnce() {
   const nameEl = $('rollName');
   btn.disabled = true;
   btn.querySelector('span').textContent = '点 名 中…';
-  nameEl.classList.remove('landed');
+  nameEl.classList.remove('landed', 'multiple');
   nameEl.classList.add('rolling');
   $('rollSub').textContent = '讲台下的目光都在这里…';
   if (window.GkSound) {
@@ -158,7 +182,7 @@ async function rollOnce() {
 
   let res;
   try {
-    res = await bridge.classroomDraw(roster.id);
+    res = await bridge.classroomDraw(roster.id, state.drawCount);
   } catch (e) {
     res = { ok: false, error: e.message };
   }
@@ -176,14 +200,20 @@ async function rollOnce() {
     nameEl.textContent = names[Math.floor(Math.random() * names.length)] || '—';
     await wait(46 + i * 5);
   }
-  nameEl.textContent = res.name;
+  const results = Array.isArray(res.names) && res.names.length ? res.names : [res.name];
+  if (results.length > 1) {
+    nameEl.classList.add('multiple');
+    nameEl.innerHTML = results.map((n) => `<span>${esc(n)}</span>`).join('');
+  } else {
+    nameEl.textContent = results[0];
+  }
   nameEl.classList.remove('rolling');
   nameEl.classList.add('landed');
   $('rollSub').textContent = roster.name;
   if (window.GkSound) {
     try { GkSound.playDrawDone(); } catch (e) { /* 忽略音效失败 */ }
   }
-  speakName(res.name);
+  speakName(results.join('、'));
   btn.disabled = false;
   btn.querySelector('span').textContent = '再 点 一 次';
   state.drawing = false;
@@ -350,6 +380,12 @@ function renderAdminPanel() {
       <textarea class="cls-textarea cls-textarea--sm admin-add-names" id="adminAddNames" placeholder="批量添加姓名：每行一个，或用逗号分隔"></textarea>
       <button class="cls-ghost" id="btnAdminAddNames">添加学生</button>
     </div>
+    <div class="admin-section-title">签运簿</div>
+    <div class="admin-row admin-history">
+      <span class="admin-hint">当前 <b>${d.historyCount || 0}</b> 条记录${d.historyBackupCount ? ` · 可恢复上次清空的 ${d.historyBackupCount} 条` : ''}</span>
+      <button class="cls-danger" id="btnAdminClearHistory">清空签运簿</button>
+      <button class="cls-ghost" id="btnAdminRestoreHistory" ${d.historyBackupCount ? '' : 'disabled'}>撤销清空</button>
+    </div>
     <div class="admin-section-title">调试（仅管理员可见）</div>
     <div class="admin-row">
       <label class="admin-switch"><input type="checkbox" id="adminDebug" ${d.debugMode ? 'checked' : ''} /> 调试模式（预览每日首抽，不影响真实记录）</label>
@@ -437,6 +473,27 @@ function wireAdminPanel(roster) {
       applyAdmin(res.data);
       toast(res.added ? `已添加 ${res.added} 名学生` : '没有新增姓名（可能已存在）');
     } else toast((res && res.error) || '添加失败');
+  });
+
+  $('btnAdminClearHistory').addEventListener('click', async () => {
+    const total = (state.adminData && state.adminData.historyCount) || 0;
+    if (!window.confirm(`确定清空签运簿？当前 ${total} 条记录将被清空，清空后可以点击“撤销清空”恢复。`)) return;
+    const res = await bridge.classroomClearHistory();
+    if (res && res.ok) {
+      applyAdmin(res.data);
+      toast(`已清空 ${res.count} 条记录，可点击“撤销清空”恢复`);
+    } else {
+      toast((res && res.error) || '清空失败');
+    }
+  });
+  $('btnAdminRestoreHistory').addEventListener('click', async () => {
+    const res = await bridge.classroomRestoreHistory();
+    if (res && res.ok) {
+      applyAdmin(res.data);
+      toast(`已恢复 ${res.count} 条签运记录`);
+    } else {
+      toast((res && res.error) || '没有可恢复的数据');
+    }
   });
 
   $('adminDebug').addEventListener('change', async (e) => {
@@ -653,8 +710,21 @@ async function doImportTimetable() {
 
 /* ---------------- 事件绑定 ---------------- */
 function bindStaticEvents() {
-  $('btnCloseWindow').addEventListener('click', () => bridge.closeClassroom());
+  $('btnBackHome').addEventListener('click', () => bridge.closeClassroom());
   $('btnRoll').addEventListener('click', rollOnce);
+
+  // 抽取人数
+  renderDrawCount();
+  $('btnCountMinus').addEventListener('click', () => {
+    state.drawCount = Math.max(1, state.drawCount - 1);
+    renderDrawCount();
+    try { localStorage.setItem('cls-draw-count', String(state.drawCount)); } catch (e) { /* 忽略 */ }
+  });
+  $('btnCountPlus').addEventListener('click', () => {
+    state.drawCount = Math.min(maxDrawCount(), state.drawCount + 1);
+    renderDrawCount();
+    try { localStorage.setItem('cls-draw-count', String(state.drawCount)); } catch (e) { /* 忽略 */ }
+  });
 
   // 朗读开关（保存在本机）
   try { state.voice = localStorage.getItem('cls-voice') === '1'; } catch (e) { state.voice = false; }
@@ -828,14 +898,23 @@ function createMockBridge() {
     classroomUpdateName: async () => ({ ok: false, error: '浏览器预览不可用' }),
     classroomRemoveName: async () => ({ ok: false, error: '浏览器预览不可用' }),
     classroomResetCounts: async () => ({ ok: false, error: '浏览器预览不可用' }),
-    classroomDraw: async (id) => {
+    classroomDraw: async (id, count = 1) => {
       const r = store.rosters.find((x) => x.id === id);
       if (!r || !r.names.length) return { ok: false, error: '名单为空' };
-      const n = r.names[Math.floor(Math.random() * r.names.length)];
-      n.count += 1;
+      const pool = r.names.slice();
+      const want = Math.max(1, Math.min(count || 1, pool.length));
+      const picked = [];
+      for (let i = 0; i < want; i++) {
+        const idx = Math.floor(Math.random() * pool.length);
+        const n = pool.splice(idx, 1)[0];
+        n.count += 1;
+        picked.push(n.name);
+      }
       save();
-      return { ok: true, name: n.name, roster: r.name };
+      return { ok: true, name: picked[0], names: picked, roster: r.name };
     },
+    classroomClearHistory: async () => ({ ok: false, error: '浏览器预览不可用' }),
+    classroomRestoreHistory: async () => ({ ok: false, error: '浏览器预览不可用' }),
     classroomSaveTimetable: async (t) => { store.timetable = t; save(); return { ok: true, timetable: t }; },
     classroomParseSheet: async () => ({ ok: false, error: '浏览器预览不可用' }),
     adminSetDebug: async (on) => { store.debugMode = !!on; save(); return { ok: true, debugMode: !!on }; },

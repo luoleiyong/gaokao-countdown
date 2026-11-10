@@ -14,8 +14,7 @@ try { XLSX = require('xlsx'); } catch { /* 缺少表格组件时仅支持 txt/cs
 
 const USER_DIR = path.join(app.getPath('appData'), 'GaokaoCountdown');
 const STORE_FILE = path.join(USER_DIR, 'store.json');
-const LOG_DIR = path.join(USER_DIR, 'logs');
-const LOG_FILE = path.join(LOG_DIR, 'launch.log');
+const LOG_NAME = '启动日志.txt';
 
 const SKINS = [
   { id: 'board', name: '黑板粉笔' },
@@ -60,9 +59,8 @@ const STORE_DEFAULTS = {
 };
 
 let win = null;
-let knowledgeWin = null;
-let knowledgeSubjectsKey = '';
-let classroomWin = null;
+let currentView = 'home';
+let panelViewSnapshot = null;
 let classroomUnlocked = false;
 let tray = null;
 let quitting = false;
@@ -73,6 +71,7 @@ let panelBounds = null;
 let saveBoundsTimer = null;
 let updateTask = { version: '', filePath: '', downloading: false, done: false };
 let installerLaunched = false;
+let historyBackup = null;
 
 function updateDir() {
   return path.join(app.getPath('temp'), 'GaokaoCountdownUpdate');
@@ -81,7 +80,6 @@ function updateDir() {
 /* ---------------- 存储 & 日志 ---------------- */
 function ensureDirs() {
   fs.mkdirSync(USER_DIR, { recursive: true });
-  fs.mkdirSync(LOG_DIR, { recursive: true });
 }
 /* 旧版“外语”拆分为英语/日语，并限制最多 6 科 */
 function normalizeSubjects(input) {
@@ -219,12 +217,86 @@ function saveStore() {
     fs.renameSync(tmp, STORE_FILE);
   } catch { /* 忽略写盘失败，不影响主流程 */ }
 }
+const LOG_LABELS = {
+  APP_START: '程序启动',
+  APP_QUIT: '程序退出',
+  WINDOW_READY: '主界面就绪',
+  WINDOW_HIDE: '隐藏主界面',
+  NAV_HOME: '返回主界面',
+  SETTINGS: '设置已更新',
+  MODE_CHANGE: '切换显示模式',
+  DEBUG_MODE: '调试模式变更',
+  KNOWLEDGE_OPEN: '打开学科知识签',
+  CLASSROOM_OPEN: '打开课堂点名',
+  WEATHER_OK: '天气获取成功',
+  WEATHER_ERR: '天气获取失败',
+  WEATHER_CN_FAIL: '中国天气网获取失败',
+  WEATHER_HOURLY_OK: '逐小时天气获取成功',
+  WEATHER_HOURLY_FAIL: '逐小时天气获取失败',
+  UPDATE_CHECK: '检查更新',
+  UPDATE_API_FAIL: '更新接口连接失败',
+  UPDATE_ERR: '更新检查失败',
+  UPDATE_DOWNLOADED: '安装包下载完成',
+  UPDATE_DOWNLOAD_FAIL: '安装包下载失败',
+  UPDATE_INSTALL: '启动安装程序',
+  UPDATE_DEFER: '已安排退出后安装',
+  UPDATE_INSTALL_ON_QUIT: '退出时启动安装程序',
+  UPDATE_INSTALL_ERR: '安装程序启动失败',
+  UPDATE_INSTALL_ON_QUIT_ERR: '退出安装启动失败',
+  UPDATE_CLEANUP: '清理旧版本文件',
+  ADMIN_SETUP: '设置管理员密码',
+  ADMIN_LOGIN: '管理员登录成功',
+  ADMIN_LOGIN_FAIL: '管理员密码错误',
+  ADMIN_LOCK: '退出管理员模式',
+  ADMIN_PASSWORD_CHANGE: '修改管理员密码',
+  ROSTER_IMPORT: '导入名单',
+  ROSTER_DELETE: '删除名单',
+  SIGN_DRAW: '开启幸运签',
+  HISTORY_CLEAR: '清空签运簿',
+  HISTORY_RESTORE: '恢复签运簿',
+  DWM_ERR: '窗口特效设置失败',
+  CLIENT: '客户端事件'
+};
+
+function logDetailText(detail) {
+  if (!detail || typeof detail !== 'object') return '';
+  const parts = [];
+  Object.keys(detail).slice(0, 6).forEach((key) => {
+    const value = detail[key];
+    if (value == null || value === '') return;
+    parts.push(`${key}=${typeof value === 'object' ? JSON.stringify(value) : value}`);
+  });
+  return parts.length ? '（' + parts.join('，') + '）' : '';
+}
+
+function logCandidates() {
+  const list = [];
+  if (app.isPackaged) {
+    if (process.env.PORTABLE_EXECUTABLE_FILE) {
+      list.push(path.join(path.dirname(process.env.PORTABLE_EXECUTABLE_FILE), LOG_NAME));
+    }
+    list.push(path.join(path.dirname(process.execPath), LOG_NAME));
+  }
+  list.push(path.join(USER_DIR, LOG_NAME));
+  return Array.from(new Set(list));
+}
+
 function appendLog(event, detail) {
   try {
     ensureDirs();
-    const line = `[${new Date().toISOString()}] ${event} ${JSON.stringify(detail || {})}\n`;
-    fs.appendFileSync(LOG_FILE, line, 'utf8');
-  } catch { /* 忽略 */ }
+    const now = new Date();
+    const p2 = (n) => String(n).padStart(2, '0');
+    const time = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())} ` +
+      `${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}`;
+    const label = LOG_LABELS[event] || event;
+    const line = `[${time}] ${label}${logDetailText(detail)}\n`;
+    for (const file of logCandidates()) {
+      try {
+        fs.appendFileSync(file, line, 'utf8');
+        return;
+      } catch { /* 尝试下一个位置 */ }
+    }
+  } catch { /* 忽略日志失败 */ }
 }
 
 /* 新版本首次启动时清理旧便携版与安装包（安装成功后才可能执行成功） */
@@ -246,14 +318,6 @@ function runPendingCleanup() {
   });
   store.pendingCleanup = [];
   saveStore();
-}
-function readLogs(limit = 40) {
-  try {
-    const lines = fs.readFileSync(LOG_FILE, 'utf8').split(/\r?\n/).filter(Boolean);
-    return lines.slice(-limit).reverse();
-  } catch {
-    return [];
-  }
 }
 function dateKey(d = new Date()) {
   const y = d.getFullYear();
@@ -906,8 +970,6 @@ function setSkin(id) {
   store.skin = id;
   saveStore();
   if (win && !win.isDestroyed()) win.webContents.send('skin:changed', { skin: id });
-  if (knowledgeWin && !knowledgeWin.isDestroyed()) knowledgeWin.webContents.send('skin:changed', { skin: id });
-  if (classroomWin && !classroomWin.isDestroyed()) classroomWin.webContents.send('skin:changed', { skin: id });
   appendLog('SETTINGS', { skin: id });
   return id;
 }
@@ -938,97 +1000,79 @@ function disableDwmShadow(target) {
   }
 }
 
-/* 学科知识签独立窗口 */
-function openKnowledgeWindow() {
-  const subjectsKey = (store.selectedSubjects || []).join(',');
-  if (knowledgeWin && !knowledgeWin.isDestroyed()) {
-    // 选科在设置里改动后，刷新已打开的知识签窗口
-    if (subjectsKey !== knowledgeSubjectsKey) {
-      knowledgeSubjectsKey = subjectsKey;
-      knowledgeWin.webContents.reload();
-    }
-    knowledgeWin.show();
-    knowledgeWin.focus();
-    return;
-  }
-  knowledgeSubjectsKey = subjectsKey;
-  knowledgeWin = new BrowserWindow({
-    width: 920,
-    height: 680,
-    minWidth: 780,
-    minHeight: 560,
-    frame: false,
-    thickFrame: false,
-    transparent: true,
-    hasShadow: false,
-    resizable: false,
-    show: false,
-    title: '学科知识签',
-    icon: path.join(__dirname, 'build', 'icon.png'),
-    backgroundColor: '#00000000',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      spellcheck: false,
-      backgroundThrottling: false
-    }
+/* ---------------- 主窗口内页面切换（知识签 / 课堂点名） ---------------- */
+function navigateToView(view, extraQuery) {
+  if (!win || win.isDestroyed()) return;
+  if (mode === 'pet') applyPetMode(false);
+  if (currentView === 'home') panelViewSnapshot = win.getBounds();
+  if (currentView === 'classroom' && view !== 'classroom') classroomUnlocked = false;
+  currentView = view;
+
+  const size = view === 'knowledge'
+    ? { width: 920, height: 680, minWidth: 780, minHeight: 560 }
+    : { width: 1120, height: 760, minWidth: 940, minHeight: 620 };
+  const area = screen.getPrimaryDisplay().workArea;
+  const width = Math.min(size.width, area.width - 16);
+  const height = Math.min(size.height, area.height - 16);
+  const b = win.getBounds();
+  const x = Math.min(Math.max(area.x, b.x), area.x + area.width - width);
+  const y = Math.min(Math.max(area.y, b.y), area.y + area.height - height);
+
+  win.setResizable(true);
+  win.setMinimumSize(size.minWidth, size.minHeight);
+  win.setBounds({ x, y, width, height });
+  win.show();
+  win.focus();
+  win.loadFile(path.join(__dirname, 'renderer', view + '.html'), {
+    query: Object.assign({ skin: store.skin }, extraQuery || {})
   });
-  knowledgeWin.setMenuBarVisibility(false);
-  try { knowledgeWin.setBackgroundMaterial('none'); } catch { /* 旧系统忽略 */ }
-  knowledgeWin.loadFile(path.join(__dirname, 'renderer', 'knowledge.html'), { query: { skin: store.skin } });
-  knowledgeWin.once('ready-to-show', () => {
-    disableDwmShadow(knowledgeWin);
-    knowledgeWin.show();
-  });
-  knowledgeWin.on('closed', () => { knowledgeWin = null; });
-  appendLog('KNOWLEDGE_OPEN', { skin: store.skin });
+  appendLog(view === 'knowledge' ? 'KNOWLEDGE_OPEN' : 'CLASSROOM_OPEN', {});
 }
 
-/* ---------------- 课堂助手窗口与数据 ---------------- */
-function openClassroomWindow() {
-  if (classroomWin && !classroomWin.isDestroyed()) {
-    classroomWin.show();
-    classroomWin.focus();
+function goHomeView() {
+  if (!win || win.isDestroyed()) return;
+  currentView = 'home';
+  classroomUnlocked = false;
+  win.setResizable(false);
+  win.setMinimumSize(980, 640);
+  const area = screen.getPrimaryDisplay().workArea;
+  const b = panelViewSnapshot || store.panelBounds || {
+    x: area.x + 40,
+    y: area.y + 40,
+    width: Math.min(1160, area.width - 48),
+    height: Math.min(740, area.height - 48)
+  };
+  const width = Math.max(980, Math.min(b.width || 1160, area.width));
+  const height = Math.max(640, Math.min(b.height || 740, area.height));
+  const x = Math.min(Math.max(area.x, b.x || area.x), area.x + area.width - width);
+  const y = Math.min(Math.max(area.y, b.y || area.y), area.y + area.height - height);
+  win.setBounds({ x, y, width, height });
+  win.show();
+  win.focus();
+  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  panelViewSnapshot = null;
+  appendLog('NAV_HOME', {});
+}
+
+function openKnowledgeWindow() {
+  if (currentView === 'knowledge') {
+    win.show();
+    win.focus();
     return;
   }
-  classroomWin = new BrowserWindow({
-    width: 1120,
-    height: 760,
-    minWidth: 940,
-    minHeight: 620,
-    frame: false,
-    thickFrame: false,
-    transparent: true,
-    hasShadow: false,
-    resizable: true,
-    show: false,
-    title: '课堂助手',
-    icon: path.join(__dirname, 'build', 'icon.png'),
-    backgroundColor: '#00000000',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      spellcheck: false,
-      backgroundThrottling: false
+  navigateToView('knowledge');
+}
+
+function openClassroomWindow(options) {
+  if (currentView === 'classroom') {
+    win.show();
+    win.focus();
+    if (options && options.admin) {
+      win.webContents.send('admin:open');
     }
-  });
-  classroomWin.setMenuBarVisibility(false);
-  try { classroomWin.setBackgroundMaterial('none'); } catch { /* 旧系统忽略 */ }
-  classroomWin.loadFile(path.join(__dirname, 'renderer', 'classroom.html'), { query: { skin: store.skin } });
-  classroomWin.once('ready-to-show', () => {
-    disableDwmShadow(classroomWin);
-    classroomWin.show();
-    classroomWin.focus();
-  });
-  classroomWin.on('closed', () => {
-    classroomWin = null;
-    classroomUnlocked = false;
-  });
-  appendLog('CLASSROOM_OPEN', {});
+    return;
+  }
+  navigateToView('classroom', options && options.admin ? { admin: '1' } : undefined);
 }
 
 const NAME_HEADER_RE = /^(姓名|名字|学生姓名|学生|name|序号|编号|学号|班级|性别)$/i;
@@ -1176,31 +1220,49 @@ function classroomAdminData() {
     lastPickId: r.lastPickId,
     names: r.names.map((n) => ({ id: n.id, name: n.name, weight: n.weight, count: n.count, pickedAt: n.pickedAt }))
   }));
+  data.historyCount = store.history.length;
+  data.historyBackupCount = historyBackup ? historyBackup.length : 0;
   return data;
 }
-function drawFromRoster(rosterId) {
+function drawFromRoster(rosterId, count) {
   const roster = store.classroom.rosters.find((r) => r.id === rosterId);
   if (!roster) return { ok: false, error: '名单不存在' };
   if (!roster.names.length) return { ok: false, error: '名单里还没有学生' };
   const pool = roster.names.filter((n) => n.weight > 0);
   if (!pool.length) return { ok: false, error: '权重都为 0，无法点名' };
-  const candidates = pool.length > 1 ? pool.filter((n) => n.id !== roster.lastPickId) : pool;
-  const total = candidates.reduce((sum, n) => sum + n.weight, 0);
-  let r = Math.random() * total;
-  let picked = candidates[candidates.length - 1];
-  for (const n of candidates) {
-    r -= n.weight;
-    if (r <= 0) { picked = n; break; }
+  const want = Math.max(1, Math.min(parseInt(count, 10) || 1, pool.length));
+  let candidates = pool.slice();
+  // 多人抽取时尽量避开上一次最后抽到的学生
+  if (pool.length > want) candidates = candidates.filter((n) => n.id !== roster.lastPickId);
+  if (!candidates.length) candidates = pool.slice();
+
+  const picked = [];
+  for (let i = 0; i < want && candidates.length; i++) {
+    const total = candidates.reduce((sum, n) => sum + n.weight, 0);
+    let r = Math.random() * total;
+    let hit = candidates[candidates.length - 1];
+    for (const n of candidates) {
+      r -= n.weight;
+      if (r <= 0) { hit = n; break; }
+    }
+    hit.count += 1;
+    hit.pickedAt = Date.now();
+    picked.push(hit);
+    candidates = candidates.filter((n) => n.id !== hit.id);
   }
-  picked.count += 1;
-  picked.pickedAt = Date.now();
-  roster.lastPickId = picked.id;
+  if (!picked.length) return { ok: false, error: '点名失败，请重试' };
+  roster.lastPickId = picked[picked.length - 1].id;
   saveStore();
-  return { ok: true, name: picked.name, roster: roster.name, rosterId: roster.id };
+  return {
+    ok: true,
+    name: picked[0].name,
+    names: picked.map((n) => n.name),
+    roster: roster.name,
+    rosterId: roster.id
+  };
 }
 function broadcastDebugMode() {
   if (win && !win.isDestroyed()) win.webContents.send('debug:changed', { on: !!store.debugMode });
-  if (classroomWin && !classroomWin.isDestroyed()) classroomWin.webContents.send('debug:changed', { on: !!store.debugMode });
 }
 
 /* 把窗口压到桌面层（其他程序窗口之下，桌面之上） */
@@ -1232,6 +1294,10 @@ function sendToBottom() {
 /* ---------------- 托盘 / 应用 ---------------- */
 function showPanel() {
   if (!win || win.isDestroyed()) return;
+  if (currentView !== 'home') {
+    goHomeView();
+    return;
+  }
   if (mode === 'pet') applyPetMode(false);
   else {
     win.show();
@@ -1318,7 +1384,6 @@ function wireIpc() {
     isFirstToday: firstTodayLaunch,
     today: dateKey(),
     mode,
-    logs: readLogs(30),
     skins: SKINS,
     version: app.getVersion(),
     platform: process.platform,
@@ -1376,15 +1441,6 @@ function wireIpc() {
     appendLog('SIGN_DRAW', { date: entry.date, no: entry.no, level: entry.level, daysLeft: entry.daysLeft });
     return { ok: true, history: store.history };
   });
-
-  ipcMain.handle('app:clear-history', () => {
-    store.history = [];
-    saveStore();
-    appendLog('HISTORY_CLEAR', {});
-    return { ok: true };
-  });
-
-  ipcMain.handle('app:get-logs', () => readLogs(40));
 
   ipcMain.handle('weather:get', async () => {
     const cache = store.weatherCache;
@@ -1713,9 +1769,7 @@ function wireIpc() {
     openKnowledgeWindow();
     return { ok: true };
   });
-  ipcMain.on('knowledge:close', () => {
-    if (knowledgeWin && !knowledgeWin.isDestroyed()) knowledgeWin.close();
-  });
+  ipcMain.on('knowledge:close', () => goHomeView());
 
   ipcMain.on('pet:menu', petContextMenu);
   ipcMain.on('window:hide', () => {
@@ -1734,24 +1788,10 @@ function wireIpc() {
 
   /* 从设置页版本号进入管理员模式 */
   ipcMain.handle('classroom:open-admin', () => {
-    const notify = () => {
-      if (classroomWin && !classroomWin.isDestroyed()) classroomWin.webContents.send('admin:open');
-    };
-    if (classroomWin && !classroomWin.isDestroyed()) {
-      classroomWin.show();
-      classroomWin.focus();
-      setTimeout(notify, 220);
-    } else {
-      openClassroomWindow();
-      if (classroomWin && !classroomWin.isDestroyed()) {
-        classroomWin.webContents.once('did-finish-load', () => setTimeout(notify, 320));
-      }
-    }
+    openClassroomWindow({ admin: true });
     return { ok: true };
   });
-  ipcMain.on('classroom:close', () => {
-    if (classroomWin && !classroomWin.isDestroyed()) classroomWin.close();
-  });
+  ipcMain.on('classroom:close', () => goHomeView());
 
   ipcMain.handle('classroom:get', () => classroomPublicData());
 
@@ -1909,7 +1949,30 @@ function wireIpc() {
     return { ok: true, data: classroomAdminData() };
   });
 
-  ipcMain.handle('classroom:draw', (_e, rosterId) => drawFromRoster(rosterId));
+  ipcMain.handle('classroom:draw', (_e, rosterId, count) => drawFromRoster(rosterId, count));
+
+  /* 管理员：清空 / 恢复签运簿（误触可回退） */
+  ipcMain.handle('classroom:clear-history', () => {
+    const guard = adminGuard();
+    if (guard) return guard;
+    historyBackup = store.history.slice();
+    store.history = [];
+    saveStore();
+    appendLog('HISTORY_CLEAR', { count: historyBackup.length });
+    return { ok: true, count: historyBackup.length, data: classroomAdminData() };
+  });
+
+  ipcMain.handle('classroom:restore-history', () => {
+    const guard = adminGuard();
+    if (guard) return guard;
+    if (!historyBackup) return { ok: false, error: '没有可恢复的数据' };
+    store.history = historyBackup.slice();
+    const count = store.history.length;
+    historyBackup = null;
+    saveStore();
+    appendLog('HISTORY_RESTORE', { count });
+    return { ok: true, count, data: classroomAdminData() };
+  });
 
   ipcMain.handle('classroom:save-timetable', (_e, timetable) => {
     store.classroom.timetable = normalizeTimetable(timetable);

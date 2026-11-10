@@ -1,13 +1,11 @@
 'use strict';
-const { contextBridge, ipcRenderer, webUtils } = require('electron');
+const { contextBridge, ipcRenderer, webUtils, clipboard } = require('electron');
 
 contextBridge.exposeInMainWorld('gaokao', {
   getInit: () => ipcRenderer.invoke('app:get-init'),
   saveSettings: (patch) => ipcRenderer.invoke('app:save-settings', patch),
   setAutoLaunch: (enabled) => ipcRenderer.invoke('app:set-auto-launch', enabled),
   addHistory: (entry) => ipcRenderer.invoke('app:add-history', entry),
-  clearHistory: () => ipcRenderer.invoke('app:clear-history'),
-  getLogs: () => ipcRenderer.invoke('app:get-logs'),
   getWeather: () => ipcRenderer.invoke('weather:get'),
   getWeatherHourly: () => ipcRenderer.invoke('weather:hourly'),
   checkUpdate: () => ipcRenderer.invoke('app:check-update'),
@@ -19,6 +17,14 @@ contextBridge.exposeInMainWorld('gaokao', {
   onUpdateDownloaded: (cb) => ipcRenderer.on('update:downloaded', (_e, data) => cb(data)),
   onUpdateError: (cb) => ipcRenderer.on('update:error', (_e, data) => cb(data)),
   openExternal: (url) => ipcRenderer.invoke('app:open-url', url),
+  copyText: (text) => {
+    try {
+      clipboard.writeText(String(text == null ? '' : text));
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  },
   saveImage: (dataUrl, name) => ipcRenderer.invoke('app:save-image', dataUrl, name),
   log: (event, detail) => ipcRenderer.send('app:log', event, detail),
   setPetMode: (on) => ipcRenderer.invoke('window:set-pet-mode', on),
@@ -61,7 +67,9 @@ contextBridge.exposeInMainWorld('gaokao', {
   classroomUpdateName: (rosterId, nameId, patch) => ipcRenderer.invoke('classroom:update-name', rosterId, nameId, patch),
   classroomRemoveName: (rosterId, nameId) => ipcRenderer.invoke('classroom:remove-name', rosterId, nameId),
   classroomResetCounts: (rosterId) => ipcRenderer.invoke('classroom:reset-counts', rosterId),
-  classroomDraw: (rosterId) => ipcRenderer.invoke('classroom:draw', rosterId),
+  classroomDraw: (rosterId, count) => ipcRenderer.invoke('classroom:draw', rosterId, count),
+  classroomClearHistory: () => ipcRenderer.invoke('classroom:clear-history'),
+  classroomRestoreHistory: () => ipcRenderer.invoke('classroom:restore-history'),
   classroomSaveTimetable: (timetable) => ipcRenderer.invoke('classroom:save-timetable', timetable),
   classroomParseSheet: (filePath) => ipcRenderer.invoke('classroom:parse-sheet', filePath),
   adminSetDebug: (on) => ipcRenderer.invoke('admin:set-debug', on),

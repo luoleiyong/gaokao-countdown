@@ -1136,6 +1136,8 @@ function renderUpdateUI() {
   const fill = $('updateProgressFill');
   const ptext = $('updateProgressText');
   const status = $('updateStatus');
+  const manualLink = $('manualDownloadLink');
+  if (manualLink) manualLink.hidden = true;
   if (!btn || !progress) return;
 
   if (!info || !info.ok) {
@@ -1176,7 +1178,9 @@ function renderUpdateUI() {
     progress.hidden = true;
     btn.hidden = false;
     btn.textContent = info.setupMirrors && info.setupMirrors.length ? '重新下载安装包' : '手动下载新版本';
-    if (status) status.textContent = `新版本 v${info.latest} 下载失败`;
+    if (status) status.textContent = `新版本 v${info.latest} 下载失败，可能被杀毒软件拦截，可尝试手动下载`;
+    const manual = $('manualDownloadLink');
+    if (manual) manual.hidden = false;
     return;
   }
 
@@ -1774,6 +1778,13 @@ function bindEvents() {
   $('repoLink').addEventListener('click', (e) => {
     e.preventDefault();
     bridge.openExternal('https://github.com/luoleiyong/gaokao-countdown');
+  });
+  $('manualDownloadLink').addEventListener('click', (e) => {
+    e.preventDefault();
+    const info = state.updateInfo;
+    const url = (info && (info.pageUrl || info.url)) ||
+      'https://github.com/luoleiyong/gaokao-countdown/releases/latest';
+    bridge.openExternal(url);
   });
 
   // 首页更新公告

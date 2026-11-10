@@ -92,14 +92,27 @@ function scheduleSave() {
 
 async function saveTimetable() {
   if (!state.data || !state.data.timetable) return;
+  const before = periods().length;
   try {
     const res = await bridge.classroomSaveTimetable(state.data.timetable);
-    if (res && res.ok && res.timetable) state.data.timetable = res.timetable;
+    if (res && res.ok && res.timetable) {
+      state.data.timetable = res.timetable;
+      // 若主进程对课次做了归一化（例如超过上限），同步刷新表格
+      if (periods().length !== before) renderTable();
+    }
   } catch (e) { /* 下次编辑会重试 */ }
 }
 
 function bind() {
-  $('btnBackHome').addEventListener('click', () => bridge.closeTimetable());
+  let leaving = false;
+  const goHome = () => {
+    if (leaving) return;
+    leaving = true;
+    try { bridge.closeTimetable(); } catch (e) { /* 忽略 */ }
+  };
+  $('btnBackHome').addEventListener('click', goHome);
+  // 触摸屏 / 部分输入法下 click 可能不触发，补一个 pointerup 兜底
+  $('btnBackHome').addEventListener('pointerup', goHome);
 
   $('showNight').addEventListener('change', (e) => {
     state.showNight = !!e.target.checked;

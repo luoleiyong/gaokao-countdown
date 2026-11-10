@@ -1,9 +1,11 @@
 {
   "name": "gaokao-countdown",
-  "version": "1.7.0",
-  "description": "高考倒计时 · 每日幸运签 · 桌面宠物 · 课堂点名（Windows）",
+  "version": "1.7.1",
+  "description": "高考倒计时",
   "main": "main.js",
-  "author": "Trae",
+  "author": {
+    "name": "作者：luo"
+  },
   "license": "MIT",
   "scripts": {
     "start": "electron .",

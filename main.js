@@ -80,6 +80,36 @@ function updateDir() {
   return path.join(app.getPath('temp'), 'GaokaoCountdownUpdate');
 }
 
+/* 安装包下载目录：临时目录失败时依次回退到下载目录与数据目录 */
+function updateDirs() {
+  const list = [updateDir()];
+  try { list.push(path.join(app.getPath('downloads'), 'GaokaoCountdownUpdate')); } catch { /* 忽略 */ }
+  list.push(path.join(USER_DIR, 'update'));
+  return Array.from(new Set(list));
+}
+
+/* 重命名重试：杀毒软件短暂占用时也能完成落盘 */
+function renameWithRetry(src, dest) {
+  let lastError = null;
+  for (let i = 0; i < 4; i++) {
+    try {
+      fs.renameSync(src, dest);
+      return;
+    } catch (e) {
+      lastError = e;
+      try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250); } catch { /* 忽略 */ }
+    }
+  }
+  try {
+    fs.copyFileSync(src, dest);
+    fs.unlinkSync(src);
+    return;
+  } catch (e) {
+    lastError = e;
+  }
+  throw lastError || new Error('无法保存安装包');
+}
+
 /* ---------------- 存储 & 日志 ---------------- */
 function ensureDirs() {
   fs.mkdirSync(USER_DIR, { recursive: true });
@@ -322,6 +352,7 @@ const LOG_LABELS = {
   TIMER_DONE: '课堂计时结束',
   SHORTCUT_FAIL: '全局快捷键注册失败',
   PET_ENCOURAGE: '桌面宠物课程提示',
+  MAIN_ERROR: '主进程异常',
   DWM_ERR: '窗口特效设置失败',
   CLIENT: '客户端事件'
 };
@@ -1794,66 +1825,91 @@ function wireIpc() {
     if (updateTask.downloading) {
       return { ok: false, error: '正在下载中', downloading: true };
     }
-    const dir = updateDir();
-    fs.mkdirSync(dir, { recursive: true });
-    const filePath = path.join(dir, `GaokaoCountdown-Setup-${version}.exe`);
-    if (fs.existsSync(filePath) && fs.statSync(filePath).size > 20 * 1024 * 1024) {
-      updateTask = { version, filePath, downloading: false, done: true };
-      return { ok: true, filePath, version, cached: true };
+    const fileName = `GaokaoCountdown-Setup-${version}.exe`;
+    const dirs = updateDirs();
+
+    // 已有完整安装包直接复用
+    for (const dir of dirs) {
+      const filePath = path.join(dir, fileName);
+      try {
+        if (fs.existsSync(filePath) && fs.statSync(filePath).size > 20 * 1024 * 1024) {
+          updateTask = { version, filePath, downloading: false, done: true };
+          return { ok: true, filePath, version, cached: true };
+        }
+      } catch { /* 忽略 */ }
     }
 
-    updateTask = { version, filePath, downloading: true, done: false };
-    const tmp = filePath + '.part';
+    updateTask = { version, filePath: '', downloading: true, done: false };
     let lastError = '下载失败';
+    let fsFailure = false;
+
     for (const url of urls) {
-      try {
-        if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-        const res = await net.fetch(url, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-        });
-        if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
-        const total = Number(res.headers.get('content-length')) || 0;
-        const stream = fs.createWriteStream(tmp);
-        const reader = res.body.getReader();
-        let received = 0;
-        let sentAt = 0;
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = Buffer.from(value);
-          received += chunk.length;
-          stream.write(chunk);
-          if (sender && !sender.isDestroyed() && Date.now() - sentAt > 180) {
-            sentAt = Date.now();
-            sender.send('update:progress', {
-              version,
-              received,
-              total,
-              percent: total ? Math.min(99, Math.round((received / total) * 100)) : 0
-            });
+      for (const dir of dirs) {
+        const filePath = path.join(dir, fileName);
+        const tmp = `${filePath}.${process.pid}.${Date.now()}.part`;
+        let handle = null;
+        try {
+          fs.mkdirSync(dir, { recursive: true });
+          // 清理同目录遗留的临时分片（被占用时忽略）
+          try {
+            fs.readdirSync(dir)
+              .filter((f) => f.endsWith('.part'))
+              .forEach((f) => { try { fs.unlinkSync(path.join(dir, f)); } catch { /* 忽略 */ } });
+          } catch { /* 忽略 */ }
+
+          handle = await fs.promises.open(tmp, 'w');
+          const res = await net.fetch(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+          });
+          if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+          const total = Number(res.headers.get('content-length')) || 0;
+          const reader = res.body.getReader();
+          let received = 0;
+          let sentAt = 0;
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = Buffer.from(value);
+            received += chunk.length;
+            await handle.write(chunk);
+            if (sender && !sender.isDestroyed() && Date.now() - sentAt > 180) {
+              sentAt = Date.now();
+              sender.send('update:progress', {
+                version,
+                received,
+                total,
+                percent: total ? Math.min(99, Math.round((received / total) * 100)) : 0
+              });
+            }
           }
+          await handle.close();
+          handle = null;
+          if (fs.statSync(tmp).size < 20 * 1024 * 1024) throw new Error('安装包大小异常');
+          renameWithRetry(tmp, filePath);
+          updateTask = { version, filePath, downloading: false, done: true };
+          if (sender && !sender.isDestroyed()) {
+            sender.send('update:downloaded', { version, filePath });
+          }
+          appendLog('UPDATE_DOWNLOADED', { version, size: fs.statSync(filePath).size, dir });
+          return { ok: true, filePath, version };
+        } catch (e) {
+          lastError = e.message;
+          fsFailure = /EPERM|EACCES|EBUSY|ENOSPC|EROFS|EMFILE|ENFILE|EEXIST|ENOTDIR|EISDIR|EINVAL/.test(String(e.code || '') + ' ' + String(e.message || ''));
+          try { if (handle) await handle.close(); } catch { /* 忽略 */ }
+          try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch { /* 忽略 */ }
+          appendLog('UPDATE_DOWNLOAD_FAIL', { url, dir, message: e.message, fs: fsFailure });
         }
-        await new Promise((resolve, reject) => {
-          stream.on('error', reject);
-          stream.end(() => resolve());
-        });
-        if (fs.statSync(tmp).size < 20 * 1024 * 1024) throw new Error('安装包大小异常');
-        fs.renameSync(tmp, filePath);
-        updateTask = { version, filePath, downloading: false, done: true };
-        if (sender && !sender.isDestroyed()) {
-          sender.send('update:downloaded', { version, filePath });
-        }
-        appendLog('UPDATE_DOWNLOADED', { version, size: fs.statSync(filePath).size });
-        return { ok: true, filePath, version };
-      } catch (e) {
-        lastError = e.message;
-        appendLog('UPDATE_DOWNLOAD_FAIL', { url, message: e.message });
+        // 文件权限问题换下一个目录重试；网络问题换下一个下载地址
+        if (!fsFailure) break;
       }
     }
-    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch { /* 忽略 */ }
+
     updateTask = { version, filePath: '', downloading: false, done: false };
-    if (sender && !sender.isDestroyed()) sender.send('update:error', { version, error: lastError });
-    return { ok: false, error: lastError };
+    const friendly = fsFailure
+      ? '无法写入下载目录（可能被杀毒软件拦截），请关闭拦截后重试'
+      : lastError;
+    if (sender && !sender.isDestroyed()) sender.send('update:error', { version, error: friendly });
+    return { ok: false, error: friendly };
   };
 
   ipcMain.handle('app:update-download', (event, payload) => downloadUpdatePackage(event.sender, payload));
@@ -2233,6 +2289,24 @@ function registerGlobalShortcuts() {
 }
 
 /* ---------------- 生命周期 ---------------- */
+process.on('uncaughtException', (err) => {
+  const detail = (err && (err.stack || err.message)) || String(err);
+  try { appendLog('MAIN_ERROR', { message: String(detail).slice(0, 600) }); } catch { /* 忽略 */ }
+  // 不弹阻塞式对话框，避免用户无法继续点击界面
+  try {
+    if (tray && !tray.isDestroyed()) {
+      tray.displayBalloon({
+        title: '程序遇到一点问题',
+        content: '错误已写入启动日志，可稍后重试。'
+      });
+    }
+  } catch { /* 忽略 */ }
+});
+process.on('unhandledRejection', (reason) => {
+  const detail = (reason && (reason.stack || reason.message)) || String(reason);
+  try { appendLog('MAIN_ERROR', { message: 'Promise: ' + String(detail).slice(0, 600) }); } catch { /* 忽略 */ }
+});
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();

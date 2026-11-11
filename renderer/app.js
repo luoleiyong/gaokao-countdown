@@ -504,9 +504,16 @@ function parseCourseRange(text) {
   return { start: Number(m[1]) * 60 + Number(m[2]), end: Number(m[3]) * 60 + Number(m[4]) };
 }
 
-function dayPeriods(dayIdx) {
-  const t = state.timetable;
-  if (!t || !Array.isArray(t.periods)) return [];
+const WEEKEND_HOLIDAY_RE = /(放假|假期|休息|黄金周末|黄金周|不上课|停课)/;
+function isHolidayText(v) {
+  return WEEKEND_HOLIDAY_RE.test(String(v == null ? '' : v));
+}
+function courseLabelNo(label) {
+  const m = String(label || '').match(/(\d+)/);
+  return m ? Number(m[1]) : 0;
+}
+
+function weekdayCourses(dayIdx, t) {
   return t.periods.map((p, i) => {
     const subject = String((p.cells && p.cells[dayIdx]) || '').trim();
     const range = parseCourseRange(p.time);
@@ -516,9 +523,88 @@ function dayPeriods(dayIdx) {
       subject,
       time: String(p.time),
       start: range.start,
-      end: range.end
+      end: range.end,
+      holiday: false
     };
   }).filter(Boolean).sort((a, b) => a.start - b.start);
+}
+
+/* 标记节假日：从出现关键词的那一节起按放假处理，重新排了具体课程则恢复上课 */
+function markWeekendHoliday(list) {
+  let on = false;
+  list.forEach((p) => {
+    const subject = String(p.subject || '').trim();
+    if (isHolidayText(subject)) on = true;
+    else if (subject) on = false;
+    p.holiday = on;
+  });
+  return list;
+}
+
+function entrySortStart(time, label) {
+  const range = parseCourseRange(time);
+  if (range) return range.start;
+  const no = courseLabelNo(label);
+  return no ? no * 60 : Number.MAX_SAFE_INTEGER;
+}
+
+function weekendDayCourses(dayIdx, date, t) {
+  const w = t.weekend && typeof t.weekend === 'object' ? t.weekend : null;
+  if (!w || !w.enabled || dayIdx < 5) return null;
+  const col = dayIdx - 5;
+  const fixed = Array.isArray(w.periods) ? w.periods : [];
+  const entries = Array.isArray(w.entries) ? w.entries : [];
+
+  if (w.variable && date) {
+    const dayEntries = entries.filter((e) => e && e.date === date && String(e.subject || '').trim());
+    if (dayEntries.length) {
+      const list = dayEntries.map((e, i) => {
+        const fixedPeriod = fixed.find((p) => p.label === e.label) || fixed[i] || null;
+        const times = fixedPeriod && Array.isArray(fixedPeriod.times) ? fixedPeriod.times : [];
+        const time = String(e.time || times[col] || '');
+        const range = parseCourseRange(time);
+        const label = e.label || (fixedPeriod && fixedPeriod.label) || `第${i + 1}节`;
+        return {
+          label,
+          subject: String(e.subject).trim(),
+          time,
+          start: range ? range.start : Number.MAX_SAFE_INTEGER,
+          end: range ? range.end : Number.MAX_SAFE_INTEGER,
+          sort: entrySortStart(time, label),
+          holiday: false
+        };
+      });
+      list.sort((a, b) => a.sort - b.sort);
+      return markWeekendHoliday(list);
+    }
+  }
+
+  const list = fixed.map((p, i) => {
+    const subject = String((p.cells && p.cells[col]) || '').trim();
+    const times = Array.isArray(p.times) ? p.times : [];
+    const time = String(times[col] || '');
+    const range = parseCourseRange(time);
+    const holiday = isHolidayText(subject);
+    // 放假关键词即使没有填写时间也要保留，后面统一按放假处理
+    if (!subject || (!range && !holiday)) return null;
+    return {
+      label: p.label || `第${i + 1}节`,
+      subject,
+      time,
+      start: range ? range.start : Number.MAX_SAFE_INTEGER,
+      end: range ? range.end : Number.MAX_SAFE_INTEGER,
+      holiday: false
+    };
+  }).filter(Boolean);
+  return markWeekendHoliday(list);
+}
+
+function dayPeriods(dayIdx, date) {
+  const t = state.timetable;
+  if (!t || !Array.isArray(t.periods)) return [];
+  const weekend = weekendDayCourses(dayIdx, date, t);
+  if (weekend) return weekend;
+  return weekdayCourses(dayIdx, t);
 }
 
 function petMotto() {
@@ -540,33 +626,58 @@ function courseRowHtml(tag, course, extraClass) {
 
 function timetableHasCourses() {
   const t = state.timetable;
-  if (!t || !Array.isArray(t.periods)) return false;
-  return t.periods.some((p) => Array.isArray(p.cells) && p.cells.some((c) => String(c || '').trim()));
+  if (!t) return false;
+  if (Array.isArray(t.periods) && t.periods.some((p) => Array.isArray(p.cells) && p.cells.some((c) => String(c || '').trim()))) {
+    return true;
+  }
+  const w = t.weekend;
+  if (w && w.enabled) {
+    if (Array.isArray(w.periods) && w.periods.some((p) => Array.isArray(p.cells) && p.cells.some((c) => String(c || '').trim()))) {
+      return true;
+    }
+    if (Array.isArray(w.entries) && w.entries.some((e) => e && String(e.subject || '').trim())) {
+      return true;
+    }
+  }
+  return false;
 }
 
-/* 今日课程安排：本节课 / 未来三节 / 今日无课 / 今日已结束 */
+/* 今日课程安排：本节课 / 未来三节 / 今日无课 / 今日已结束 / 假期愉快 */
 function coursePlan() {
   const now = new Date();
   const dayIdx = (now.getDay() + 6) % 7;
   const nowMin = now.getHours() * 60 + now.getMinutes();
-  const today = dayPeriods(dayIdx);
-  const tomorrow = dayPeriods((dayIdx + 1) % 7);
+  const todayKey = dateKey(now);
+  const tomorrowDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const today = dayPeriods(dayIdx, todayKey);
+  const tomorrow = dayPeriods((dayIdx + 1) % 7, dateKey(tomorrowDate));
   if (!timetableHasCourses() || !today.length) return { status: 'empty', rows: [] };
 
-  const currentIdx = today.findIndex((p) => nowMin >= p.start && nowMin < p.end);
-  const upcoming = today.filter((p) => p.start > nowMin);
+  const hasHoliday = today.some((p) => p.holiday);
+  const active = today.filter((p) => !p.holiday);
+  if (!active.length) return { status: hasHoliday ? 'holiday' : 'done', rows: [] };
+
+  const currentIdx = active.findIndex((p) => nowMin >= p.start && nowMin < p.end);
+  const upcoming = active.filter((p) => p.start > nowMin);
 
   if (currentIdx >= 0) {
-    const rows = [{ tag: '本节课', course: today[currentIdx], extraClass: 'now' }];
-    const rest = today.slice(currentIdx + 1);
+    const rows = [{ tag: '本节课', course: active[currentIdx], extraClass: 'now' }];
+    const rest = active.slice(currentIdx + 1);
     if (rest.length) {
       rest.slice(0, 2).forEach((p, i) => rows.push({
         tag: i === 0 ? '下节课' : '随后',
         course: p,
         extraClass: ''
       }));
-    } else if (tomorrow.length) {
-      rows.push({ tag: '明天', course: tomorrow[0], extraClass: 'next-day' });
+    } else {
+      const currentPos = today.indexOf(active[currentIdx]);
+      const holidayLater = today.some((p, i) => p.holiday && i > currentPos);
+      const nextDay = tomorrow.find((p) => !p.holiday);
+      if (holidayLater) {
+        rows.push({ tag: '下节课', course: { subject: '假期愉快', time: '放假' }, extraClass: 'holiday' });
+      } else if (nextDay) {
+        rows.push({ tag: '明天', course: nextDay, extraClass: 'next-day' });
+      }
     }
     return { status: 'ok', rows };
   }
@@ -582,7 +693,7 @@ function coursePlan() {
     };
   }
 
-  return { status: 'done', rows: [] };
+  return { status: hasHoliday ? 'holiday' : 'done', rows: [] };
 }
 
 function homeCourseRowHtml(row) {
@@ -616,6 +727,12 @@ function renderPetCourse() {
       `<span>${escapeHtml(petMotto())}</span></div>`;
     return;
   }
+  if (plan.status === 'holiday') {
+    listEl.innerHTML =
+      '<div class="pet-course__done pet-course__holiday"><b>假期愉快</b>' +
+      `<span>${escapeHtml(petMotto())}</span></div>`;
+    return;
+  }
   listEl.innerHTML = plan.rows.map((r) => courseRowHtml(r.tag, r.course, r.extraClass)).join('');
 }
 
@@ -638,6 +755,12 @@ function renderHomeCourse() {
   if (plan.status === 'done') {
     listEl.innerHTML =
       '<div class="home-course__done"><b>今日课程已完成</b>' +
+      `<span>${escapeHtml(petMotto())}</span></div>`;
+    return;
+  }
+  if (plan.status === 'holiday') {
+    listEl.innerHTML =
+      '<div class="home-course__done home-course__holiday"><b>假期愉快</b>' +
       `<span>${escapeHtml(petMotto())}</span></div>`;
     return;
   }

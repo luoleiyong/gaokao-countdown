@@ -62,6 +62,29 @@ body::before{
 .tt-toggle input{accent-color:#d9b64a;cursor:pointer}
 .tt-body{flex:1;display:flex;flex-direction:column;min-height:0;padding-top:12px}
 .tt-head{display:flex;align-items:center;gap:12px;flex:none;margin-bottom:10px}
+.tt-dayzone{display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
+.tt-dayzone .tt-scroll{flex:1;min-height:0}
+.tt-section-head{display:flex;align-items:center;gap:10px;flex:none;margin:0 0 8px}
+.tt-section-head h3{
+  margin:0;font-family:var(--font-title);font-weight:400;
+  font-size:15px;letter-spacing:.1em;color:var(--text);
+}
+.tt-section-tip{font-size:11px;letter-spacing:.06em;color:var(--faint)}
+.tt-section-actions{display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap}
+.tt-section-note{margin:0 0 8px;font-size:11px;line-height:1.7;color:var(--faint);letter-spacing:.03em}
+.tt-section-note b{font-weight:500;color:var(--gold)}
+.tt-weekend{flex:none;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.tt-weekend .tt-scroll{max-height:300px}
+.tt-variable{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)}
+.tt-scroll--dates{max-height:260px}
+.tt-badge{
+  display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:999px;
+  border:1px solid rgba(217,182,74,.45);background:rgba(217,182,74,.1);
+  color:var(--gold);font-size:10.5px;letter-spacing:.08em;
+}
+body.tt-has-weekend .tt-body{display:block;overflow-y:auto;padding-right:4px}
+body.tt-has-weekend .tt-dayzone{display:block}
+body.tt-has-weekend .tt-dayzone .tt-scroll{max-height:42vh}
 .tt-title{
   flex:0 1 320px;height:34px;padding:0 12px;
   border:1px solid var(--line);border-radius:8px;
@@ -101,6 +124,24 @@ body::before{
 .tt-input--label{width:76px;text-align:center;color:var(--gold)}
 .tt-input--time{width:104px;text-align:center;color:var(--dim);font-variant-numeric:tabular-nums}
 .tt-input--cell{min-width:74px}
+.tt-input--date{width:132px;text-align:center;color:var(--dim);font-variant-numeric:tabular-nums}
+.tt-time-cell{white-space:nowrap}
+.tt-input--time-part{
+  width:92px;padding:0 4px;text-align:center;
+  color:var(--dim);font-variant-numeric:tabular-nums;
+  color-scheme:dark;
+}
+.tt-input--time-part::-webkit-calendar-picker-indicator{opacity:.45;cursor:pointer}
+.tt-input--time-part::-webkit-calendar-picker-indicator:hover{opacity:.85}
+.tt-time-dash{margin:0 3px;font-size:10px;color:var(--faint)}
+.tt-holiday-cell{background:rgba(217,182,74,.075)}
+.tt-holiday-cell .tt-input{color:var(--gold)}
+.tt-holiday-flag{
+  display:inline-block;margin-left:4px;padding:0 4px;border-radius:3px;
+  font-size:9px;color:#f0d488;border:1px solid rgba(217,182,74,.5);
+  background:rgba(217,182,74,.12);vertical-align:1px;
+}
+.tt-empty{padding:22px 10px !important;text-align:center;color:var(--faint);font-size:11.5px;letter-spacing:.06em}
 .tt-night-flag{
   display:inline-block;margin-left:4px;padding:0 4px;border-radius:3px;
   font-size:9px;color:var(--gold);border:1px solid rgba(217,182,74,.4);
@@ -138,6 +179,12 @@ body::before{
 }
 .tt-close:hover{color:var(--gold);border-color:rgba(217,182,74,.5)}
 .tt-modal__body{padding:14px 18px;overflow:auto}
+.tt-import-target{
+  margin:0 0 8px;padding:8px 12px;border-radius:8px;
+  border:1px solid rgba(217,182,74,.28);background:rgba(217,182,74,.08);
+  font-size:11.5px;color:var(--dim);letter-spacing:.06em;
+}
+.tt-import-target b{color:var(--gold);font-weight:500}
 .tt-demo{
   margin:0 0 10px;padding:10px 12px;
   border:1px dashed var(--line-strong);border-radius:8px;

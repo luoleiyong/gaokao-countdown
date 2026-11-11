@@ -16,10 +16,18 @@
       <span class="tt-seal">课</span>
       <span class="tt-brand__text">
         <b>课程表</b>
-        <i>周一至周日 · 支持晚自习</i>
+        <i>工作日 + 周末作息 · 支持晚自习</i>
       </span>
     </div>
     <div class="tt-actions">
+      <label class="tt-toggle" title="启用单独的周六、周日作息表">
+        <input type="checkbox" id="weekendEnabled" />
+        <span>周末作息</span>
+      </label>
+      <label class="tt-toggle" title="周末课程按具体日期变化，可导入整个学期">
+        <input type="checkbox" id="weekendVariable" />
+        <span>周末课程不固定</span>
+      </label>
       <button class="tt-ghost" id="btnAddNight">＋ 晚自习</button>
       <button class="tt-ghost" id="btnTtAdd">＋ 加一节</button>
       <button class="tt-ghost" id="btnTtImport">一键导入</button>
@@ -34,11 +42,54 @@
     <div class="tt-head">
       <input class="tt-title" id="ttTitle" maxlength="40" aria-label="课程表标题" />
       <span class="tt-count" id="ttCount">共 0 节</span>
+      <span class="tt-badge" id="weekendBadge" hidden>已启用周末作息</span>
     </div>
-    <div class="tt-scroll">
-      <table class="tt-table" id="ttTable"></table>
-    </div>
-    <p class="tt-tip">点击单元格直接编辑，修改会自动保存。晚自习课次可在桌面宠物中一起显示。</p>
+
+    <section class="tt-dayzone">
+      <div class="tt-section-head">
+        <h3 id="ttWeekdayLabel">周一至周五</h3>
+        <span class="tt-section-tip" id="ttWeekdayTip">固定工作日课程</span>
+      </div>
+      <div class="tt-scroll">
+        <table class="tt-table" id="ttTable"></table>
+      </div>
+    </section>
+
+    <section class="tt-weekend" id="ttWeekend" hidden>
+      <div class="tt-section-head">
+        <h3>周末作息</h3>
+        <span class="tt-section-tip">周六、周日时间分开选择</span>
+        <div class="tt-section-actions">
+          <button class="tt-ghost" id="btnWeekendAdd">＋ 周末课次</button>
+          <button class="tt-ghost" id="btnWeekendImportFixed">导入课程固定</button>
+          <button class="tt-ghost" id="btnWeekendImportVariable">导入课程不固定</button>
+        </div>
+      </div>
+      <p class="tt-section-note">
+        <b>课程固定</b>：每周六、周日的课程都一样，在下面的表格里填写一次即可，之后每周自动重复。<br />
+        <b>课程不固定</b>：周末课程按日期变化，导入「日期、节次、时间、课程」，可以在开学时一次导入整个学期，到对应日期自动显示当天课程；没有登记的日期仍然使用课程固定的作息。<br />
+        在课程格填写「放假 / 假期 / 黄金周末 / 休息」等关键词，从该节起按放假处理；如果后面的节次重新排了具体课程（例如下午放假、晚上返校晚自习），那一节起恢复上课，不再显示「假」标识。
+      </p>
+      <div class="tt-scroll tt-scroll--weekend">
+        <table class="tt-table tt-table--weekend" id="ttWeekendTable"></table>
+      </div>
+
+      <div class="tt-variable" id="ttWeekendVariablePanel" hidden>
+        <div class="tt-section-head">
+          <h3>课程不固定</h3>
+          <span class="tt-count" id="ttWeekendDatesCount">共 0 条</span>
+          <div class="tt-section-actions">
+            <button class="tt-ghost" id="btnWeekendImportVariable2">导入课程不固定</button>
+          </div>
+        </div>
+        <p class="tt-section-note">按日期登记的周末课程会覆盖上面的课程固定作息；没有登记的日期仍使用课程固定作息。</p>
+        <div class="tt-scroll tt-scroll--dates">
+          <table class="tt-table tt-table--dates" id="ttWeekendDatesTable"></table>
+        </div>
+      </div>
+    </section>
+
+    <p class="tt-tip">点击单元格直接编辑，修改会自动保存。启用周末作息后，工作日表与周末表分开显示。</p>
   </main>
 </div>
 
@@ -49,17 +100,13 @@
   <div class="tt-modal__backdrop" data-close="tt"></div>
   <div class="tt-modal__box">
     <header class="tt-modal__head">
-      <h3>一键导入课程表</h3>
+      <h3 id="ttImportTitle">一键导入课程表</h3>
       <button class="tt-close" data-close="tt" title="关闭">×</button>
     </header>
     <div class="tt-modal__body">
-      <p class="tt-tip">粘贴课表内容，或选择 csv / txt / xlsx 文件。支持两种格式：</p>
-      <pre class="tt-demo">格式一（表格，第一行含星期）：
-节次,时间,周一,周二,周三,周四,周五
-第1节,08:00-08:45,语文,数学,英语,物理,化学
-
-格式二（逐行）：
-周一 第1节 08:00-08:45 语文</pre>
+      <p class="tt-import-target">导入到：<b id="ttImportTargetLabel">工作日课程表</b></p>
+      <p class="tt-tip" id="ttImportDesc">粘贴课表内容，或选择 csv / txt / xlsx 文件。</p>
+      <pre class="tt-demo" id="ttImportDemo"></pre>
       <textarea class="tt-textarea" id="ttImportText" placeholder="在这里粘贴课表内容…"></textarea>
       <div class="tt-file-row">
         <button class="tt-ghost" id="btnPickTtFile">选择文件</button>

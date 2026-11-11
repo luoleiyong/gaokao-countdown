@@ -154,6 +154,7 @@ function clampWeight(v) {
 }
 function defaultTimetable() {
   const times = ['08:00-08:45', '08:55-09:40', '10:00-10:45', '10:55-11:40', '14:00-14:45', '14:55-15:40', '16:00-16:45', '18:30-19:15'];
+  const weekendSim = ['08:20-09:00', '09:10-09:50', '10:00-10:40', '10:50-11:20', '14:10-14:50', '15:00-15:40', '15:50-16:30', '16:40-17:20'];
   return {
     title: '我的课程表',
     days: TIMETABLE_DAYS.slice(),
@@ -162,17 +163,71 @@ function defaultTimetable() {
       label: `第${i + 1}节`,
       time,
       cells: ['', '', '', '', '', '', '']
-    }))
+    })),
+    weekend: {
+      enabled: false,
+      variable: false,
+      periods: weekendSim.map((time, i) => ({
+        id: 'w' + (i + 1),
+        label: `第${i + 1}节`,
+        times: [time, time],
+        cells: ['', '']
+      })),
+      entries: []
+    }
   };
+}
+function normalizeTimetableDate(v) {
+  const s = String(v == null ? '' : v).trim();
+  let m = s.match(/(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})/);
+  if (!m) return '';
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return '';
+  return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 function normalizeTimetable(input) {
   const def = defaultTimetable();
-  const t = input && typeof input === 'object' ? input : null;
-  if (!t || !Array.isArray(t.periods) || !t.periods.length) return def;
+  const t = input && typeof input === 'object' ? input : {};
+  const periods = Array.isArray(t.periods) && t.periods.length ? t.periods : def.periods;
+  const w = t.weekend && typeof t.weekend === 'object' ? t.weekend : null;
+  const weekend = {
+    enabled: !!(w && w.enabled),
+    variable: !!(w && w.variable),
+    periods: (w && Array.isArray(w.periods) ? w.periods : def.weekend.periods)
+      .slice(0, 24)
+      .map((p, i) => {
+        const times = Array.isArray(p && p.times) ? p.times : [];
+        return {
+          id: p && typeof p.id === 'string' && p.id ? p.id : 'w' + (i + 1),
+          label: String((p && p.label) || `第${i + 1}节`).slice(0, 12),
+          times: Array.from({ length: 2 }, (_, j) => String(times[j] == null ? '' : times[j]).slice(0, 24)),
+          cells: Array.from({ length: 2 }, (_, j) => {
+            const v = p && Array.isArray(p.cells) ? p.cells[j] : '';
+            return String(v == null ? '' : v).slice(0, 30);
+          })
+        };
+      }),
+    entries: (w && Array.isArray(w.entries) ? w.entries : [])
+      .slice(0, 2000)
+      .map((e, i) => {
+        const date = normalizeTimetableDate(e && e.date);
+        if (!date) return null;
+        return {
+          id: e && typeof e.id === 'string' && e.id ? e.id : 'we' + i + Date.now().toString(36),
+          date,
+          label: String((e && e.label) || '').slice(0, 12),
+          time: String((e && e.time) || '').slice(0, 24),
+          subject: String((e && e.subject) || '').slice(0, 30)
+        };
+      })
+      .filter(Boolean)
+  };
   return {
     title: String(t.title || def.title).slice(0, 40),
     days: Array.isArray(t.days) && t.days.length === 7 ? t.days.map((d) => String(d).slice(0, 6)) : def.days,
-    periods: t.periods.slice(0, 24).map((p, i) => ({
+    periods: periods.slice(0, 24).map((p, i) => ({
       id: typeof p.id === 'string' && p.id ? p.id : 'p' + (i + 1),
       label: String(p.label || `第${i + 1}节`).slice(0, 12),
       time: String(p.time || '').slice(0, 24),
@@ -181,7 +236,8 @@ function normalizeTimetable(input) {
         const v = Array.isArray(p.cells) ? p.cells[j] : '';
         return String(v == null ? '' : v).slice(0, 30);
       })
-    }))
+    })),
+    weekend
   };
 }
 function normalizeRoster(input) {
@@ -1247,12 +1303,22 @@ function parseNameText(text) {
   return Array.from(new Set(out));
 }
 function readSheetRows(filePath) {
+  const sheets = readWorkbookSheets(filePath);
+  if (!sheets.length) throw new Error('表格中没有工作表');
+  return sheets[0].rows;
+}
+function readWorkbookSheets(filePath) {
   if (!XLSX) throw new Error('当前版本缺少表格组件，请改用 txt/csv');
   const wb = XLSX.readFile(filePath);
-  const sheet = wb.Sheets[wb.SheetNames[0]];
-  if (!sheet) throw new Error('表格中没有工作表');
-  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' });
-  return rows.map((r) => (Array.isArray(r) ? r.map((c) => String(c == null ? '' : c).trim()) : []));
+  if (!wb.SheetNames.length) throw new Error('表格中没有工作表');
+  return wb.SheetNames.map((name) => {
+    const sheet = wb.Sheets[name];
+    const rows = sheet ? XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' }) : [];
+    return {
+      name,
+      rows: rows.map((r) => (Array.isArray(r) ? r.map((c) => String(c == null ? '' : c).trim()) : []))
+    };
+  });
 }
 function namesFromRows(rows) {
   let col = -1;
@@ -2296,7 +2362,8 @@ function wireIpc() {
 
   ipcMain.handle('classroom:parse-sheet', (_e, filePath) => {
     try {
-      return { ok: true, rows: readSheetRows(String(filePath || '')) };
+      const sheets = readWorkbookSheets(String(filePath || ''));
+      return { ok: true, rows: sheets[0].rows, sheets };
     } catch (e) {
       return { ok: false, error: e.message };
     }

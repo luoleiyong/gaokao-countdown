@@ -1558,6 +1558,8 @@ body[data-skin="bamboo"] .logs{background:rgba(255,255,255,.55);color:var(--dim)
 }
 .pet-course__row.now b{color:var(--gold)}
 .pet-course__row.next-day .pet-course__tag{border-style:dashed}
+.pet-course__row.holiday .pet-course__tag{border-color:rgba(217,182,74,.5);color:var(--gold);border-style:dashed}
+.pet-course__row.holiday b{color:var(--gold)}
 .pet-course__done,
 .pet-course__empty{
   display:flex;flex-direction:column;gap:3px;
@@ -1617,6 +1619,8 @@ body[data-skin="bamboo"] .logs{background:rgba(255,255,255,.55);color:var(--dim)
 }
 .home-course__row.now b{color:var(--gold)}
 .home-course__row.next-day .home-course__tag{border-style:dashed}
+.home-course__row.holiday .home-course__tag{border-color:rgba(217,182,74,.5);color:var(--gold);border-style:dashed}
+.home-course__row.holiday b{color:var(--gold)}
 .home-course__done,
 .home-course__empty{display:flex;flex-direction:column;gap:3px;padding:2px 0 1px}
 .home-course__done b,

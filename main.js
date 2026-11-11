@@ -110,6 +110,190 @@ function renameWithRetry(src, dest) {
   throw lastError || new Error('无法保存安装包');
 }
 
+/* ---------------- 安装包下载：直连优先 + 分片并发 ---------------- */
+const UPDATE_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/* 探测服务器是否支持 Range：total>0 支持；error 表示连接失败 */
+async function probeRange(url) {
+  try {
+    const res = await net.fetch(url, {
+      headers: { 'User-Agent': UPDATE_UA, Range: 'bytes=0-0' },
+      signal: AbortSignal.timeout(12000)
+    });
+    const status = res.status;
+    const contentRange = res.headers.get('content-range') || '';
+    try { await res.body?.cancel(); } catch { /* 忽略 */ }
+    if (status === 206) {
+      const m = contentRange.match(/\/(\d+)/);
+      return { total: m ? Number(m[1]) : 0, error: false };
+    }
+    return { total: 0, error: false };
+  } catch {
+    return { total: 0, error: true };
+  }
+}
+
+/* 单连接下载：服务器不支持 Range 或分片失败时兜底 */
+async function streamDownload(url, tmpPath, sender, version) {
+  const handle = await fs.promises.open(tmpPath, 'w');
+  const controller = new AbortController();
+  let stallTimer = setTimeout(() => {
+    try { controller.abort(); } catch { /* 忽略 */ }
+  }, 30000);
+  const armStall = () => {
+    clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => {
+      try { controller.abort(); } catch { /* 忽略 */ }
+    }, 30000);
+  };
+  try {
+    const res = await net.fetch(url, {
+      headers: { 'User-Agent': UPDATE_UA },
+      signal: controller.signal
+    });
+    if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+    const total = Number(res.headers.get('content-length')) || 0;
+    const reader = res.body.getReader();
+    let received = 0;
+    let sentAt = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      armStall();
+      const chunk = Buffer.from(value);
+      received += chunk.length;
+      await handle.write(chunk);
+      if (sender && !sender.isDestroyed() && Date.now() - sentAt > 180) {
+        sentAt = Date.now();
+        sender.send('update:progress', {
+          version,
+          received,
+          total,
+          percent: total ? Math.min(99, Math.round((received / total) * 100)) : 0
+        });
+      }
+    }
+  } finally {
+    clearTimeout(stallTimer);
+    try { await handle.close(); } catch { /* 忽略 */ }
+  }
+}
+
+/* 分片并发下载：默认 4~8 个连接，单个分片失败自动续传 */
+async function rangeDownload(url, tmpPath, total, sender, version) {
+  const threads = total > 80 * 1024 * 1024 ? 8 : (total > 40 * 1024 * 1024 ? 6 : 4);
+  const partSize = Math.ceil(total / threads);
+  const handle = await fs.promises.open(tmpPath, 'w');
+  let received = 0;
+  let sentAt = 0;
+  let aborted = false;
+  const controllers = new Set();
+
+  const report = () => {
+    if (aborted || !sender || sender.isDestroyed()) return;
+    const now = Date.now();
+    if (now - sentAt < 200 && received < total) return;
+    sentAt = now;
+    sender.send('update:progress', {
+      version,
+      received,
+      total,
+      percent: Math.min(99, Math.round((received / total) * 100))
+    });
+  };
+
+  const jobs = [];
+  try {
+    await handle.truncate(total);
+    for (let i = 0; i < threads; i++) {
+      const start = i * partSize;
+      const end = Math.min(total - 1, start + partSize - 1);
+      if (start > end) continue;
+      jobs.push((async () => {
+        let pos = start;
+        let tries = 0;
+        while (pos <= end) {
+          if (aborted) throw new Error('分片下载已中止');
+          const controller = new AbortController();
+          controllers.add(controller);
+          let stallTimer = null;
+          const armStall = () => {
+            clearTimeout(stallTimer);
+            stallTimer = setTimeout(() => {
+              try { controller.abort(); } catch { /* 忽略 */ }
+            }, 25000);
+          };
+          try {
+            armStall();
+            const res = await net.fetch(url, {
+              headers: { 'User-Agent': UPDATE_UA, Range: `bytes=${pos}-${end}` },
+              signal: controller.signal
+            });
+            if (res.status !== 206 || !res.body) throw new Error('HTTP ' + res.status);
+            const reader = res.body.getReader();
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              armStall();
+              const chunk = Buffer.from(value);
+              const remain = end - pos + 1;
+              const slice = chunk.length > remain ? chunk.subarray(0, remain) : chunk;
+              await handle.write(slice, 0, slice.length, pos);
+              pos += slice.length;
+              received += slice.length;
+              report();
+              if (pos > end) break;
+            }
+            clearTimeout(stallTimer);
+            if (pos <= end) throw new Error('分片提前结束');
+          } catch (e) {
+            clearTimeout(stallTimer);
+            if (++tries > 4) throw e;
+            await sleep(300 * tries);
+          } finally {
+            controllers.delete(controller);
+          }
+        }
+      })());
+    }
+
+    try {
+      await Promise.all(jobs);
+    } catch (e) {
+      aborted = true;
+      for (const c of controllers) {
+        try { c.abort(); } catch { /* 忽略 */ }
+      }
+      await Promise.allSettled(jobs);
+      throw e;
+    }
+
+    const size = fs.statSync(tmpPath).size;
+    if (size !== total) throw new Error(`安装包大小校验失败（${size}/${total}）`);
+  } finally {
+    try { await handle.close(); } catch { /* 忽略 */ }
+  }
+}
+
+/* 先直连分片下载，失败再退回单连接；由外层负责切换镜像 */
+async function downloadAssetToFile(url, tmpPath, sender, version) {
+  const probe = await probeRange(url);
+  if (probe.error) throw new Error('连接超时或被拦截');
+  if (probe.total > 0) {
+    try {
+      await rangeDownload(url, tmpPath, probe.total, sender, version);
+      return 'range';
+    } catch (e) {
+      appendLog('UPDATE_RANGE_FAIL', { url, message: e.message });
+      try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* 忽略 */ }
+    }
+  }
+  await streamDownload(url, tmpPath, sender, version);
+  return 'stream';
+}
+
+
 /* 静默运行安装程序（/S 无界面安装，--force-run 安装完成后自动启动） */
 function spawnSilentInstaller(setup) {
   try {
@@ -1877,9 +2061,10 @@ function wireIpc() {
     }
 
     const hasUpdate = versionCmp(latest, current) > 0;
-    const mirrors = downloadUrl ? UPDATE_MIRRORS.map((prefix) => prefix + downloadUrl) : [];
-    const setupMirrors = setupUrl ? UPDATE_MIRRORS.map((prefix) => prefix + setupUrl).concat(setupUrl) : [];
-    const portableMirrors = portableUrl ? UPDATE_MIRRORS.map((prefix) => prefix + portableUrl).concat(portableUrl) : [];
+    // 直连优先：GitHub 自己的 CDN 通常比公益镜像快，失败再自动切换镜像
+    const mirrors = downloadUrl ? [downloadUrl].concat(UPDATE_MIRRORS.map((prefix) => prefix + downloadUrl)) : [];
+    const setupMirrors = setupUrl ? [setupUrl].concat(UPDATE_MIRRORS.map((prefix) => prefix + setupUrl)) : [];
+    const portableMirrors = portableUrl ? [portableUrl].concat(UPDATE_MIRRORS.map((prefix) => prefix + portableUrl)) : [];
     const downloaded = !!(updateTask.done && updateTask.version === latest && updateTask.filePath && fs.existsSync(updateTask.filePath));
     appendLog('UPDATE_CHECK', { latest, current, hasUpdate, source, setup: !!setupUrl });
     return {
@@ -1936,7 +2121,6 @@ function wireIpc() {
       for (const dir of dirs) {
         const filePath = path.join(dir, fileName);
         const tmp = `${filePath}.${process.pid}.${Date.now()}.part`;
-        let handle = null;
         try {
           fs.mkdirSync(dir, { recursive: true });
           // 清理同目录遗留的临时分片（被占用时忽略）
@@ -1946,45 +2130,18 @@ function wireIpc() {
               .forEach((f) => { try { fs.unlinkSync(path.join(dir, f)); } catch { /* 忽略 */ } });
           } catch { /* 忽略 */ }
 
-          handle = await fs.promises.open(tmp, 'w');
-          const res = await net.fetch(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-          });
-          if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
-          const total = Number(res.headers.get('content-length')) || 0;
-          const reader = res.body.getReader();
-          let received = 0;
-          let sentAt = 0;
-          for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            const chunk = Buffer.from(value);
-            received += chunk.length;
-            await handle.write(chunk);
-            if (sender && !sender.isDestroyed() && Date.now() - sentAt > 180) {
-              sentAt = Date.now();
-              sender.send('update:progress', {
-                version,
-                received,
-                total,
-                percent: total ? Math.min(99, Math.round((received / total) * 100)) : 0
-              });
-            }
-          }
-          await handle.close();
-          handle = null;
+          const mode = await downloadAssetToFile(url, tmp, sender, version);
           if (fs.statSync(tmp).size < 20 * 1024 * 1024) throw new Error('安装包大小异常');
           renameWithRetry(tmp, filePath);
           updateTask = { version, filePath, downloading: false, done: true };
           if (sender && !sender.isDestroyed()) {
             sender.send('update:downloaded', { version, filePath });
           }
-          appendLog('UPDATE_DOWNLOADED', { version, size: fs.statSync(filePath).size, dir });
+          appendLog('UPDATE_DOWNLOADED', { version, size: fs.statSync(filePath).size, dir, mode });
           return { ok: true, filePath, version };
         } catch (e) {
           lastError = e.message;
           fsFailure = /EPERM|EACCES|EBUSY|ENOSPC|EROFS|EMFILE|ENFILE|EEXIST|ENOTDIR|EISDIR|EINVAL/.test(String(e.code || '') + ' ' + String(e.message || ''));
-          try { if (handle) await handle.close(); } catch { /* 忽略 */ }
           try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch { /* 忽略 */ }
           appendLog('UPDATE_DOWNLOAD_FAIL', { url, dir, message: e.message, fs: fsFailure });
         }

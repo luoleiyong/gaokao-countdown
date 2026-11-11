@@ -153,6 +153,16 @@
 
   <!-- ======================= 桌面宠物 ======================= -->
   <div class="pet-view" id="petView" hidden>
+    <div class="pet-fish" id="petFish" data-mode="idle" aria-hidden="true">
+      <div class="pet-fish__track"><i id="petFishTrack"></i></div>
+      <div class="pet-fish__actor" id="petFishActor">
+        <span class="pet-fish__speed" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="pet-fish__dust" aria-hidden="true"><i></i><i></i><i></i></span>
+        <img class="pet-fish__sprite" src="assets/feiyu-body.png" alt="" draggable="false" />
+        <span class="pet-fish__desk"><i class="pet-fish__paper"></i><i class="pet-fish__pencil"></i></span>
+      </div>
+      <div class="pet-fish__bubble" id="petFishBubble" hidden></div>
+    </div>
     <div class="pet-clip"><i></i></div>
     <div class="pet-card">
       <div class="liquid-bg liquid-bg--pet" aria-hidden="true">
@@ -551,6 +561,7 @@
 <script src="solar-terms.js"></script>
 <script src="signs.js"></script>
 <script src="mottos.js"></script>
+<script src="fish.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

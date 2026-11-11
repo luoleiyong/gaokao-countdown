@@ -133,14 +133,11 @@ body.tt-has-weekend .tt-dayzone .tt-scroll{max-height:42vh}
 }
 .tt-input--time-part::-webkit-calendar-picker-indicator{opacity:.45;cursor:pointer}
 .tt-input--time-part::-webkit-calendar-picker-indicator:hover{opacity:.85}
+body[data-skin="warm"] .tt-input--time-part,
+body[data-skin="bamboo"] .tt-input--time-part{color-scheme:light}
 .tt-time-dash{margin:0 3px;font-size:10px;color:var(--faint)}
 .tt-holiday-cell{background:rgba(217,182,74,.075)}
 .tt-holiday-cell .tt-input{color:var(--gold)}
-.tt-holiday-flag{
-  display:inline-block;margin-left:4px;padding:0 4px;border-radius:3px;
-  font-size:9px;color:#f0d488;border:1px solid rgba(217,182,74,.5);
-  background:rgba(217,182,74,.12);vertical-align:1px;
-}
 .tt-empty{padding:22px 10px !important;text-align:center;color:var(--faint);font-size:11.5px;letter-spacing:.06em}
 .tt-night-flag{
   display:inline-block;margin-left:4px;padding:0 4px;border-radius:3px;

@@ -1075,7 +1075,11 @@ function rememberBounds() {
 }
 
 function petSize(scale) {
-  return { width: Math.round(300 * scale), height: Math.round(368 * scale) };
+  /* 卡片 334 + 顶部 74 的大肥鱼区域，加上外层 20px 留白；整体随缩放一起放大 */
+  return {
+    width: Math.round(300 * scale + 20),
+    height: Math.round((334 + 74) * scale + 20)
+  };
 }
 
 function applyPetMode(on) {

@@ -149,6 +149,7 @@ async function boot() {
   state.targetDate = s.targetDate || '2027-06-07';
   state.skin = s.skin || 'board';
   state.petScale = Number(s.petScale) || 1;
+  applyPetScaleVar();
   state.autoLaunch = !!s.autoLaunch;
   state.history = Array.isArray(s.history) ? s.history : [];
   state.today = init.today || dateKey();
@@ -190,6 +191,7 @@ async function boot() {
   });
   bridge.onScaleChanged((data) => {
     state.petScale = Number(data.scale) || state.petScale;
+    applyPetScaleVar();
     $('inputScale').value = String(state.petScale);
     $('scaleLabel').textContent = Math.round(state.petScale * 100) + '%';
   });
@@ -497,6 +499,95 @@ async function addEvent() {
 
 /* ---------------- 渲染：桌面宠物课程 ---------------- */
 const PET_MOTTOS = Array.isArray(window.PET_MOTTOS) ? window.PET_MOTTOS : [];
+const FISH_CLASS_LINES = Array.isArray(window.FISH_CLASS_LINES) ? window.FISH_CLASS_LINES : [];
+const FISH_CHEER_LINES = Array.isArray(window.FISH_CHEER_LINES) ? window.FISH_CHEER_LINES : [];
+const FISH_ACTOR_W = 56;
+const fishState = { phase: '', spokenAt: 0, last: '', hideTimer: null };
+
+function fishPickLine(lines) {
+  if (!lines.length) return '';
+  if (lines.length === 1) return lines[0];
+  let line = fishState.last;
+  for (let i = 0; i < 5 && line === fishState.last; i++) {
+    line = lines[Math.floor(Math.random() * lines.length)];
+  }
+  fishState.last = line;
+  return line;
+}
+
+function fishSay(text) {
+  const bubble = $('petFishBubble');
+  if (!bubble || !text) return;
+  bubble.textContent = text;
+  bubble.hidden = false;
+  clearTimeout(fishState.hideTimer);
+  fishState.hideTimer = setTimeout(() => { bubble.hidden = true; }, 9000);
+}
+
+/* 大肥鱼：上课时沿顶部边框爬行表示课堂进度，放学到家后坐在课桌前写作业 */
+function renderFish() {
+  const wrap = $('petFish');
+  const actor = $('petFishActor');
+  const track = $('petFishTrack');
+  if (!wrap || !actor) return;
+  const plan = coursePlan();
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+  const first = plan.rows[0];
+  let mode = 'idle';
+  let progress = 0;
+  let phase = '';
+  let lines = FISH_CLASS_LINES;
+
+  if (plan.status === 'done' || plan.status === 'holiday') {
+    mode = 'homework';
+    phase = 'homework-' + dateKey(now);
+    lines = FISH_CHEER_LINES;
+  } else if (first && first.tag === '本节课') {
+    const course = first.course;
+    const span = Math.max(1, course.end - course.start);
+    mode = 'crawl';
+    progress = Math.min(1, Math.max(0, (nowMin - course.start) / span));
+    phase = `class-${course.start}-${course.end}-${course.subject}`;
+  } else {
+    phase = 'idle-' + (first ? first.course.label + first.course.time : dateKey(now));
+  }
+
+  wrap.dataset.mode = mode;
+  const width = wrap.clientWidth || 300;
+  const maxLeft = Math.max(4, width - FISH_ACTOR_W - 6);
+  const left = mode === 'homework'
+    ? Math.round((width - FISH_ACTOR_W) / 2)
+    : Math.round(4 + (maxLeft - 4) * progress);
+
+  if (phase !== fishState.phase) {
+    // 新的一节课或刚放学：先归位再恢复过渡，避免从右往左倒着滑
+    actor.style.transition = 'none';
+    actor.style.left = left + 'px';
+    void actor.offsetWidth;
+    actor.style.transition = '';
+  } else {
+    actor.style.left = left + 'px';
+  }
+  if (track) track.style.width = mode === 'crawl' ? Math.round(progress * 100) + '%' : '0%';
+
+  const bubble = $('petFishBubble');
+  if (bubble) {
+    if (mode === 'homework') bubble.style.left = '';
+    else bubble.style.left = Math.max(6, Math.min(left - 8, width - 200)) + 'px';
+  }
+
+  const nowTs = Date.now();
+  const interval = mode === 'homework' ? 150000 : 90000;
+  if (phase !== fishState.phase) {
+    fishState.phase = phase;
+    fishState.spokenAt = nowTs;
+    fishSay(fishPickLine(lines));
+  } else if (nowTs - fishState.spokenAt > interval) {
+    fishState.spokenAt = nowTs;
+    fishSay(fishPickLine(lines));
+  }
+}
 
 function parseCourseRange(text) {
   const m = String(text || '').match(/(\d{1,2})\s*[:：]\s*(\d{2})\s*[-~—至]\s*(\d{1,2})\s*[:：]\s*(\d{2})/);
@@ -713,7 +804,7 @@ function renderPetCourse() {
   const key = `${dateKey()}-${plan.status}-${plan.rows.map((r) => r.tag + r.course.subject + r.course.time).join('|')}`;
   if (key === state.lastCourseKey) return;
   state.lastCourseKey = key;
-  $('petCourseDay').textContent = '今天';
+  $('petCourseDay').textContent = plan.rows.some((r) => r.tag === '明天') ? '明天' : '今天';
 
   if (plan.status === 'empty') {
     listEl.innerHTML =
@@ -743,7 +834,7 @@ function renderHomeCourse() {
   const key = `${dateKey()}-${plan.status}-${plan.rows.map((r) => r.tag + r.course.subject + r.course.time).join('|')}`;
   if (key === state.lastHomeCourseKey) return;
   state.lastHomeCourseKey = key;
-  $('homeCourseDay').textContent = '今天';
+  $('homeCourseDay').textContent = plan.rows.some((r) => r.tag === '明天') ? '明天' : '今天';
 
   if (plan.status === 'empty') {
     listEl.innerHTML =
@@ -783,10 +874,17 @@ function renderPet() {
   }
   renderPetCourse();
   renderHomeCourse();
+  renderFish();
 }
 
 function renderVersion(v) {
   if (v) $('versionLabel').textContent = 'v' + v;
+}
+
+/* 桌宠尺寸变化时，字体与布局通过 zoom 一起放大或缩小 */
+function applyPetScaleVar() {
+  const scale = Number(state.petScale) || 1;
+  document.body.style.setProperty('--pet-scale', String(scale));
 }
 
 function renderAll() {
@@ -1674,6 +1772,7 @@ function onModeChanged(data) {
   if (!data) return;
   state.mode = data.mode || 'panel';
   if (data.scale) state.petScale = Number(data.scale) || state.petScale;
+  applyPetScaleVar();
   document.body.setAttribute('data-mode', state.mode);
   $('panelView').hidden = state.mode === 'pet';
   $('petView').hidden = state.mode !== 'pet';

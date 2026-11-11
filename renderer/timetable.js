@@ -187,9 +187,14 @@ function renderTable() {
 
   const body = list.map((p, pi) => {
     if (p.night && !state.showNight) return '';
+    const range = splitTimeRange(p.time);
     return `<tr data-pi="${pi}" class="${p.night ? 'tt-night' : ''}">
       <td><input class="tt-input tt-input--label" data-role="label" value="${esc(p.label)}" />${p.night ? '<i class="tt-night-flag">晚</i>' : ''}</td>
-      <td><input class="tt-input tt-input--time" data-role="time" value="${esc(p.time)}" placeholder="08:00-08:45" /></td>
+      <td class="tt-time-cell">
+        <input class="tt-input tt-input--time-part" type="time" data-role="startTime" value="${esc(range[0])}" aria-label="开始时间" />
+        <span class="tt-time-dash">-</span>
+        <input class="tt-input tt-input--time-part" type="time" data-role="endTime" value="${esc(range[1])}" aria-label="结束时间" />
+      </td>
       ${shownDays.map((d, di) => `<td><input class="tt-input tt-input--cell" data-role="cell" data-di="${di}" value="${esc((p.cells && p.cells[di]) || '')}" /></td>`).join('')}
       <td><button class="tt-del" data-role="del" title="删除这一节">×</button></td>
     </tr>`;
@@ -221,7 +226,7 @@ function renderWeekend() {
     const satRange = splitTimeRange(times[0]);
     const sunRange = splitTimeRange(times[1]);
     return `<tr data-wpi="${pi}">
-      <td><input class="tt-input tt-input--label" data-role="label" value="${esc(p.label)}" />${satH || sunH ? '<i class="tt-holiday-flag">假</i>' : ''}</td>
+      <td><input class="tt-input tt-input--label" data-role="label" value="${esc(p.label)}" /></td>
       <td class="tt-time-cell">
         <input class="tt-input tt-input--time-part" type="time" data-role="satStart" value="${esc(satRange[0])}" aria-label="周六开始时间" />
         <span class="tt-time-dash">-</span>
@@ -370,8 +375,12 @@ function bind() {
     if (!p) return;
     const role = e.target.dataset.role;
     if (role === 'label') p.label = e.target.value.slice(0, 12);
-    else if (role === 'time') p.time = e.target.value.slice(0, 24);
-    else if (role === 'cell') {
+    else if (role === 'startTime' || role === 'endTime') {
+      const [start, end] = splitTimeRange(p.time);
+      const nextStart = role === 'startTime' ? e.target.value : start;
+      const nextEnd = role === 'endTime' ? e.target.value : end;
+      p.time = joinTimeRange(nextStart, nextEnd);
+    } else if (role === 'cell') {
       if (!Array.isArray(p.cells)) p.cells = ['', '', '', '', '', '', ''];
       p.cells[Number(e.target.dataset.di)] = e.target.value.slice(0, 30);
     }

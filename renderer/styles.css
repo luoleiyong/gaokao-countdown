@@ -1522,42 +1522,108 @@ body[data-skin="bamboo"] .logs{background:rgba(255,255,255,.55);color:var(--dim)
 .events-more:hover{color:var(--gold)}
 
 /* 宠物课程 */
-.pet-course{position:relative;z-index:1;display:flex;flex-direction:column;gap:4px;flex:none}
+.pet-sign + .pet-sep{margin:5px 0 4px}
+.pet-course{
+  position:relative;z-index:1;display:flex;flex-direction:column;gap:5px;flex:none;
+  margin-top:-1px;padding:7px 9px 7px;
+  border:1px solid rgba(255,255,255,.09);border-radius:10px;
+  background:linear-gradient(160deg,rgba(255,255,255,.055),rgba(255,255,255,.012));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.07);
+}
 .pet-course__head{
   display:flex;align-items:center;justify-content:space-between;
-  font-size:9.5px;letter-spacing:.22em;color:var(--faint);
+  font-size:10px;letter-spacing:.2em;color:var(--faint);
 }
 .pet-course__head i{font-style:normal;color:var(--gold);letter-spacing:.08em}
-.pet-course__list{display:flex;flex-direction:column;gap:3px}
+.pet-course__list{display:flex;flex-direction:column;gap:4px}
 .pet-course__row{
-  display:flex;align-items:center;gap:6px;
-  font-size:10.5px;line-height:1.45;color:var(--dim);
+  display:flex;align-items:center;gap:7px;
+  font-size:12.5px;line-height:1.5;color:var(--dim);
 }
 .pet-course__tag{
-  flex:none;padding:0 4px;border-radius:3px;
+  flex:none;padding:0 3px;border-radius:3px;
   border:1px solid var(--line);
-  font-size:9px;letter-spacing:.04em;color:var(--faint);
+  font-size:8px;line-height:1.6;letter-spacing:.02em;color:var(--faint);
 }
 .pet-course__row b{
-  font-weight:500;color:var(--text);
-  max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:13px;font-weight:500;color:var(--text);
+  max-width:108px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 .pet-course__row i{
   margin-left:auto;font-style:normal;
-  font-size:9px;color:var(--faint);font-variant-numeric:tabular-nums;
+  font-size:10px;color:var(--faint);font-variant-numeric:tabular-nums;
 }
 .pet-course__row.now .pet-course__tag{
   border-color:rgba(217,182,74,.6);color:var(--gold);
 }
 .pet-course__row.now b{color:var(--gold)}
 .pet-course__row.next-day .pet-course__tag{border-style:dashed}
-.pet-course__done{
+.pet-course__done,
+.pet-course__empty{
   display:flex;flex-direction:column;gap:3px;
-  padding:4px 0 2px;
+  padding:2px 0 1px;
 }
-.pet-course__done b{font-size:11px;font-weight:500;color:var(--gold);letter-spacing:.1em}
-.pet-course__done span{font-size:10px;line-height:1.45;color:var(--dim)}
-.pet-course__empty{font-size:10.5px;color:var(--faint)}
+.pet-course__done b,
+.pet-course__empty b{font-size:12px;font-weight:500;color:var(--gold);letter-spacing:.08em}
+.pet-course__done span,
+.pet-course__empty span{font-size:10.5px;line-height:1.5;color:var(--dim)}
+
+/* 首页课程表卡片 */
+.home-course-card{
+  flex:none;
+  background:linear-gradient(160deg, rgba(255,255,255,.10), rgba(255,255,255,.025));
+  border:1px solid rgba(255,255,255,.16);
+  border-radius:12px;
+  padding:10px 12px 9px;
+  backdrop-filter:blur(16px);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.18);
+  cursor:pointer;
+  outline:none;
+  transition:border-color .2s, background .2s, transform .2s;
+}
+.home-course-card:hover{
+  border-color:rgba(217,182,74,.45);
+  background:linear-gradient(160deg, rgba(255,255,255,.14), rgba(255,255,255,.04));
+}
+.home-course-card:active{transform:scale(.99)}
+.home-course-card:focus-visible{outline:1px solid var(--gold);outline-offset:2px}
+.home-course-card__head{
+  display:flex;align-items:baseline;gap:8px;
+  font-size:12px;letter-spacing:.08em;color:var(--gold);
+}
+.home-course-card__title{font-family:var(--font-title);font-size:12px;letter-spacing:.08em}
+.home-course-card__day{margin-left:auto;font-size:10px;letter-spacing:.06em;color:var(--faint)}
+.home-course-card__arrow{font-size:14px;line-height:1;color:var(--faint)}
+.home-course-card__list{display:flex;flex-direction:column;gap:4px;margin-top:7px}
+.home-course__row{
+  display:flex;align-items:center;gap:7px;
+  font-size:11.5px;line-height:1.45;color:var(--dim);
+}
+.home-course__tag{
+  flex:none;padding:0 4px;border-radius:3px;
+  border:1px solid var(--line);
+  font-size:8.5px;line-height:1.6;letter-spacing:.02em;color:var(--faint);
+}
+.home-course__row b{
+  font-size:12.5px;font-weight:500;color:var(--text);
+  max-width:132px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.home-course__row i{
+  margin-left:auto;font-style:normal;
+  font-size:10px;color:var(--faint);font-variant-numeric:tabular-nums;
+}
+.home-course__row.now .home-course__tag{
+  border-color:rgba(217,182,74,.6);color:var(--gold);
+}
+.home-course__row.now b{color:var(--gold)}
+.home-course__row.next-day .home-course__tag{border-style:dashed}
+.home-course__done,
+.home-course__empty{display:flex;flex-direction:column;gap:3px;padding:2px 0 1px}
+.home-course__done b,
+.home-course__empty b{font-size:11.5px;font-weight:500;color:var(--gold);letter-spacing:.06em}
+.home-course__done span,
+.home-course__empty span{font-size:10.5px;line-height:1.5;color:var(--dim)}
+.home-course__empty em{font-style:normal;font-size:9.5px;letter-spacing:.03em;color:var(--faint)}
 
 /* 重要日子管理 */
 .events-box{width:min(520px,calc(100vw - 48px))}

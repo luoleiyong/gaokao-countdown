@@ -75,7 +75,6 @@
         <div class="cd-actions">
           <button class="btn-primary" id="btnDraw">开启今日幸运签</button>
           <button class="btn-ghost" id="btnKnowledge">学科知识签</button>
-          <button class="btn-ghost" id="btnTimetable">课程表</button>
           <button class="btn-ghost" id="btnTerm">二十四节气签</button>
           <button class="btn-ghost" id="btnClassroom">课堂点名</button>
           <button class="btn-ghost" id="btnViewToday" hidden>查看今日签</button>
@@ -124,6 +123,15 @@
             <span id="openCount">已开启 0 / 280</span>
             <span id="waitCount">待开启 280</span>
           </div>
+        </section>
+
+        <section class="home-course-card" id="homeCourseCard" role="button" tabindex="0" title="点击打开课程表">
+          <div class="home-course-card__head">
+            <span class="home-course-card__title">课程表</span>
+            <span class="home-course-card__day" id="homeCourseDay">今天</span>
+            <span class="home-course-card__arrow">›</span>
+          </div>
+          <div class="home-course-card__list" id="homeCourseList"></div>
         </section>
 
         <section class="history">

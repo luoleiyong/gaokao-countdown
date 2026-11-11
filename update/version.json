@@ -1,5 +1,5 @@
 {
-  "version": "1.7.2",
-  "notes": "更新内容改为弹窗展示；重启更新后自动静默安装并自动启动，无需手动点击安装向导；退出后安装同样静默完成",
+  "version": "1.7.3",
+  "notes": "桌宠课程字号加大并美化展示，缩小标签与签文间距；首页课程表改为卡片入口，显示未来 3 节课与时间；无课程或课程结束时首页与桌宠显示相同鼓励文案",
   "url": "https://github.com/luoleiyong/gaokao-countdown/releases/latest"
 }

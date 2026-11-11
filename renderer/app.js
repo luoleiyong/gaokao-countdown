@@ -64,7 +64,8 @@ const state = {
   backupAuto: true,
   lastBackupDate: '',
   backupInfo: { count: 0, latest: '' },
-  lastCourseKey: ''
+  lastCourseKey: '',
+  lastHomeCourseKey: ''
 };
 
 const bridge = window.gaokao || createMockBridge();
@@ -537,49 +538,110 @@ function courseRowHtml(tag, course, extraClass) {
   );
 }
 
-function renderPetCourse() {
-  const listEl = $('petCourseList');
-  if (!listEl) return;
+function timetableHasCourses() {
+  const t = state.timetable;
+  if (!t || !Array.isArray(t.periods)) return false;
+  return t.periods.some((p) => Array.isArray(p.cells) && p.cells.some((c) => String(c || '').trim()));
+}
+
+/* 今日课程安排：本节课 / 未来三节 / 今日无课 / 今日已结束 */
+function coursePlan() {
   const now = new Date();
   const dayIdx = (now.getDay() + 6) % 7;
   const nowMin = now.getHours() * 60 + now.getMinutes();
-  const key = `${dayIdx}-${nowMin}-${state.timetable ? state.timetable.periods.length : 0}`;
-  if (key === state.lastCourseKey) return;
-  state.lastCourseKey = key;
-
   const today = dayPeriods(dayIdx);
-  if (!today.length) {
-    $('petCourseDay').textContent = '今天';
-    listEl.innerHTML = '<div class="pet-course__empty">今天没有课程，好好休息</div>';
-    return;
-  }
+  const tomorrow = dayPeriods((dayIdx + 1) % 7);
+  if (!timetableHasCourses() || !today.length) return { status: 'empty', rows: [] };
 
   const currentIdx = today.findIndex((p) => nowMin >= p.start && nowMin < p.end);
   const upcoming = today.filter((p) => p.start > nowMin);
-  const tomorrow = dayPeriods((dayIdx + 1) % 7);
-  const rows = [];
 
   if (currentIdx >= 0) {
-    rows.push(courseRowHtml('本节课', today[currentIdx], 'now'));
+    const rows = [{ tag: '本节课', course: today[currentIdx], extraClass: 'now' }];
     const rest = today.slice(currentIdx + 1);
     if (rest.length) {
-      rest.slice(0, 2).forEach((p, i) => rows.push(courseRowHtml(i === 0 ? '下节课' : '随后', p, '')));
+      rest.slice(0, 2).forEach((p, i) => rows.push({
+        tag: i === 0 ? '下节课' : '随后',
+        course: p,
+        extraClass: ''
+      }));
     } else if (tomorrow.length) {
-      rows.push(courseRowHtml('明天', tomorrow[0], 'next-day'));
+      rows.push({ tag: '明天', course: tomorrow[0], extraClass: 'next-day' });
     }
-  } else if (upcoming.length) {
-    upcoming.slice(0, 3).forEach((p, i) => rows.push(courseRowHtml(i === 0 ? '下节课' : '随后', p, '')));
-  } else {
-    // 今日课程全部结束
-    $('petCourseDay').textContent = '今天';
+    return { status: 'ok', rows };
+  }
+
+  if (upcoming.length) {
+    return {
+      status: 'ok',
+      rows: upcoming.slice(0, 3).map((p, i) => ({
+        tag: i === 0 ? '下节课' : '随后',
+        course: p,
+        extraClass: ''
+      }))
+    };
+  }
+
+  return { status: 'done', rows: [] };
+}
+
+function homeCourseRowHtml(row) {
+  return (
+    `<div class="home-course__row${row.extraClass ? ' ' + row.extraClass : ''}">` +
+    `<span class="home-course__tag">${row.tag}</span>` +
+    `<b>${escapeHtml(row.course.subject)}</b>` +
+    `<i>${escapeHtml(row.course.time)}</i>` +
+    '</div>'
+  );
+}
+
+function renderPetCourse() {
+  const listEl = $('petCourseList');
+  if (!listEl) return;
+  const plan = coursePlan();
+  const key = `${dateKey()}-${plan.status}-${plan.rows.map((r) => r.tag + r.course.subject + r.course.time).join('|')}`;
+  if (key === state.lastCourseKey) return;
+  state.lastCourseKey = key;
+  $('petCourseDay').textContent = '今天';
+
+  if (plan.status === 'empty') {
+    listEl.innerHTML =
+      '<div class="pet-course__empty"><b>今日没有课程</b>' +
+      `<span>${escapeHtml(petMotto())}</span></div>`;
+    return;
+  }
+  if (plan.status === 'done') {
     listEl.innerHTML =
       '<div class="pet-course__done"><b>今日课程已完成</b>' +
       `<span>${escapeHtml(petMotto())}</span></div>`;
     return;
   }
+  listEl.innerHTML = plan.rows.map((r) => courseRowHtml(r.tag, r.course, r.extraClass)).join('');
+}
 
-  $('petCourseDay').textContent = '今天';
-  listEl.innerHTML = rows.join('');
+function renderHomeCourse() {
+  const listEl = $('homeCourseList');
+  if (!listEl) return;
+  const plan = coursePlan();
+  const key = `${dateKey()}-${plan.status}-${plan.rows.map((r) => r.tag + r.course.subject + r.course.time).join('|')}`;
+  if (key === state.lastHomeCourseKey) return;
+  state.lastHomeCourseKey = key;
+  $('homeCourseDay').textContent = '今天';
+
+  if (plan.status === 'empty') {
+    listEl.innerHTML =
+      '<div class="home-course__empty"><b>今日没有课程</b>' +
+      `<span>${escapeHtml(petMotto())}</span>` +
+      '<em>点击卡片添加课程表</em></div>';
+    return;
+  }
+  if (plan.status === 'done') {
+    listEl.innerHTML =
+      '<div class="home-course__done"><b>今日课程已完成</b>' +
+      `<span>${escapeHtml(petMotto())}</span></div>`;
+    return;
+  }
+  listEl.innerHTML = plan.rows.map(homeCourseRowHtml).join('');
 }
 
 function renderPet() {
@@ -597,6 +659,7 @@ function renderPet() {
     $('petSignPoem').textContent = '摇一签，看看今天的气运';
   }
   renderPetCourse();
+  renderHomeCourse();
 }
 
 function renderVersion(v) {
@@ -606,6 +669,7 @@ function renderVersion(v) {
 function renderAll() {
   state.lastDays = null;
   state.lastCourseKey = '';
+  state.lastHomeCourseKey = '';
   renderCountdown();
   renderToday();
   renderHistory();
@@ -1674,7 +1738,14 @@ function bindEvents() {
   $('btnDraw').addEventListener('click', () => startDrawFlow(false));
   $('btnDrawSide').addEventListener('click', () => startDrawFlow(false));
   $('btnKnowledge').addEventListener('click', () => bridge.openKnowledge());
-  $('btnTimetable').addEventListener('click', () => bridge.openTimetable());
+  const openTimetable = () => bridge.openTimetable();
+  $('homeCourseCard').addEventListener('click', openTimetable);
+  $('homeCourseCard').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      openTimetable();
+    }
+  });
   $('btnClassroom').addEventListener('click', () => bridge.openClassroom());
   $('btnTerm').addEventListener('click', () => openTermModal(false));
   $('btnTermRandom').addEventListener('click', () => openTermModal(true));

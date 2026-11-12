@@ -511,11 +511,24 @@ const fishState = {
   idleAt: 0, idleBusy: false, idleTimer: null, idleMode: '',
   actionBusy: false, actionVideo: null, actionTimer: null, actionMode: '',
   hwFrames: [], hwLoaded: 0, hwFailed: 0, hwLoading: false, hwReady: false, hwRaf: 0, hwStart: 0, hwCtx: null,
+  hwAction: null, hwActionLoading: false,
   clickAt: 0, reactionTimer: null, videoMode: ''
 };
 
 const HW_FRAME_COUNT = 169;
 const HW_FPS = 24;
+const HW_ACTION_FRAMES = 121;
+
+/* 放学写作业：气泡台词命中时播放对应的动作片段 */
+const HOMEWORK_ACTIONS = [
+  { key: 'stretch', lines: ['累了就伸个懒腰', '肩膀放松一点', '写不下去就休息三分钟'] },
+  { key: 'water', lines: ['喝口水，再继续'] },
+  { key: 'eyes', lines: ['眼睛也要休息'] },
+  { key: 'snack', lines: ['想吃点什么就吃点', '夜宵别吃太撑'] },
+  { key: 'tidy', lines: ['桌面收拾一下心也静了', '书包整理好再睡'] },
+  { key: 'window', lines: ['窗外的风替你加油', '今晚的月亮也在陪你'] },
+  { key: 'cheer', lines: ['你可以的', '加油，少年', '今天的你也很棒'] }
+];
 
 const IDLE_CLASSES = ['is-idle-look', 'is-idle-hop', 'is-idle-stretch', 'is-idle-wag', 'is-idle-yawn', 'is-idle-snack'];
 const FISH_CLIP_IDS = ['petFishStretch', 'petFishYawn', 'petFishEat'];
@@ -555,6 +568,7 @@ function fishSay(text) {
   bubble.hidden = false;
   clearTimeout(fishState.hideTimer);
   fishState.hideTimer = setTimeout(() => { bubble.hidden = true; }, 9000);
+  fishMaybeHomeworkAction(text);
 }
 
 function fishAllVideos() {
@@ -612,7 +626,7 @@ function fishStopAction(resume) {
 /* 待机小动作：优先播放真实动画片段（伸懒腰 / 打哈欠 / 吃 Token），再退回 CSS 小动作 */
 function fishIdleAction() {
   const actor = $('petFishActor');
-  if (!actor || fishState.idleBusy || fishState.actionBusy) return;
+  if (!actor || fishState.idleBusy || fishState.actionBusy || fishState.hwAction || fishState.hwActionLoading) return;
   const wrap = $('petFish');
   const mode = wrap ? wrap.dataset.mode : 'idle';
   if (mode === 'idle' || mode === 'crawl') {
@@ -688,9 +702,23 @@ function fishStartHwFrames() {
       fishState.hwRaf = 0;
       return;
     }
-    if (!fishState.hwStart) fishState.hwStart = ts;
-    const idx = Math.floor(((ts - fishState.hwStart) / 1000) * HW_FPS) % HW_FRAME_COUNT;
-    const img = fishState.hwFrames[idx];
+    let img = null;
+    if (fishState.hwAction) {
+      const act = fishState.hwAction;
+      if (!act.start) act.start = ts;
+      const idx = Math.floor(((ts - act.start) / 1000) * HW_FPS);
+      if (idx >= act.count) {
+        fishState.hwAction = null;
+        fishState.hwStart = 0;
+        img = fishState.hwFrames[0];
+      } else {
+        img = act.frames[idx];
+      }
+    } else {
+      if (!fishState.hwStart) fishState.hwStart = ts;
+      const idx = Math.floor(((ts - fishState.hwStart) / 1000) * HW_FPS) % HW_FRAME_COUNT;
+      img = fishState.hwFrames[idx];
+    }
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (img && img.complete && img.naturalWidth) ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     fishState.hwRaf = requestAnimationFrame(tick);
@@ -702,9 +730,46 @@ function fishStopHwFrames() {
   if (fishState.hwRaf) cancelAnimationFrame(fishState.hwRaf);
   fishState.hwRaf = 0;
   fishState.hwStart = 0;
+  fishState.hwAction = null;
   const canvas = $('petFishHwFrames');
   if (!canvas || !fishState.hwCtx) return;
   fishState.hwCtx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+/* 台词命中后加载对应动作帧，播完自动回到写作业循环 */
+function fishMaybeHomeworkAction(text) {
+  const wrap = $('petFish');
+  if (!wrap || wrap.dataset.mode !== 'homework' || !fishState.hwReady) return;
+  if (fishState.hwAction || fishState.hwActionLoading) return;
+  let key = '';
+  for (const action of HOMEWORK_ACTIONS) {
+    if (action.lines.indexOf(text) >= 0) {
+      key = action.key;
+      break;
+    }
+  }
+  if (key) fishLoadHomeworkAction(key);
+}
+
+function fishLoadHomeworkAction(key) {
+  fishState.hwActionLoading = true;
+  const frames = [];
+  let done = 0;
+  let failed = false;
+  const finish = () => {
+    if (done < HW_ACTION_FRAMES) return;
+    fishState.hwActionLoading = false;
+    const wrap = $('petFish');
+    if (failed || !fishState.hwReady || !wrap || wrap.dataset.mode !== 'homework') return;
+    fishState.hwAction = { key, frames, count: HW_ACTION_FRAMES, start: 0 };
+  };
+  for (let i = 1; i <= HW_ACTION_FRAMES; i++) {
+    const img = new Image();
+    img.onload = () => { done++; finish(); };
+    img.onerror = () => { failed = true; done++; finish(); };
+    img.src = 'assets/hwact/' + key + '/f' + String(i).padStart(3, '0') + '.webp';
+    frames.push(img);
+  }
 }
 
 /* 上课播放 AI 奔跑视频，放学播放写作业视频，空闲播放 breathing 动画 */
@@ -1997,6 +2062,7 @@ function onModeChanged(data) {
   document.body.setAttribute('data-mode', state.mode);
   if (state.mode !== 'pet') {
     if (fishState.actionBusy) fishStopAction(false);
+    fishState.hwActionLoading = false;
     fishStopHwFrames();
     fishPauseVideos();
   }

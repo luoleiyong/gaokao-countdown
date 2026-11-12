@@ -1141,15 +1141,15 @@ const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 const RUN_NAME = 'GaokaoCountdown';
 
 function autoLaunchCommand() {
-  // 便携版运行在临时解压目录，自启应指回便携 exe 本体
+  // 便携版运行在临时解压目录，自启应指回便携 exe 本体；开机后直接打开主界面
   const portable = process.env.PORTABLE_EXECUTABLE_FILE;
   if (portable && fs.existsSync(portable)) {
-    return `"${portable}" --pet`;
+    return `"${portable}"`;
   }
   if (process.defaultApp) {
-    return `"${process.execPath}" "${path.resolve(process.argv[1])}" --pet`;
+    return `"${process.execPath}" "${path.resolve(process.argv[1])}"`;
   }
-  return `"${app.getPath('exe')}" --pet`;
+  return `"${app.getPath('exe')}"`;
 }
 function readAutoLaunch() {
   try {
@@ -1219,12 +1219,8 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.once('ready-to-show', () => {
     disableDwmShadow(win);
-    // 开机自启并带 --pet 参数时，直接以桌面宠物出现，不闪主界面
-    if (process.argv.includes('--pet')) {
-      applyPetMode(true);
-    } else {
-      win.show();
-    }
+    // 开机自启与手动启动统一进入主界面，避免宠物模式与主界面来回切换
+    win.show();
   });
 
   win.on('close', (e) => {
@@ -2591,9 +2587,6 @@ if (!gotLock) {
 } else {
   app.on('second-instance', (_e, argv) => {
     showPanel();
-    if (Array.isArray(argv) && argv.includes('--pet')) {
-      setTimeout(() => applyPetMode(true), 200);
-    }
     if (Array.isArray(argv) && argv.includes('--classroom')) {
       openClassroomWindow();
     }
@@ -2610,8 +2603,12 @@ if (!gotLock) {
     firstTodayLaunch = store.lastLaunchDate !== today;
     store.lastLaunchDate = today;
     store.autoLaunch = readAutoLaunch();
+    // 旧版本的自启命令带 --pet，升级后统一重写为直接打开主界面
+    if (store.autoLaunch) {
+      try { setAutoLaunchEnabled(true); } catch { /* 忽略 */ }
+    }
     saveStore();
-    appendLog('APP_START', { firstToday: firstTodayLaunch, pet: process.argv.includes('--pet'), version: app.getVersion() });
+    appendLog('APP_START', { firstToday: firstTodayLaunch, version: app.getVersion() });
     runAutoBackup(false);
 
     app.setAppUserModelId('com.trae.gaokao.countdown');

@@ -74,6 +74,13 @@ function normalizeDateValue(v) {
   if (m) return `${m[1]}-${pad2(m[2])}-${pad2(m[3])}`;
   m = s.match(/^(\d{1,2})\s*[-/.月]\s*(\d{1,2})\s*日?$/);
   if (m) return `${new Date().getFullYear()}-${pad2(m[1])}-${pad2(m[2])}`;
+  // Excel 日期序列号（未套用日期格式时会出现）
+  if (/^\d{5}(\.\d+)?$/.test(s)) {
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(Number(s)) * 86400000);
+    if (!Number.isNaN(d.getTime())) {
+      return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+    }
+  }
   return '';
 }
 function cleanRows(rows) {
@@ -528,6 +535,11 @@ function bind() {
   });
 
   $('btnTtImport').addEventListener('click', () => openImport('weekday'));
+  $('btnImportTips').addEventListener('click', openTips);
+  $('btnCopyTips').addEventListener('click', copyTips);
+  document.querySelectorAll('[data-close="tips"]').forEach((el) => {
+    el.addEventListener('click', closeTips);
+  });
   $('btnWeekendImportFixed').addEventListener('click', () => openImport('weekend-fixed'));
   $('btnWeekendImportVariable').addEventListener('click', () => openImport('weekend-variable'));
   $('btnWeekendImportVariable2').addEventListener('click', () => openImport('weekend-variable'));
@@ -570,7 +582,8 @@ function bind() {
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (!$('ttImportModal').hidden) closeImport();
+      if (!$('ttTipsModal').hidden) closeTips();
+      else if (!$('ttImportModal').hidden) closeImport();
       else bridge.closeTimetable();
     }
   });
@@ -593,10 +606,90 @@ const IMPORT_META = {
   'weekend-variable': {
     title: '导入课程不固定的周末课程',
     target: '课程不固定',
-    desc: '每一行填写具体日期、节次、时间和课程，可一次导入整个学期；到对应日期会自动显示当天课程。',
-    demo: '日期,节次,时间,课程\n2026-11-14,第1节,08:20-09:00,语文\n2026-11-14,第2节,09:10-09:50,数学\n2026-11-15,第5节,14:10-14:50,黄金周末\n\n格式二（逐行）：\n2026-11-21 第1节 08:20-09:00 英语'
+    desc: '每一行填写具体日期、节次、时间和课程，可一次导入整个学期；到对应日期会自动显示当天课程。某天只填前几节时，后面的节次会自动按放假处理。',
+    demo: '日期,节次,时间,课程\n2026-11-14,第1节,08:20-09:00,物理\n2026-11-14,第2节,09:10-09:50,物理\n2026-11-15,第4节,10:50-11:20,生物\n2026-11-15,第5节,14:10-14:50,放假\n\n格式二（逐行）：\n2026-11-21 第1节 08:20-09:00 英语'
   }
 };
+
+const IMPORT_TIPS = `你是课程表整理助手。我会发给你一张课程表图片（或 Excel、PDF、截图）。请把它整理成可以直接导入「高考倒计时」桌面程序的表格：优先输出 CSV 文本；如果平台支持生成 xlsx，请按下面的工作表分别建表，列名必须完全一致。
+
+通用规则：
+1. 节次统一写成「第1节、第2节……」，晚自习写「晚自习1」。
+2. 时间统一写成 08:00-08:45 这种 24 小时格式，用短横线连接。
+3. 同一格有多个科目时用 / 连接；看不清的格子留空，不要猜测。
+4. 只输出表格内容和必要的工作表名，不要解释。
+
+【工作表一：工作日】周一至周五固定课程
+列名：节次,时间,周一,周二,周三,周四,周五
+示例：
+节次,时间,周一,周二,周三,周四,周五
+第1节,08:00-08:45,语文,数学,英语,物理,化学
+第2节,08:55-09:40,数学,语文,物理,英语,生物
+说明：一行一节；某天没有课就留空。
+
+【工作表二：周末固定作息】仅当每周六、周日课程完全一样时使用（可选）
+列名：节次,周六时间,周日时间,周六课程,周日课程
+示例：
+节次,周六时间,周日时间,周六课程,周日课程
+第1节,08:20-09:00,08:20-09:00,语文,数学
+第5节,14:10-14:50,14:10-14:50,物理,黄金周末
+说明：某天下午开始放假时，在放假的节次写「放假」，后面的节次不用再写。
+
+【工作表三：周末不固定课程】每周周末课不同、按日期登记时使用（推荐）
+列名：日期,节次,时间,课程
+示例：
+日期,节次,时间,课程
+2026-11-14,第1节,08:20-09:00,物理
+2026-11-14,第2节,09:10-09:50,物理
+2026-11-14,第3节,10:00-10:40,化学
+2026-11-14,第4节,10:50-11:20,化学
+2026-11-14,第5节,14:10-14:50,生物
+2026-11-14,第6节,15:00-15:40,生物
+2026-11-14,第7节,15:50-16:30,外语
+2026-11-14,第8节,16:40-17:20,外语
+2026-11-15,第1节,08:20-09:00,化学
+2026-11-15,第2节,09:10-09:50,化学
+2026-11-15,第3节,10:00-10:40,生物
+2026-11-15,第4节,10:50-11:20,生物
+2026-11-15,第5节,14:10-14:50,放假
+
+说明：
+- 日期统一写成 2026-11-14 这种格式，每个有课的周末日期都要单独列出。
+- 不同周次同一节次的时间保持一致，按学校的周末作息填写。
+- 某天只有前几节有课、后面放假：在第一节没课的节次写一条「放假」即可，后面的节次不用再列（程序会自动按放假处理）。
+- 如果放假之后晚上还有课，继续正常列出课程，程序会自动恢复上课。
+- 整天放假：写一条「第1节,...,放假」即可。
+- 如果平台只能生成一个工作表，请优先输出【工作表三】；如果学校周末课程每周相同，输出【工作表二】并说明。
+- 只输出我能直接复制的 CSV 文本（或 xlsx 文件），不要输出与表格无关的内容。`;
+
+function openTips() {
+  const pre = $('ttTipsText');
+  if (pre) pre.textContent = IMPORT_TIPS;
+  $('ttTipsModal').hidden = false;
+}
+
+function closeTips() {
+  $('ttTipsModal').hidden = true;
+}
+
+async function copyTips() {
+  const text = $('ttTipsText').textContent || '';
+  if (!text) return;
+  let ok = false;
+  try {
+    if (bridge && bridge.copyText) {
+      const res = await bridge.copyText(text);
+      ok = !!(res && res.ok);
+    }
+  } catch (e) { /* 尝试浏览器剪贴板 */ }
+  if (!ok) {
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch (e) { /* 复制失败 */ }
+  }
+  toast(ok ? '提示词已复制，粘贴给 AI 即可' : '复制失败，请手动选择文本');
+}
 
 function openImport(target) {
   const meta = IMPORT_META[target] || IMPORT_META.weekday;
@@ -866,6 +959,44 @@ function parseWeekendEntryText(text) {
   return list;
 }
 
+/* 某天后面没有登记课程时，自动补一条「放假」，让当天剩余节次按放假显示 */
+function fillWeekendHolidayEntries(list) {
+  if (!list.length) return list;
+  const periods = weekendPeriods()
+    .slice()
+    .sort((a, b) => labelNo(a.label) - labelNo(b.label));
+  if (!periods.length) return list;
+  const byDate = new Map();
+  list.forEach((e) => {
+    if (!byDate.has(e.date)) byDate.set(e.date, []);
+    byDate.get(e.date).push(e);
+  });
+  const out = list.slice();
+  byDate.forEach((items, date) => {
+    const concrete = items.filter((e) => String(e.subject || '').trim() && !isHolidayText(e.subject));
+    if (!concrete.length) return;
+    const lastNo = Math.max.apply(null, concrete.map((e) => labelNo(e.label)));
+    const hasHoliday = items.some((e) => isHolidayText(e.subject) && labelNo(e.label) > lastNo);
+    if (hasHoliday) return;
+    const next = periods.find((p) => labelNo(p.label) > lastNo);
+    if (!next) return;
+    const dayIdx = new Date(date + 'T00:00:00').getDay() === 0 ? 1 : 0;
+    const times = Array.isArray(next.times) ? next.times : [];
+    out.push({
+      id: 'we_holiday_' + date + '_' + labelNo(next.label),
+      date,
+      label: normalizeLabel(next.label, labelNo(next.label)),
+      time: normalizeTime(times[dayIdx] || times[0] || ''),
+      subject: '放假'
+    });
+  });
+  return out.sort((a, b) =>
+    a.date.localeCompare(b.date) ||
+    (timeStart(a.time) - timeStart(b.time)) ||
+    (labelNo(a.label) - labelNo(b.label))
+  );
+}
+
 function importSheets() {
   if (state.ttSheets && state.ttSheets.length) {
     return state.ttSheets.map((s) => ({ name: s.name || '', rows: Array.isArray(s.rows) ? s.rows : [] }));
@@ -930,6 +1061,7 @@ async function doImport() {
     w.enabled = true;
   } else {
     const w = ensureWeekend();
+    list = fillWeekendHolidayEntries(list);
     w.entries = list;
     w.enabled = true;
     w.variable = true;

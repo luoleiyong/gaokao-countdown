@@ -501,8 +501,16 @@ async function addEvent() {
 const PET_MOTTOS = Array.isArray(window.PET_MOTTOS) ? window.PET_MOTTOS : [];
 const FISH_CLASS_LINES = Array.isArray(window.FISH_CLASS_LINES) ? window.FISH_CLASS_LINES : [];
 const FISH_CHEER_LINES = Array.isArray(window.FISH_CHEER_LINES) ? window.FISH_CHEER_LINES : [];
+const FISH_IDLE_LINES = Array.isArray(window.FISH_IDLE_LINES) ? window.FISH_IDLE_LINES : [];
+const FISH_HEAD_LINES = Array.isArray(window.FISH_HEAD_LINES) ? window.FISH_HEAD_LINES : [];
+const FISH_POKE_LINES = Array.isArray(window.FISH_POKE_LINES) ? window.FISH_POKE_LINES : [];
+const FISH_TAIL_LINES = Array.isArray(window.FISH_TAIL_LINES) ? window.FISH_TAIL_LINES : [];
 const FISH_ACTOR_W = 56;
-const fishState = { phase: '', spokenAt: 0, last: '', hideTimer: null };
+const fishState = {
+  phase: '', spokenAt: 0, last: '', hideTimer: null,
+  idleAt: 0, idleBusy: false, idleTimer: null,
+  clickAt: 0, reactionTimer: null, videoMode: ''
+};
 
 function fishPickLine(lines) {
   if (!lines.length) return '';
@@ -524,6 +532,44 @@ function fishSay(text) {
   fishState.hideTimer = setTimeout(() => { bubble.hidden = true; }, 9000);
 }
 
+/* 待机小动作：张望、蹦一下、伸懒腰、甩尾巴 */
+function fishIdleAction() {
+  const actor = $('petFishActor');
+  if (!actor || fishState.idleBusy) return;
+  const actions = ['is-idle-look', 'is-idle-hop', 'is-idle-stretch', 'is-idle-wag'];
+  const cls = actions[Math.floor(Math.random() * actions.length)];
+  actor.classList.remove('is-idle-look', 'is-idle-hop', 'is-idle-stretch', 'is-idle-wag');
+  void actor.offsetWidth;
+  actor.classList.add(cls);
+  fishState.idleBusy = true;
+  fishSay(fishPickLine(FISH_IDLE_LINES));
+  clearTimeout(fishState.idleTimer);
+  fishState.idleTimer = setTimeout(() => {
+    actor.classList.remove(cls);
+    fishState.idleBusy = false;
+    fishState.idleAt = Date.now() + 18000 + Math.random() * 18000;
+  }, 1900);
+}
+
+/* 上课播放 AI 奔跑视频，放学播放写作业视频，其他状态暂停并回到静态立绘 */
+function fishSyncVideo(mode) {
+  const run = $('petFishRun');
+  const homework = $('petFishHomework');
+  const play = (video, on) => {
+    if (!video) return;
+    if (on) {
+      if (video.paused) {
+        const p = video.play();
+        if (p && p.catch) p.catch(() => { /* 等用户交互或加载完成 */ });
+      }
+    } else if (!video.paused) {
+      video.pause();
+    }
+  };
+  play(run, mode === 'crawl');
+  play(homework, mode === 'homework');
+}
+
 /* 大肥鱼：上课时沿顶部边框爬行表示课堂进度，放学到家后坐在课桌前写作业 */
 function renderFish() {
   const wrap = $('petFish');
@@ -537,7 +583,7 @@ function renderFish() {
   let mode = 'idle';
   let progress = 0;
   let phase = '';
-  let lines = FISH_CLASS_LINES;
+  let lines = plan.status === 'empty' ? FISH_IDLE_LINES : FISH_CLASS_LINES;
 
   if (plan.status === 'done' || plan.status === 'holiday') {
     mode = 'homework';
@@ -554,6 +600,7 @@ function renderFish() {
   }
 
   wrap.dataset.mode = mode;
+  fishSyncVideo(mode);
   const width = wrap.clientWidth || 300;
   const maxLeft = Math.max(4, width - FISH_ACTOR_W - 6);
   const left = mode === 'homework'
@@ -579,6 +626,12 @@ function renderFish() {
 
   const nowTs = Date.now();
   const interval = mode === 'homework' ? 150000 : 90000;
+  if (mode === 'idle' && !fishState.idleBusy) {
+    if (!fishState.idleAt) fishState.idleAt = nowTs + 12000 + Math.random() * 10000;
+    else if (nowTs >= fishState.idleAt) fishIdleAction();
+  } else if (mode !== 'idle') {
+    fishState.idleAt = 0;
+  }
   if (phase !== fishState.phase) {
     fishState.phase = phase;
     fishState.spokenAt = nowTs;
@@ -1774,6 +1827,12 @@ function onModeChanged(data) {
   if (data.scale) state.petScale = Number(data.scale) || state.petScale;
   applyPetScaleVar();
   document.body.setAttribute('data-mode', state.mode);
+  if (state.mode !== 'pet') {
+    ['petFishRun', 'petFishHomework'].forEach((id) => {
+      const video = $(id);
+      if (video && !video.paused) video.pause();
+    });
+  }
   $('panelView').hidden = state.mode === 'pet';
   $('petView').hidden = state.mode !== 'pet';
   if (state.mode === 'pet') {
@@ -1957,6 +2016,45 @@ function closeAgreementModal() {
 
 /* ---------------- 事件绑定 ---------------- */
 function bindEvents() {
+  const fishVideos = ['petFishRun', 'petFishHomework']
+    .map((id) => $(id))
+    .filter(Boolean);
+  if (fishVideos.length) {
+    const wrap = $('petFish');
+    const ready = new Set();
+    const mark = () => {
+      if (!wrap) return;
+      wrap.dataset.video = ready.size === fishVideos.length ? 'on' : 'off';
+    };
+    fishVideos.forEach((video) => {
+      const id = video.id;
+      const on = () => { if (video.readyState >= 2) { ready.add(id); mark(); } };
+      const off = () => { ready.delete(id); mark(); };
+      video.addEventListener('loadeddata', on);
+      video.addEventListener('error', off);
+      if (video.readyState >= 2) ready.add(id);
+    });
+    mark();
+  }
+  document.querySelectorAll('.pet-fish__hit').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (state.mode !== 'pet') return;
+      if (Date.now() - fishState.clickAt < 1200) return;
+      fishState.clickAt = Date.now();
+      const part = el.dataset.fishPart || 'body';
+      const lines = part === 'head' ? FISH_HEAD_LINES : (part === 'tail' ? FISH_TAIL_LINES : FISH_POKE_LINES);
+      const cls = part === 'head' ? 'is-pet-head' : (part === 'tail' ? 'is-pet-tail' : 'is-pet-body');
+      const actor = $('petFishActor');
+      if (!actor) return;
+      actor.classList.remove('is-pet-head', 'is-pet-body', 'is-pet-tail', 'is-idle-look', 'is-idle-hop', 'is-idle-stretch', 'is-idle-wag');
+      void actor.offsetWidth;
+      actor.classList.add(cls);
+      fishSay(fishPickLine(lines));
+      clearTimeout(fishState.reactionTimer);
+      fishState.reactionTimer = setTimeout(() => actor.classList.remove(cls), 800);
+    });
+  });
   $('btnDraw').addEventListener('click', () => startDrawFlow(false));
   $('btnDrawSide').addEventListener('click', () => startDrawFlow(false));
   $('btnKnowledge').addEventListener('click', () => bridge.openKnowledge());

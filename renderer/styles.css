@@ -992,6 +992,79 @@ body[data-skin="bamboo"] .today-card__foot span[data-all="1"]{color:var(--gold-d
   transform-origin:50% 92%;
   user-select:none;-webkit-user-drag:none;
 }
+.pet-fish__run{
+  position:absolute;inset:0;width:100%;height:100%;
+  object-fit:contain;object-position:bottom center;
+  opacity:0;transition:opacity .18s;pointer-events:none;
+}
+.pet-fish__homework{
+  position:absolute;left:50%;bottom:0;height:100%;width:auto;max-width:none;
+  transform:translateX(-50%);
+  opacity:0;transition:opacity .18s;pointer-events:none;
+}
+.pet-fish[data-mode="crawl"][data-video="on"] .pet-fish__run{opacity:1}
+.pet-fish[data-mode="crawl"][data-video="on"] .pet-fish__sprite{opacity:0;animation:none}
+.pet-fish[data-mode="homework"][data-video="on"] .pet-fish__homework{opacity:1}
+.pet-fish[data-mode="homework"][data-video="on"] .pet-fish__sprite{opacity:0;animation:none}
+.pet-fish[data-mode="idle"] .pet-fish__sprite{
+  animation:fish-idle 3.2s ease-in-out infinite;
+  transform-origin:50% 100%;
+}
+@keyframes fish-idle{
+  0%,100%{transform:translateY(0) scaleY(1)}
+  50%{transform:translateY(-1px) scaleY(1.012)}
+}
+.pet-fish__actor{pointer-events:auto;-webkit-app-region:no-drag}
+.pet-fish__hit{
+  position:absolute;z-index:7;margin:0;padding:0;border:0;border-radius:50%;
+  background:transparent;cursor:pointer;pointer-events:auto;-webkit-app-region:no-drag;
+}
+.pet-fish__hit:focus{outline:none}
+.pet-fish__hit--head{left:16px;top:2px;width:34px;height:30px}
+.pet-fish__hit--body{left:18px;top:32px;width:26px;height:22px}
+.pet-fish__hit--tail{left:0;top:40px;width:20px;height:20px}
+.pet-fish__actor.is-pet-head{animation:fish-pat .6s ease}
+.pet-fish__actor.is-pet-body{animation:fish-poke .55s ease}
+.pet-fish__actor.is-pet-tail{animation:fish-tail .6s ease}
+.pet-fish__actor.is-idle-look{animation:fish-look 1.7s ease}
+.pet-fish__actor.is-idle-hop{animation:fish-hop 1.2s ease}
+.pet-fish__actor.is-idle-stretch{animation:fish-stretch 1.8s ease}
+.pet-fish__actor.is-idle-wag{animation:fish-tail .9s ease}
+@keyframes fish-pat{
+  0%,100%{transform:none}
+  30%{transform:translateY(2px) scale(.97)}
+  65%{transform:translateY(-2px) scale(1.03)}
+}
+@keyframes fish-poke{
+  0%,100%{transform:none}
+  35%{transform:translateX(3px) rotate(3deg)}
+  70%{transform:translateX(-3px) rotate(-3deg)}
+}
+@keyframes fish-tail{
+  0%,100%{transform:none}
+  25%{transform:rotate(-7deg)}
+  50%{transform:rotate(7deg)}
+  75%{transform:rotate(-3deg)}
+}
+@keyframes fish-look{
+  0%,100%{transform:none}
+  20%{transform:rotate(-5deg) translateX(-1px)}
+  45%{transform:rotate(-4deg)}
+  65%{transform:rotate(5deg) translateX(1px)}
+  85%{transform:rotate(3deg)}
+}
+@keyframes fish-hop{
+  0%,100%{transform:none}
+  20%{transform:translateY(-6px)}
+  40%{transform:translateY(0)}
+  60%{transform:translateY(-4px)}
+  80%{transform:translateY(0)}
+}
+@keyframes fish-stretch{
+  0%,100%{transform:none}
+  30%{transform:scaleY(1.05) translateY(-1px)}
+  60%{transform:scaleY(.98)}
+}
 .pet-fish[data-mode="crawl"] .pet-fish__sprite{animation:fish-run .52s ease-in-out infinite}
 @keyframes fish-run{
   0%{transform:translateY(0) rotate(-2.5deg) scaleY(1)}
@@ -1043,29 +1116,6 @@ body[data-skin="bamboo"] .today-card__foot span[data-all="1"]{color:var(--gold-d
 @keyframes fish-write{
   0%,100%{transform:translateY(0) rotate(-1.5deg)}
   50%{transform:translateY(-1px) rotate(1.5deg)}
-}
-.pet-fish__desk{
-  display:none;position:absolute;left:50%;bottom:0;transform:translateX(-50%);
-  width:58px;height:12px;z-index:4;
-}
-.pet-fish[data-mode="homework"] .pet-fish__desk{display:block}
-.pet-fish__desk::before{
-  content:"";position:absolute;left:0;right:0;bottom:0;height:8px;border-radius:3px;
-  background:linear-gradient(#c1904f,#8a6330);
-  box-shadow:0 2px 6px rgba(0,0,0,.4);
-}
-.pet-fish__desk::after{
-  content:"";position:absolute;left:5px;bottom:-5px;width:4px;height:7px;border-radius:2px;
-  background:#7a5528;box-shadow:40px 0 0 #7a5528;
-}
-.pet-fish__paper{
-  position:absolute;left:17px;bottom:6px;width:17px;height:12px;border-radius:2px;
-  background:#f7f3e6;transform:rotate(-8deg);
-  box-shadow:0 1px 2px rgba(0,0,0,.3);
-}
-.pet-fish__pencil{
-  position:absolute;left:34px;bottom:7px;width:2px;height:10px;border-radius:1px;
-  background:#d9b64a;transform:rotate(22deg);
 }
 .pet-fish__bubble{
   position:absolute;top:74px;left:10px;z-index:2;

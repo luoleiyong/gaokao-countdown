@@ -188,6 +188,12 @@ body[data-skin="bamboo"] .tt-input--time-part{color-scheme:light}
   font-family:Consolas,"Courier New",monospace;font-size:11.5px;line-height:1.6;
   color:var(--dim);white-space:pre-wrap;
 }
+.tt-modal__box--tips{width:min(760px,calc(100vw - 48px))}
+.tt-demo--tips{
+  max-height:calc(100vh - 300px);overflow:auto;
+  background:rgba(0,0,0,.18);color:var(--text);
+  line-height:1.75;user-select:text;
+}
 .tt-textarea{
   width:100%;height:130px;resize:vertical;
   padding:10px 12px;border:1px solid var(--line);border-radius:8px;

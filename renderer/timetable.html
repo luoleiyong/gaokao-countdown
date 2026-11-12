@@ -31,6 +31,7 @@
       <button class="tt-ghost" id="btnAddNight">＋ 晚自习</button>
       <button class="tt-ghost" id="btnTtAdd">＋ 加一节</button>
       <button class="tt-ghost" id="btnTtImport">一键导入</button>
+      <button class="tt-ghost" id="btnImportTips">导入技巧</button>
       <label class="tt-toggle" title="显示或隐藏晚自习课次">
         <input type="checkbox" id="showNight" checked />
         <span>显示晚自习</span>
@@ -121,6 +122,25 @@
 </div>
 
 <div class="tt-toast" id="ttToast" hidden></div>
+
+<!-- 导入技巧 -->
+<div class="tt-modal" id="ttTipsModal" hidden>
+  <div class="tt-modal__backdrop" data-close="tips"></div>
+  <div class="tt-modal__box tt-modal__box--tips">
+    <header class="tt-modal__head">
+      <h3>导入技巧 · 让 AI 整理课程表</h3>
+      <button class="tt-close" data-close="tips" title="关闭">×</button>
+    </header>
+    <div class="tt-modal__body">
+      <p class="tt-tip">把课程表图片（或 Excel、PDF 截图）发给任意 AI，连同下面的提示词一起粘贴，让它按格式输出 CSV 文本或 xlsx；再回到这里点「一键导入」粘贴内容或选择文件即可。</p>
+      <pre class="tt-demo tt-demo--tips" id="ttTipsText"></pre>
+    </div>
+    <footer class="tt-modal__foot">
+      <button class="tt-ghost" data-close="tips">关闭</button>
+      <button class="tt-primary" id="btnCopyTips">一键复制提示词</button>
+    </footer>
+  </div>
+</div>
 <script src="timetable.js"></script>
 </body>
 </html>

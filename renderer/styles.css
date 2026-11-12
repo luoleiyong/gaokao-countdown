@@ -1002,10 +1002,32 @@ body[data-skin="bamboo"] .today-card__foot span[data-all="1"]{color:var(--gold-d
   transform:translateX(-50%);
   opacity:0;transition:opacity .18s;pointer-events:none;
 }
+.pet-fish__hwframes{
+  position:absolute;left:50%;bottom:0;height:100%;width:auto;max-width:none;
+  transform:translateX(-50%);
+  opacity:0;transition:opacity .18s;pointer-events:none;
+}
+.pet-fish__idle,
+.pet-fish__clip{
+  position:absolute;left:50%;bottom:0;height:100%;width:auto;max-width:none;
+  transform:translateX(-50%);
+  opacity:0;transition:opacity .18s;pointer-events:none;
+}
 .pet-fish[data-mode="crawl"][data-video="on"] .pet-fish__run{opacity:1}
 .pet-fish[data-mode="crawl"][data-video="on"] .pet-fish__sprite{opacity:0;animation:none}
 .pet-fish[data-mode="homework"][data-video="on"] .pet-fish__homework{opacity:1}
 .pet-fish[data-mode="homework"][data-video="on"] .pet-fish__sprite{opacity:0;animation:none}
+.pet-fish[data-mode="homework"][data-hwframes="on"] .pet-fish__hwframes{opacity:1}
+.pet-fish[data-mode="homework"][data-hwframes="on"] .pet-fish__homework{opacity:0 !important}
+.pet-fish[data-mode="homework"][data-hwframes="on"] .pet-fish__sprite{opacity:0;animation:none}
+.pet-fish[data-mode="idle"][data-idlevideo="on"] .pet-fish__idle{opacity:1}
+.pet-fish[data-mode="idle"][data-idlevideo="on"] .pet-fish__sprite{opacity:0;animation:none}
+.pet-fish[data-action="on"] .pet-fish__clip.on{opacity:1}
+.pet-fish[data-action="on"] .pet-fish__run,
+.pet-fish[data-action="on"] .pet-fish__homework,
+.pet-fish[data-action="on"] .pet-fish__hwframes,
+.pet-fish[data-action="on"] .pet-fish__idle,
+.pet-fish[data-action="on"] .pet-fish__sprite{opacity:0 !important;animation:none}
 .pet-fish[data-mode="idle"] .pet-fish__sprite{
   animation:fish-idle 3.2s ease-in-out infinite;
   transform-origin:50% 100%;
@@ -1030,6 +1052,8 @@ body[data-skin="bamboo"] .today-card__foot span[data-all="1"]{color:var(--gold-d
 .pet-fish__actor.is-idle-hop{animation:fish-hop 1.2s ease}
 .pet-fish__actor.is-idle-stretch{animation:fish-stretch 1.8s ease}
 .pet-fish__actor.is-idle-wag{animation:fish-tail .9s ease}
+.pet-fish__actor.is-idle-yawn{animation:fish-yawn 1.8s ease}
+.pet-fish__actor.is-idle-snack{animation:fish-snack 1.4s ease}
 @keyframes fish-pat{
   0%,100%{transform:none}
   30%{transform:translateY(2px) scale(.97)}
@@ -1064,6 +1088,19 @@ body[data-skin="bamboo"] .today-card__foot span[data-all="1"]{color:var(--gold-d
   0%,100%{transform:none}
   30%{transform:scaleY(1.05) translateY(-1px)}
   60%{transform:scaleY(.98)}
+}
+@keyframes fish-yawn{
+  0%,100%{transform:none}
+  25%{transform:scaleY(.98) translateY(1px)}
+  55%{transform:scaleY(1.06) translateY(-1px) rotate(-2deg)}
+  80%{transform:scaleY(1.02)}
+}
+@keyframes fish-snack{
+  0%,100%{transform:none}
+  20%{transform:rotate(-4deg) translateY(-1px)}
+  40%{transform:rotate(0) translateY(1px) scaleY(.98)}
+  60%{transform:rotate(4deg) translateY(-1px)}
+  80%{transform:rotate(0) scaleY(1.02)}
 }
 .pet-fish[data-mode="crawl"] .pet-fish__sprite{animation:fish-run .52s ease-in-out infinite}
 @keyframes fish-run{

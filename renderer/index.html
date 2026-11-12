@@ -153,7 +153,7 @@
 
   <!-- ======================= 桌面宠物 ======================= -->
   <div class="pet-view" id="petView" hidden>
-    <div class="pet-fish" id="petFish" data-mode="idle" data-video="off" aria-hidden="true">
+    <div class="pet-fish" id="petFish" data-mode="idle" data-video="off" data-idlevideo="off" data-action="off" aria-hidden="true">
       <div class="pet-fish__track"><i id="petFishTrack"></i></div>
       <div class="pet-fish__actor" id="petFishActor">
         <span class="pet-fish__speed" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -161,6 +161,11 @@
         <img class="pet-fish__sprite" src="assets/feiyu-body.png" alt="" draggable="false" />
         <video class="pet-fish__run" id="petFishRun" src="assets/feiyu-run.webm" muted playsinline loop preload="auto"></video>
         <video class="pet-fish__homework" id="petFishHomework" src="assets/feiyu-homework.webm" muted playsinline loop preload="auto"></video>
+        <canvas class="pet-fish__hwframes" id="petFishHwFrames" width="206" height="200"></canvas>
+        <video class="pet-fish__idle" id="petFishIdle" src="assets/feiyu-idle.webm" muted playsinline loop preload="auto"></video>
+        <video class="pet-fish__clip pet-fish__clip--stretch" id="petFishStretch" src="assets/feiyu-stretch.webm" muted playsinline preload="auto"></video>
+        <video class="pet-fish__clip pet-fish__clip--yawn" id="petFishYawn" src="assets/feiyu-yawn.webm" muted playsinline preload="auto"></video>
+        <video class="pet-fish__clip pet-fish__clip--eat" id="petFishEat" src="assets/feiyu-eat.webm" muted playsinline preload="auto"></video>
         <button class="pet-fish__hit pet-fish__hit--head" data-fish-part="head" aria-label="摸摸头"></button>
         <button class="pet-fish__hit pet-fish__hit--body" data-fish-part="body" aria-label="戳一戳"></button>
         <button class="pet-fish__hit pet-fish__hit--tail" data-fish-part="tail" aria-label="碰尾巴"></button>

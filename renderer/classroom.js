@@ -16,6 +16,7 @@ const state = {
   ttFile: null,
   debugMode: false,
   voice: false,
+  mute: false,
   noRepeat: false,
   drawCount: 1,
   projection: false,
@@ -47,7 +48,7 @@ function toast(msg) {
 
 /* ---------------- 语音朗读 ---------------- */
 function speakName(name) {
-  if (!state.voice || !name || !window.speechSynthesis) return;
+  if (state.mute || !state.voice || !name || !window.speechSynthesis) return;
   try {
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(String(name));
@@ -890,13 +891,34 @@ function bindStaticEvents() {
     try { localStorage.setItem('cls-draw-count', String(state.drawCount)); } catch (e) { /* 忽略 */ }
   });
 
-  // 朗读开关（保存在本机）
+  // 朗读 / 静音开关（互斥，保存在本机）
   try { state.voice = localStorage.getItem('cls-voice') === '1'; } catch (e) { state.voice = false; }
+  try { state.mute = localStorage.getItem('cls-mute') === '1'; } catch (e) { state.mute = false; }
+  if (state.mute) state.voice = false;
   $('voiceToggle').checked = state.voice;
+  $('muteToggle').checked = state.mute;
   $('voiceToggle').addEventListener('change', (e) => {
     state.voice = !!e.target.checked;
+    if (state.voice && state.mute) {
+      state.mute = false;
+      $('muteToggle').checked = false;
+      try { localStorage.setItem('cls-mute', '0'); } catch (err) { /* 忽略 */ }
+    }
     try { localStorage.setItem('cls-voice', state.voice ? '1' : '0'); } catch (err) { /* 忽略 */ }
     if (state.voice) speakName('朗读已开启');
+  });
+  $('muteToggle').addEventListener('change', (e) => {
+    state.mute = !!e.target.checked;
+    if (state.mute) {
+      state.voice = false;
+      $('voiceToggle').checked = false;
+      try { localStorage.setItem('cls-voice', '0'); } catch (err) { /* 忽略 */ }
+      if (window.speechSynthesis) {
+        try { window.speechSynthesis.cancel(); } catch (err) { /* 忽略 */ }
+      }
+    }
+    try { localStorage.setItem('cls-mute', state.mute ? '1' : '0'); } catch (err) { /* 忽略 */ }
+    toast(state.mute ? '已开启静音模式，点名不再朗读' : '已关闭静音模式');
   });
 
   // 一轮不重复
@@ -906,6 +928,23 @@ function bindStaticEvents() {
     try { localStorage.setItem('cls-no-repeat', state.noRepeat ? '1' : '0'); } catch (err) { /* 忽略 */ }
     resetStage();
     toast(state.noRepeat ? '已开启一轮不重复' : '已关闭一轮不重复');
+  });
+
+  // 一键重置抽取次数（重复 / 不重复）
+  $('btnResetDraw').addEventListener('click', async () => {
+    const roster = activeRoster();
+    if (!roster) return toast('请先在左侧选择名单');
+    if (state.drawing) return;
+    if (!bridge.classroomResetDraw) return toast('当前版本不支持重置');
+    try {
+      const res = await bridge.classroomResetDraw(roster.id);
+      if (!res || !res.ok) return toast((res && res.error) || '重置失败');
+      await reload();
+      resetStage();
+      toast('已重置抽取次数，重复与不重复模式都已刷新');
+    } catch (e) {
+      toast('重置失败：' + e.message);
+    }
   });
 
   // 投影 / 分组 / 计时

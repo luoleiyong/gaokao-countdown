@@ -1642,7 +1642,13 @@ function drawFromRoster(rosterId, count, options) {
         const filtered = remain.filter((n) => n.id !== roster.lastPickId);
         if (filtered.length) remain = filtered;
       }
-      const hit = weightedPick(remain);
+      // 不重复模式按权重从大到小依次抽出，权重相同时优先抽次数少的
+      remain.sort((a, b) =>
+        (b.weight - a.weight) ||
+        (a.count - b.count) ||
+        String(a.name).localeCompare(String(b.name), 'zh')
+      );
+      const hit = remain[0];
       round.add(hit.id);
       hit.count += 1;
       hit.pickedAt = Date.now();
@@ -2486,6 +2492,17 @@ function wireIpc() {
   });
 
   ipcMain.handle('classroom:draw', (_e, rosterId, count, options) => drawFromRoster(rosterId, count, options));
+
+  // 课堂页一键重置抽取次数（重复 / 不重复共用）
+  ipcMain.handle('classroom:reset-draw', (_e, rosterId) => {
+    const roster = store.classroom.rosters.find((r) => r.id === rosterId);
+    if (!roster) return { ok: false, error: '名单不存在' };
+    roster.names.forEach((n) => { n.count = 0; n.pickedAt = 0; });
+    roster.lastPickId = '';
+    roster.roundIds = [];
+    saveStore();
+    return { ok: true };
+  });
 
   /* 管理员：清空 / 恢复签运簿（误触可回退） */
   ipcMain.handle('classroom:clear-history', () => {

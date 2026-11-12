@@ -73,6 +73,7 @@ contextBridge.exposeInMainWorld('gaokao', {
   classroomUpdateName: (rosterId, nameId, patch) => ipcRenderer.invoke('classroom:update-name', rosterId, nameId, patch),
   classroomRemoveName: (rosterId, nameId) => ipcRenderer.invoke('classroom:remove-name', rosterId, nameId),
   classroomResetCounts: (rosterId) => ipcRenderer.invoke('classroom:reset-counts', rosterId),
+  classroomResetDraw: (rosterId) => ipcRenderer.invoke('classroom:reset-draw', rosterId),
   classroomDraw: (rosterId, count, options) => ipcRenderer.invoke('classroom:draw', rosterId, count, options),
   classroomClearHistory: () => ipcRenderer.invoke('classroom:clear-history'),
   classroomRestoreHistory: () => ipcRenderer.invoke('classroom:restore-history'),

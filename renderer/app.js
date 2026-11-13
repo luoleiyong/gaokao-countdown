@@ -27,11 +27,19 @@ const SKIN_META = [
   { id: 'warm', name: '晨光纸卷', c: ['#efe4cc', '#b07d2b'] },
   { id: 'bamboo', name: '青竹小院', c: ['#dfe9dc', '#6f8a46'] }
 ];
+/* 桌宠台词与动作频率：以当前（慢）为 1 倍，整体缩放各类触发间隔 */
+const PET_FREQ_META = [
+  { id: 'quiet', name: '安静', mult: 3 },
+  { id: 'slow', name: '慢', mult: 1 },
+  { id: 'fast', name: '快', mult: 0.55 },
+  { id: 'ultra', name: '极快', mult: 0.3 }
+];
 
 const state = {
   targetDate: '2027-06-07',
   skin: 'board',
   petScale: 1,
+  petFreq: 'slow',
   autoLaunch: false,
   history: [],
   today: '',
@@ -149,6 +157,7 @@ async function boot() {
   state.targetDate = s.targetDate || '2027-06-07';
   state.skin = s.skin || 'board';
   state.petScale = Number(s.petScale) || 1;
+  state.petFreq = PET_FREQ_META.some((f) => f.id === s.petFreq) ? s.petFreq : 'slow';
   applyPetScaleVar();
   state.autoLaunch = !!s.autoLaunch;
   state.history = Array.isArray(s.history) ? s.history : [];
@@ -180,16 +189,18 @@ async function boot() {
   renderVersion(init.version);
   bindEvents();
   renderSkinGrid();
+  renderPetFreq();
   renderAll();
   tick();
 
-  bridge.onModeChanged((data) => onModeChanged(data));
+  bridge.onModeChanged((data) => { closePetMenu(); onModeChanged(data); });
   bridge.onSkinChanged((data) => {
     state.skin = data.skin;
     applySkin(state.skin);
     renderSkinGrid();
   });
   bridge.onScaleChanged((data) => {
+    closePetMenu();
     state.petScale = Number(data.scale) || state.petScale;
     applyPetScaleVar();
     $('inputScale').value = String(state.petScale);
@@ -511,7 +522,7 @@ const fishState = {
   idleAt: 0, idleBusy: false, idleTimer: null, idleMode: '',
   actionBusy: false, actionVideo: null, actionTimer: null, actionMode: '',
   hwFrames: [], hwLoaded: 0, hwFailed: 0, hwLoading: false, hwReady: false, hwRaf: 0, hwStart: 0, hwCtx: null,
-  hwAction: null, hwActionLoading: false,
+  hwAction: null, hwActionLoading: false, hwActionAt: 0, hwActionBag: [],
   clickAt: 0, reactionTimer: null, videoMode: ''
 };
 
@@ -619,7 +630,7 @@ function fishStopAction(resume) {
   if (resume !== false) {
     const mode = wrap ? wrap.dataset.mode : 'idle';
     fishSyncVideo(mode);
-    fishState.idleAt = Date.now() + (mode === 'idle' ? 22000 + Math.random() * 20000 : 45000 + Math.random() * 35000);
+    fishState.idleAt = Date.now() + petFreqDelay(mode === 'idle' ? 22000 + Math.random() * 20000 : 45000 + Math.random() * 35000);
   }
 }
 
@@ -656,7 +667,7 @@ function fishIdleAction() {
   fishState.idleTimer = setTimeout(() => {
     actor.classList.remove(cls);
     fishState.idleBusy = false;
-    fishState.idleAt = Date.now() + (mode === 'idle' ? 18000 + Math.random() * 18000 : 30000 + Math.random() * 30000);
+    fishState.idleAt = Date.now() + petFreqDelay(mode === 'idle' ? 18000 + Math.random() * 18000 : 30000 + Math.random() * 30000);
   }, 1900);
 }
 
@@ -748,7 +759,27 @@ function fishMaybeHomeworkAction(text) {
       break;
     }
   }
-  if (key) fishLoadHomeworkAction(key);
+  if (key) {
+    // 台词本身命中时也顺延下一次定时动作，避免连续播放
+    fishState.hwActionAt = Date.now() + petFreqDelay(95000 + Math.random() * 45000);
+    fishLoadHomeworkAction(key);
+  }
+}
+
+/* 定时动作按一轮洗牌抽取，保证 7 个动作轮流出现，不会长时间只重复一个 */
+function fishPickHomeworkAction() {
+  if (!fishState.hwActionBag || !fishState.hwActionBag.length) {
+    const bag = HOMEWORK_ACTIONS.map((a) => a.key);
+    for (let i = bag.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = bag[i];
+      bag[i] = bag[j];
+      bag[j] = tmp;
+    }
+    fishState.hwActionBag = bag;
+  }
+  const key = fishState.hwActionBag.pop();
+  return HOMEWORK_ACTIONS.find((a) => a.key === key) || HOMEWORK_ACTIONS[0];
 }
 
 function fishLoadHomeworkAction(key) {
@@ -794,6 +825,23 @@ function fishSyncVideo(mode) {
   else fishStopHwFrames();
 }
 
+/* 写作业台词：通用鼓励 + 设置中勾选科目的知识提醒，科目变化时重新合并 */
+let homeworkLineCache = null;
+let homeworkLineKey = '';
+function homeworkLines() {
+  const key = state.selectedSubjects.join(',');
+  if (homeworkLineCache && homeworkLineKey === key) return homeworkLineCache;
+  homeworkLineKey = key;
+  const extra = [];
+  const table = window.FISH_SUBJECT_LINES || {};
+  state.selectedSubjects.forEach((id) => {
+    const list = Array.isArray(table[id]) ? table[id] : [];
+    list.forEach((line) => { if (line) extra.push(line); });
+  });
+  homeworkLineCache = FISH_CHEER_LINES.concat(extra);
+  return homeworkLineCache;
+}
+
 /* 大肥鱼：上课时沿顶部边框爬行表示课堂进度，放学到家后坐在课桌前写作业 */
 function renderFish() {
   const wrap = $('petFish');
@@ -809,10 +857,10 @@ function renderFish() {
   let phase = '';
   let lines = plan.status === 'empty' ? FISH_IDLE_LINES : FISH_CLASS_LINES;
 
-  if (plan.status === 'done' || plan.status === 'holiday') {
+  if (plan.status === 'done' || plan.status === 'holiday' || plan.status === 'empty') {
     mode = 'homework';
     phase = 'homework-' + dateKey(now);
-    lines = FISH_CHEER_LINES;
+    lines = homeworkLines();
   } else if (first && first.tag === '本节课') {
     const course = first.course;
     const span = Math.max(1, course.end - course.start);
@@ -853,14 +901,14 @@ function renderFish() {
   }
 
   const nowTs = Date.now();
-  const interval = mode === 'homework' ? 150000 : 90000;
+  const interval = petFreqDelay(mode === 'homework' ? 150000 : 90000);
   if (mode !== fishState.idleMode) {
     fishState.idleMode = mode;
     fishState.idleAt = 0;
   }
   if (!fishState.idleBusy) {
     if (!fishState.idleAt) {
-      fishState.idleAt = nowTs + (mode === 'idle' ? 12000 + Math.random() * 10000 : 22000 + Math.random() * 18000);
+      fishState.idleAt = nowTs + petFreqDelay(mode === 'idle' ? 12000 + Math.random() * 10000 : 22000 + Math.random() * 18000);
     } else if (nowTs >= fishState.idleAt) {
       fishIdleAction();
     }
@@ -872,6 +920,24 @@ function renderFish() {
   } else if (nowTs - fishState.spokenAt > interval) {
     fishState.spokenAt = nowTs;
     fishSay(fishPickLine(lines));
+  }
+
+  /* 写作业动作定时出现：按当前频率档位缩放，保证实际使用时能看到动作 */
+  if (mode === 'homework') {
+    if (!fishState.hwReady) {
+      fishState.hwActionAt = 0;
+    } else if (!fishState.hwAction && !fishState.hwActionLoading && !fishState.idleBusy && !fishState.actionBusy) {
+      if (!fishState.hwActionAt) {
+        fishState.hwActionAt = nowTs + petFreqDelay(35000 + Math.random() * 15000);
+      } else if (nowTs >= fishState.hwActionAt) {
+        fishState.hwActionAt = nowTs + petFreqDelay(95000 + Math.random() * 45000);
+        const action = fishPickHomeworkAction();
+        fishState.spokenAt = nowTs;
+        fishSay(action.lines[Math.floor(Math.random() * action.lines.length)]);
+      }
+    }
+  } else {
+    fishState.hwActionAt = 0;
   }
 }
 
@@ -1171,6 +1237,15 @@ function renderVersion(v) {
 function applyPetScaleVar() {
   const scale = Number(state.petScale) || 1;
   document.body.style.setProperty('--pet-scale', String(scale));
+}
+
+/* 桌宠频率：按当前档位缩放间隔，最低 8 秒，避免极快档过于频繁 */
+function petFreqMult() {
+  const meta = PET_FREQ_META.find((f) => f.id === state.petFreq);
+  return meta ? meta.mult : 1;
+}
+function petFreqDelay(base) {
+  return Math.max(8000, Math.round(base * petFreqMult()));
 }
 
 function renderAll() {
@@ -2044,6 +2119,52 @@ function renderSkinGrid() {
   });
 }
 
+/* 桌宠互动频率：四个档位按钮，选中项高亮并同步右上角文字 */
+function renderPetFreq() {
+  const meta = PET_FREQ_META.find((f) => f.id === state.petFreq) || PET_FREQ_META[1];
+  const label = $('petFreqLabel');
+  if (label) label.textContent = meta.name;
+  $$('#petFreqGrid .freq-opt').forEach((btn) => {
+    btn.classList.toggle('on', btn.dataset.freq === state.petFreq);
+  });
+}
+
+/* 桌宠右键菜单：HTML 实现，跟随当前皮肤 */
+function renderPetMenuSkins() {
+  const box = $('petMenuSkins');
+  if (!box) return;
+  box.innerHTML = SKIN_META.map((s) =>
+    `<button data-skin-id="${s.id}" class="${s.id === state.skin ? 'on' : ''}">` +
+    `<span class="dot" style="background:linear-gradient(140deg,${s.c[0]},${s.c[1]})"></span>` +
+    `<span>${s.name}</span></button>`
+  ).join('');
+}
+function openPetMenu(x, y) {
+  const menu = $('petMenu');
+  if (!menu) return;
+  renderPetMenuSkins();
+  $('petMenuSkins').hidden = true;
+  menu.hidden = false;
+  menu.style.left = '0px';
+  menu.style.top = '0px';
+  const w = menu.offsetWidth;
+  const h = menu.offsetHeight;
+  menu.style.left = Math.max(6, Math.min(x, window.innerWidth - w - 6)) + 'px';
+  menu.style.top = Math.max(6, Math.min(y, window.innerHeight - h - 6)) + 'px';
+}
+function clampPetMenu() {
+  const menu = $('petMenu');
+  if (!menu || menu.hidden) return;
+  const r = menu.getBoundingClientRect();
+  if (r.bottom > window.innerHeight - 6) {
+    menu.style.top = Math.max(6, window.innerHeight - r.height - 6) + 'px';
+  }
+}
+function closePetMenu() {
+  const menu = $('petMenu');
+  if (menu) menu.hidden = true;
+}
+
 function setAutoLaunchUI(on) {
   const el = $('switchAutoLaunch');
   el.classList.toggle('on', !!on);
@@ -2370,7 +2491,7 @@ function bindEvents() {
   // 宠物
   $('petView').addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    bridge.petMenu();
+    openPetMenu(e.clientX, e.clientY);
   });
   $$('.pet-actions button').forEach((btn) => {
     btn.addEventListener('click', async (e) => {
@@ -2379,8 +2500,50 @@ function bindEvents() {
       if (act === 'plus') await bridge.changeScale(0.1);
       else if (act === 'minus') await bridge.changeScale(-0.1);
       else if (act === 'panel') await bridge.setPetMode(false);
-      else if (act === 'menu') bridge.petMenu();
+      else if (act === 'menu') {
+        const r = btn.getBoundingClientRect();
+        openPetMenu(r.left - 110, r.bottom + 6);
+      }
     });
+  });
+  $('petMenu').addEventListener('click', async (e) => {
+    const skinBtn = e.target.closest('[data-skin-id]');
+    if (skinBtn) {
+      const id = skinBtn.dataset.skinId;
+      closePetMenu();
+      if (!SKIN_META.some((s) => s.id === id)) return;
+      state.skin = id;
+      applySkin(id);
+      renderSkinGrid();
+      try {
+        await bridge.saveSettings({ skin: id });
+        toast('已切换为「' + SKIN_META.find((s) => s.id === id).name + '」');
+      } catch (err) { /* 忽略 */ }
+      return;
+    }
+    const btn = e.target.closest('[data-menu-act]');
+    if (!btn) return;
+    const act = btn.dataset.menuAct;
+    if (act === 'skin') {
+      const sub = $('petMenuSkins');
+      sub.hidden = !sub.hidden;
+      clampPetMenu();
+      return;
+    }
+    closePetMenu();
+    if (act === 'panel') await bridge.setPetMode(false);
+    else if (act === 'classroom') bridge.openClassroom();
+    else if (act === 'timetable') bridge.openTimetable();
+    else if (act === 'knowledge') bridge.openKnowledge();
+    else if (act === 'plus') await bridge.changeScale(0.1);
+    else if (act === 'minus') await bridge.changeScale(-0.1);
+  });
+  document.addEventListener('click', (e) => {
+    const menu = $('petMenu');
+    if (menu && !menu.hidden && !e.target.closest('#petMenu')) closePetMenu();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closePetMenu();
   });
 
   // 设置
@@ -2588,6 +2751,22 @@ function bindEvents() {
     await bridge.saveSettings({ petScale: v });
     toast('宠物大小已保存');
   });
+  $$('#petFreqGrid .freq-opt').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.freq;
+      if (!PET_FREQ_META.some((f) => f.id === id)) return;
+      state.petFreq = id;
+      renderPetFreq();
+      // 立即按新频率重排下一次台词与动作，不用等旧间隔走完
+      fishState.idleAt = 0;
+      fishState.hwActionAt = 0;
+      fishState.spokenAt = Date.now();
+      try {
+        await bridge.saveSettings({ petFreq: id });
+        toast('互动频率已切换为「' + PET_FREQ_META.find((f) => f.id === id).name + '」');
+      } catch (e) { /* 忽略 */ }
+    });
+  });
   $('authorMail').addEventListener('click', copyAuthorMail);
   $('btnEventsManage').addEventListener('click', openEventsModal);
   $('btnAddEvent').addEventListener('click', addEvent);
@@ -2767,7 +2946,6 @@ function createMockBridge() {
       window.open('knowledge.html', '_blank', 'width=920,height=680');
     },
     closeKnowledge: () => {},
-    petMenu: () => {},
     hideToTray: () => {},
     quit: () => {},
     onModeChanged: () => {},

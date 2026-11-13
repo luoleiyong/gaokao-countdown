@@ -40,6 +40,7 @@ const STORE_DEFAULTS = {
   targetDate: '2027-06-07',
   skin: 'board',
   petScale: 1,
+  petFreq: 'slow',
   autoLaunch: false,
   debugMode: false,
   onboarded: false,
@@ -539,6 +540,7 @@ function loadStore() {
       ? data.pendingCleanup.filter((p) => typeof p === 'string' && p.trim()).slice(0, 8)
       : [];
     merged.pendingInstallUpdate = typeof data.pendingInstallUpdate === 'string' ? data.pendingInstallUpdate : '';
+    merged.petFreq = ['quiet', 'slow', 'fast', 'ultra'].includes(merged.petFreq) ? merged.petFreq : 'slow';
     merged.updateAutoCheck = merged.updateAutoCheck !== false;
     merged.updateAutoDownload = merged.updateAutoDownload !== false;
     merged.events = normalizeEvents(data.events);
@@ -1769,27 +1771,7 @@ function updateTrayMenu() {
   tray.setContextMenu(menu);
 }
 
-function petContextMenu() {
-  const template = [
-    { label: '回到主界面', click: () => applyPetMode(false) },
-    { label: '课堂助手', click: () => openClassroomWindow() },
-    { label: '课程表', click: () => openTimetableView() },
-    { label: '学科知识签屋', click: () => openKnowledgeWindow() },
-    {
-      label: '更换皮肤',
-      submenu: SKINS.map((s) => ({
-        label: s.name + (store.skin === s.id ? ' ✓' : ''),
-        click: () => setSkin(s.id)
-      }))
-    },
-    { label: `放大（${Math.round(petScale * 100)}%）`, click: () => changeScale(0.1) },
-    { label: '缩小', click: () => changeScale(-0.1) },
-    { type: 'separator' },
-    { label: '隐藏到托盘', click: () => { if (win && !win.isDestroyed()) win.hide(); } },
-    { label: '退出程序', click: quitApp }
-  ];
-  if (win && !win.isDestroyed()) Menu.buildFromTemplate(template).popup({ window: win });
-}
+
 
 /* ---------------- IPC ---------------- */
 function wireIpc() {
@@ -1798,6 +1780,7 @@ function wireIpc() {
       targetDate: store.targetDate,
       skin: store.skin,
       petScale,
+      petFreq: store.petFreq,
       autoLaunch: store.autoLaunch,
       history: store.history,
       updateUrl: store.updateUrl,
@@ -1833,6 +1816,9 @@ function wireIpc() {
       petScale = clampScale(patch.petScale);
       store.petScale = petScale;
     }
+    if (typeof patch.petFreq === 'string' && ['quiet', 'slow', 'fast', 'ultra'].includes(patch.petFreq)) {
+      store.petFreq = patch.petFreq;
+    }
     if (typeof patch.weatherCity === 'string') {
       store.weatherCity = patch.weatherCity.trim().slice(0, 60);
       store.weatherCache = null;
@@ -1848,7 +1834,7 @@ function wireIpc() {
     saveStore();
     appendLog('SETTINGS', { targetDate: store.targetDate, petScale });
     return {
-      ok: true, targetDate: store.targetDate, skin: store.skin, petScale,
+      ok: true, targetDate: store.targetDate, skin: store.skin, petScale, petFreq: store.petFreq,
       updateUrl: store.updateUrl, weatherCity: store.weatherCity, selectedSubjects: store.selectedSubjects,
       onboarded: !!store.onboarded,
       updateAutoCheck: !!store.updateAutoCheck,
@@ -2305,7 +2291,6 @@ function wireIpc() {
   });
   ipcMain.on('knowledge:close', () => goHomeView());
 
-  ipcMain.on('pet:menu', petContextMenu);
   ipcMain.on('window:hide', () => {
     if (win && !win.isDestroyed()) win.hide();
     appendLog('WINDOW_HIDE', { source: 'renderer' });

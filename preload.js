@@ -40,7 +40,6 @@ contextBridge.exposeInMainWorld('gaokao', {
   closeClassroom: () => ipcRenderer.send('classroom:close'),
   openTimetable: () => ipcRenderer.invoke('timetable:open'),
   closeTimetable: () => ipcRenderer.send('timetable:close'),
-  petMenu: () => ipcRenderer.send('pet:menu'),
   hideToTray: () => ipcRenderer.send('window:hide'),
   quit: () => ipcRenderer.send('app:quit'),
   onModeChanged: (cb) => ipcRenderer.on('mode:changed', (_e, data) => cb(data)),

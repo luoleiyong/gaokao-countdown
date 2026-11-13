@@ -1272,6 +1272,39 @@ body[data-skin="bamboo"] .pet-day > span{color:var(--gold-deep);text-shadow:0 0 
 }
 .pet-actions button:hover{color:var(--gold);border-color:rgba(217,182,74,.5);background:rgba(217,182,74,.12)}
 
+/* 桌宠右键菜单：使用当前皮肤变量，替代系统白色菜单 */
+.pet-menu{
+  position:fixed;z-index:90;min-width:138px;padding:6px;
+  border-radius:12px;border:1px solid var(--line-strong);
+  background:var(--bg-glass);
+  -webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
+  box-shadow:var(--shadow);
+  -webkit-app-region:no-drag;
+  animation:pet-menu-in .16s ease both;
+}
+@keyframes pet-menu-in{from{opacity:0;transform:translateY(-4px) scale(.98)}to{opacity:1;transform:none}}
+.pet-menu__item{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  width:100%;padding:7px 10px;border-radius:8px;
+  border:none;background:none;
+  font-size:12px;letter-spacing:.06em;color:var(--text);text-align:left;
+  transition:.15s;
+}
+.pet-menu__item:hover{background:var(--gold-soft);color:var(--gold)}
+.pet-menu__item i{font-style:normal;color:var(--faint)}
+.pet-menu__sep{height:1px;margin:5px 6px;background:var(--line)}
+.pet-menu__sub{padding:2px 0 4px}
+.pet-menu__sub button{
+  display:flex;align-items:center;gap:8px;width:100%;
+  padding:6px 10px 6px 20px;border-radius:8px;
+  border:none;background:none;text-align:left;
+  font-size:11.5px;letter-spacing:.04em;color:var(--dim);
+  transition:.15s;
+}
+.pet-menu__sub button:hover{background:var(--gold-soft);color:var(--gold)}
+.pet-menu__sub button.on{color:var(--gold)}
+.pet-menu__sub .dot{width:10px;height:10px;border-radius:3px;flex:none;border:1px solid rgba(255,255,255,.22)}
+
 /* ==========================================================
    模态
    ========================================================== */
@@ -1573,6 +1606,16 @@ body[data-skin="bamboo"] .input{color-scheme:light;background:rgba(255,255,255,.
 .switch.on{background:linear-gradient(160deg,var(--gold),var(--gold-deep));border-color:transparent}
 .switch.on i{left:23px}
 .skin-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.freq-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.freq-opt{
+  padding:9px 4px;border-radius:9px;
+  border:1px solid var(--line);
+  background:rgba(255,255,255,.03);
+  font-size:12px;letter-spacing:.08em;color:var(--dim);
+  transition:.2s;
+}
+.freq-opt:hover{border-color:var(--line-strong);color:var(--text)}
+.freq-opt.on{border-color:var(--gold);color:var(--gold);background:var(--gold-soft)}
 .skin-opt{
   display:flex;align-items:center;gap:9px;
   padding:9px 10px;border-radius:9px;

@@ -473,6 +473,17 @@
         </section>
 
         <section class="setting">
+          <label class="setting__label">桌宠互动频率 <span class="setting__value" id="petFreqLabel">慢</span></label>
+          <div class="freq-grid" id="petFreqGrid">
+            <button class="freq-opt" data-freq="quiet">安静</button>
+            <button class="freq-opt" data-freq="slow">慢</button>
+            <button class="freq-opt" data-freq="fast">快</button>
+            <button class="freq-opt" data-freq="ultra">极快</button>
+          </div>
+          <p class="hint">控制桌宠台词、待机小动作和写作业动作的出现频率，修改后立即生效。</p>
+        </section>
+
+        <section class="setting">
           <label class="setting__label">知识点科目 <span class="setting__value" id="subjectCount">已选 6 / 6</span></label>
           <p class="hint">十门学科中最多选择 6 科（英语、日语分开），知识签只展示所选科目。</p>
           <div class="subject-grid" id="subjectGrid"></div>
@@ -565,6 +576,22 @@
   </div>
 
   <div class="toast" id="toast" hidden></div>
+</div>
+
+<!-- ======================= 桌宠右键菜单（跟随皮肤） ======================= -->
+<div class="pet-menu" id="petMenu" hidden>
+  <button class="pet-menu__item" data-menu-act="panel">回到主界面</button>
+  <button class="pet-menu__item" data-menu-act="classroom">课堂助手</button>
+  <button class="pet-menu__item" data-menu-act="timetable">课程表</button>
+  <button class="pet-menu__item" data-menu-act="knowledge">学科知识签</button>
+  <div class="pet-menu__sep"></div>
+  <button class="pet-menu__item pet-menu__item--sub" data-menu-act="skin">
+    <span>更换皮肤</span><i>›</i>
+  </button>
+  <div class="pet-menu__sub" id="petMenuSkins" hidden></div>
+  <div class="pet-menu__sep"></div>
+  <button class="pet-menu__item" data-menu-act="plus">放大</button>
+  <button class="pet-menu__item" data-menu-act="minus">缩小</button>
 </div>
 <script src="sound.js"></script>
 <script src="solar-terms.js"></script>

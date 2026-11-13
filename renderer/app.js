@@ -1656,7 +1656,16 @@ function updateNotesOpen() {
   return !!modal && !modal.hidden;
 }
 
-function showUpdateNotes() {
+/* 宠物模式下窗口只有 320×428 且不可聚焦，更新弹窗会被裁掉或点不到；
+   需要用户操作的更新提示先切回主界面再显示 */
+async function ensurePanelForUpdate() {
+  if (state.mode !== 'pet') return;
+  try { await bridge.setPetMode(false); } catch (e) { /* 忽略 */ }
+  await wait(150);
+}
+
+async function showUpdateNotes() {
+  await ensurePanelForUpdate();
   const info = state.updateInfo;
   if (!info || !info.ok || !info.hasUpdate) return;
   $('updateNotesVersion').textContent = info.latest || '';
@@ -1734,9 +1743,10 @@ function maybeShowUpdateNotes(force) {
   showUpdateNotes();
 }
 
-function showUpdateReadyDialog() {
+async function showUpdateReadyDialog() {
   const dl = state.updateDownload;
   if (!dl.filePath) return;
+  await ensurePanelForUpdate();
   $('readyVersion').textContent = dl.version || (state.updateInfo && state.updateInfo.latest) || '';
   $('updateReadyModal').hidden = false;
 }

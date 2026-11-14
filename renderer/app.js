@@ -535,7 +535,11 @@ const HOMEWORK_ACTIONS = [
   { key: 'stretch', lines: ['累了就伸个懒腰', '肩膀放松一点', '写不下去就休息三分钟'] },
   { key: 'water', lines: ['喝口水，再继续'] },
   { key: 'eyes', lines: ['眼睛也要休息'] },
+  { key: 'think', lines: ['这道题怎么想不出来', '让我再想想', '这一步卡住了'] },
+  { key: 'ponder', lines: ['先理一理思路', '托腮想一想', '换个角度试试'] },
   { key: 'snack', lines: ['想吃点什么就吃点', '夜宵别吃太撑'] },
+  { key: 'hungry', lines: ['肚子有点饿了', '什么时候开饭', '有点想吃东西了'] },
+  { key: 'crave', lines: ['抽屉里好像还有零食', '偷偷吃一口', '写完这页就吃点'] },
   { key: 'tidy', lines: ['桌面收拾一下心也静了', '书包整理好再睡'] },
   { key: 'window', lines: ['窗外的风替你加油', '今晚的月亮也在陪你'] },
   { key: 'cheer', lines: ['你可以的', '加油，少年', '今天的你也很棒'] }

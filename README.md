@@ -34,7 +34,7 @@
 | **学科知识签** | 十门学科最多选 6 科，主窗口内打开，左上角返回 |
 | **二十四节气签** | 节气当天自动切换，附节气诗句与备考建议 |
 | **签运簿** | 自动记录历史签文，可回看往期 |
-| **桌面宠物** | 贴在桌面层显示倒计时、今日签、天气与课程，可调大小、换皮肤；顶部大肥鱼随课堂进度爬行，放学后坐课桌写作业；上课、课间与写作业时会随机张望、伸懒腰、打哈欠、吃 Token，点头部 / 身体 / 尾巴有不同反应 |
+| **桌面宠物** | 贴在桌面层显示倒计时、今日签、天气与课程，可调大小、换皮肤；顶部大肥鱼随课堂进度爬行，放学后坐课桌写作业；上课、课间与写作业时会随机张望、伸懒腰、打哈欠、吃 Token，写作业时还会思考、托腮、肚子饿、偷吃零食，点头部 / 身体 / 尾巴有不同反应 |
 | **天气详情** | 实时温度、未来三天、逐小时预报与出行建议，10 分钟自动刷新 |
 | **桌宠课程提醒** | 课程区域加大字号与卡片美化，按时间显示本节课与接下来的课程（最多 3 节）；没有课程或当天结束时显示同一句鼓励文案 |
 | **随机点名** | 多名单管理，支持 txt / csv / xlsx / xls 拖拽导入，可一次抽多人；权重越高越容易抽到；支持朗读姓名与静音模式（互斥） |
@@ -164,12 +164,14 @@ npm start
 
 - **上课时**：播放 AI 生成的 Q 版大肥鱼奔跑动画（透明背景 WebM），沿顶部边框从左向右移动，位置对应本节课的进度，跑到最右边时刚好下课；下一节课开始后重新从左边出发。偶尔会停下来播放伸懒腰、打哈欠或吃 Token 的完整动画，结束后继续跑。动画未加载时自动回退为静态立绘 + CSS 跑步。同时冒出学生时代的碎碎念气泡，内置 250+ 条。
 - **课间 / 还没上课**：播放参考项目的待机呼吸动画，并随机触发伸懒腰、打哈欠、吃 Token 的真实动画片段，每段约 10 秒；说完台词自动回落到待机呼吸。
-- **今日课程结束后**：移动到顶部中间，播放 AI 生成的写作业逐帧动画，坐在小课桌前写字；气泡说到「伸懒腰、喝水、揉眼睛、吃零食、收拾桌面、看窗外、打气」等台词时，会播放对应的动作，播完继续写作业。气泡改为鼓励内容，内置 120 条，每隔几分钟换一句。
+- **今日课程结束后**：移动到顶部中间，播放 AI 生成的写作业逐帧动画，坐在小课桌前写字；气泡说到「伸懒腰、喝水、揉眼睛、思考、托腮、吃零食、肚子饿、收拾桌面、看窗外、打气」等台词时，会播放对应的动作，播完继续写作业。气泡改为鼓励内容，内置 150+ 条，并按设置中勾选的科目补充知识点提醒，每隔几分钟换一句。
 - **互动**：点鱼的头、身体或尾巴会触发不同反应——摸头、戳一戳、碰尾巴各有专属小动画和台词（各 30 条），带 1.2 秒冷却，不会连点刷屏；台词按乱序抽完再重新洗牌，一轮内不重复。
 - 气泡显示约 9 秒后自动收起，不会一直挡住界面。
 - **整体随缩放变化**：调整宠物大小时，倒计时、签文、课程文字、大肥鱼和气泡会一起放大或缩小；签文区域已收紧，减少上下空白，卡片更紧凑。
 
-实现方式：角色素材为 `renderer/assets/feiyu-body.png` 全身立绘、`renderer/assets/feiyu-run.webm` 跑步动画（VP9 带 alpha 通道，24fps，174×200，2 秒无缝循环）、写作业逐帧动画（`renderer/assets/hw/` 下 169 张无损 WebP，24fps，206×200，由 canvas 播放）、写作业互动动作（`renderer/assets/hwact/` 下 7 组、每组 121 张无损 WebP），以及待机用的 `feiyu-idle.webm`、`feiyu-stretch.webm`、`feiyu-yawn.webm`、`feiyu-eat.webm`（24fps，177×200）；`renderer/fish.js` 保存台词，`renderer/app.js` 的 `renderFish()` 每秒根据 `coursePlan()` 计算当前状态与课堂进度，切换视频、更新鱼的位置与气泡；写作业用逐帧 canvas 避免视频 alpha 边缘的绿色闪烁，台词命中动作时在 canvas 上播放对应片段，上课和课间按参考项目的节奏播放完整待机动画片段，不依赖外部网络或运行时插件。
+实现方式：角色素材为 `renderer/assets/feiyu-body.png` 全身立绘、`renderer/assets/feiyu-run.webm` 跑步动画（VP9 带 alpha 通道，24fps，174×200，2 秒无缝循环）、写作业逐帧动画（`renderer/assets/hw/` 下 169 张无损 WebP，24fps，206×200，由 canvas 播放）、写作业互动动作（`renderer/assets/hwact/` 下 11 组、每组 121 张无损 WebP），以及待机用的 `feiyu-idle.webm`、`feiyu-stretch.webm`、`feiyu-yawn.webm`、`feiyu-eat.webm`（24fps，177×200）；`renderer/fish.js` 保存台词，`renderer/app.js` 的 `renderFish()` 每秒根据 `coursePlan()` 计算当前状态与课堂进度，切换视频、更新鱼的位置与气泡；写作业用逐帧 canvas 避免视频 alpha 边缘的绿色闪烁，台词命中动作时在 canvas 上播放对应片段，上课和课间按参考项目的节奏播放完整待机动画片段，不依赖外部网络或运行时插件。
+
+动作素材的来源、抠像参数、逐帧方案、台词绑定与完整研究过程见 **[docs/character-actions.md](docs/character-actions.md)**。
 
 > 大肥鱼形象参考并使用 [TreapGoGo/deepseek-whale-girl](https://github.com/TreapGoGo/deepseek-whale-girl)（MIT License）中的鲸鱼娘全身立绘素材；待机呼吸、伸懒腰、打哈欠、吃 Token 的动画素材来自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)（MIT License），经 [QCYTSN/dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu) 整理；跑步与写作业动画通过 AI 视频生成后抠像压缩，气泡与交互为本项目实现。
 
@@ -247,7 +249,7 @@ gaokao-countdown/
 │   │   ├── feiyu-body.png  大肥鱼全身立绘素材（MIT，来自 deepseek-whale-girl）
 │   │   ├── feiyu-run.webm  AI 生成的奔跑动画（VP9 alpha，2 秒循环）
 │   │   ├── hw/            写作业逐帧动画（169 张无损 WebP，24fps）
-│   │   ├── hwact/         写作业互动动作（7 组 × 121 张无损 WebP）
+│   │   ├── hwact/         写作业互动动作（11 组 × 121 张无损 WebP）
 │   │   ├── feiyu-idle.webm  待机呼吸动画（MIT，来自 dsh-pet）
 │   │   ├── feiyu-stretch.webm  伸懒腰动画（MIT，来自 dsh-pet）
 │   │   ├── feiyu-yawn.webm  打哈欠动画（MIT，来自 dsh-pet）
@@ -257,6 +259,8 @@ gaokao-countdown/
 │   ├── solar-terms.js      二十四节气
 │   └── sound.js            抽签与点名音效
 ├── update/version.json     版本清单（CDN 兜底更新源）
+├── docs/
+│   └── character-actions.md  桌宠动作素材与研究过程
 ├── build/
 │   ├── icon.png            应用图标
 │   └── license.txt         安装包用户协议

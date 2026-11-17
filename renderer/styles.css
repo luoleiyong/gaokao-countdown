@@ -959,7 +959,7 @@ body[data-skin="bamboo"] .today-card__foot span[data-all="1"]{color:var(--gold-d
    ========================================================== */
 .pet-view{
   position:relative;width:100%;height:100%;
-  padding-top:74px;
+  padding-top:93.84px;
   zoom:var(--pet-scale,1);
   display:flex;flex-direction:column;align-items:center;
   -webkit-app-region:drag;
@@ -970,7 +970,7 @@ body[data-skin="bamboo"] .today-card__foot span[data-all="1"]{color:var(--gold-d
 
 /* 边框外的大肥鱼：上课时跑步当进度条，放学后坐课桌写作业 */
 .pet-fish{
-  position:absolute;top:0;left:0;right:0;height:74px;
+  position:absolute;top:0;left:0;right:0;height:93.84px;
   z-index:9;pointer-events:none;
 }
 .pet-fish__track{
@@ -983,22 +983,22 @@ body[data-skin="bamboo"] .today-card__foot span[data-all="1"]{color:var(--gold-d
   transition:width 1s linear;
 }
 .pet-fish__actor{
-  position:absolute;left:4px;bottom:0;width:56px;height:64px;
+  position:absolute;left:4px;bottom:0;width:56px;height:83.84px;
   transition:left 1s linear;
   filter:drop-shadow(0 4px 5px rgba(0,0,0,.38));
 }
 .pet-fish__sprite{
-  width:100%;height:100%;object-fit:contain;object-position:bottom center;
+  width:100%;height:64px;object-fit:contain;object-position:bottom center;
   transform-origin:50% 92%;
   user-select:none;-webkit-user-drag:none;
 }
 .pet-fish__run{
-  position:absolute;inset:0;width:100%;height:100%;
+  position:absolute;top:0;left:0;width:100%;height:64px;
   object-fit:contain;object-position:bottom center;
   opacity:0;transition:opacity .18s;pointer-events:none;
 }
 .pet-fish__homework{
-  position:absolute;left:50%;bottom:0;height:100%;width:auto;max-width:none;
+  position:absolute;left:50%;bottom:0;height:64px;width:auto;max-width:none;
   transform:translateX(-50%);
   opacity:0;transition:opacity .18s;pointer-events:none;
 }
@@ -1009,7 +1009,7 @@ body[data-skin="bamboo"] .today-card__foot span[data-all="1"]{color:var(--gold-d
 }
 .pet-fish__idle,
 .pet-fish__clip{
-  position:absolute;left:50%;bottom:0;height:100%;width:auto;max-width:none;
+  position:absolute;left:50%;top:0;height:64px;width:auto;max-width:none;
   transform:translateX(-50%);
   opacity:0;transition:opacity .18s;pointer-events:none;
 }
@@ -1045,6 +1045,10 @@ body[data-skin="bamboo"] .today-card__foot span[data-all="1"]{color:var(--gold-d
 .pet-fish__hit--head{left:16px;top:2px;width:34px;height:30px}
 .pet-fish__hit--body{left:18px;top:32px;width:26px;height:22px}
 .pet-fish__hit--tail{left:0;top:40px;width:20px;height:20px}
+/* 写作业时角色贴着卡片顶部，热区随角色下移 */
+.pet-fish[data-mode="homework"] .pet-fish__hit--head{top:21.84px}
+.pet-fish[data-mode="homework"] .pet-fish__hit--body{top:51.84px}
+.pet-fish[data-mode="homework"] .pet-fish__hit--tail{top:59.84px}
 .pet-fish__actor.is-pet-head{animation:fish-pat .6s ease}
 .pet-fish__actor.is-pet-body{animation:fish-poke .55s ease}
 .pet-fish__actor.is-pet-tail{animation:fish-tail .6s ease}
@@ -1114,12 +1118,12 @@ body[data-skin="bamboo"] .today-card__foot span[data-all="1"]{color:var(--gold-d
   position:absolute;left:-12px;bottom:2px;width:22px;height:12px;
   opacity:0;transition:opacity .2s;
 }
-.pet-fish[data-mode="crawl"] .pet-fish__dust{opacity:1}
+.pet-fish[data-mode="crawl"] .pet-fish__dust{opacity:1;bottom:21.84px}
 .pet-fish__speed{
   position:absolute;left:-20px;bottom:14px;width:24px;height:30px;
   opacity:0;transition:opacity .2s;
 }
-.pet-fish[data-mode="crawl"] .pet-fish__speed{opacity:.85}
+.pet-fish[data-mode="crawl"] .pet-fish__speed{opacity:.85;bottom:33.84px}
 .pet-fish__speed i{
   position:absolute;height:2px;border-radius:1px;
   background:linear-gradient(90deg,rgba(217,182,74,0),rgba(217,182,74,.85));
@@ -1155,7 +1159,7 @@ body[data-skin="bamboo"] .today-card__foot span[data-all="1"]{color:var(--gold-d
   50%{transform:translateY(-1px) rotate(1.5deg)}
 }
 .pet-fish__bubble{
-  position:absolute;top:74px;left:10px;z-index:2;
+  position:absolute;top:93.84px;left:10px;z-index:2;
   max-width:190px;padding:7px 10px;border-radius:10px;
   border:1px solid rgba(217,182,74,.45);
   background:linear-gradient(160deg,rgba(34,47,40,.97),rgba(19,29,25,.97));
@@ -1920,4 +1924,3 @@ body[data-skin="bamboo"] .logs{background:rgba(255,255,255,.55);color:var(--dim)
 .event-manage-row span{display:flex;flex-direction:column;gap:2px;min-width:0}
 .event-manage-row b{font-size:13px;font-weight:500;color:var(--text)}
 .event-manage-row i{font-style:normal;font-size:10.5px;color:var(--faint)}
-

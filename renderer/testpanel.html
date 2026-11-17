@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>高考倒计时 · 测试面板</title>
+<link rel="stylesheet" href="testpanel-window.css" />
+</head>
+<body>
+<header class="tp-head">
+  <div class="tp-title">
+    <b>测试面板</b>
+    <span id="tpVer">test</span>
+  </div>
+  <div class="tp-head-actions">
+    <button id="tpShowMain" title="显示主界面">主界面</button>
+    <button id="tpClose" title="关闭测试面板">×</button>
+  </div>
+</header>
+
+<main class="tp-body" id="tpBody">
+  <section>
+    <h4>主界面 / 抽签</h4>
+    <div class="tp-grid">
+      <button data-test="draw">摇签流程</button>
+      <button data-test="firstdraw">首次抽签</button>
+      <button data-test="debugdraw">调试预览首抽</button>
+      <button data-test="term">节气签</button>
+      <button data-test="weather">天气详情</button>
+      <button data-test="events">重要日子</button>
+      <button data-test="savecard">保存签卡</button>
+      <button data-test="history">展开签运簿</button>
+      <button data-test="egg">全签彩蛋</button>
+    </div>
+  </section>
+
+  <section>
+    <h4>桌面宠物</h4>
+    <div class="tp-grid">
+      <button data-test="pet">进入宠物</button>
+      <button data-test="panel">回主界面</button>
+      <button data-test="petmenu">右键菜单</button>
+    </div>
+    <div class="tp-grid">
+      <button data-test="act:stretch">伸懒腰</button>
+      <button data-test="act:water">喝水</button>
+      <button data-test="act:eyes">揉眼</button>
+      <button data-test="act:think">思考</button>
+      <button data-test="act:ponder">托腮</button>
+      <button data-test="act:snack">吃零食</button>
+      <button data-test="act:hungry">肚子饿</button>
+      <button data-test="act:crave">偷吃</button>
+      <button data-test="act:tidy">收拾</button>
+      <button data-test="act:window">看窗外</button>
+      <button data-test="act:cheer">打气</button>
+    </div>
+    <div class="tp-grid">
+      <button data-test="clip:petFishStretch">待机伸懒腰</button>
+      <button data-test="clip:petFishYawn">打哈欠</button>
+      <button data-test="clip:petFishEat">吃 Token</button>
+      <button data-test="touch:head">摸头</button>
+      <button data-test="touch:body">戳一戳</button>
+      <button data-test="touch:tail">碰尾巴</button>
+    </div>
+    <div class="tp-grid">
+      <button data-test="freq:quiet">安静</button>
+      <button data-test="freq:slow">慢</button>
+      <button data-test="freq:fast">快</button>
+      <button data-test="freq:ultra">极快</button>
+    </div>
+  </section>
+
+  <section>
+    <h4>独立窗口</h4>
+    <div class="tp-grid">
+      <button data-test="timetable">课程表</button>
+      <button data-test="classroom">课堂助手</button>
+      <button data-test="knowledge">学科知识签</button>
+      <button data-test="admin">管理员模式</button>
+      <button data-test="debugtrigger">课堂调试抽签</button>
+    </div>
+  </section>
+
+  <section>
+    <h4>设置 / 更新</h4>
+    <div class="tp-grid">
+      <button data-test="settings">打开设置</button>
+      <button data-test="skin:board">黑板</button>
+      <button data-test="skin:starry">星河</button>
+      <button data-test="skin:warm">晨光</button>
+      <button data-test="skin:bamboo">青竹</button>
+      <button data-test="updatenotes">更新公告</button>
+      <button data-test="updateready">下载完成弹窗</button>
+      <button data-test="checkupdate">检查更新</button>
+    </div>
+  </section>
+
+  <section>
+    <h4>工具</h4>
+    <div class="tp-grid">
+      <button data-test="closeall">关闭所有弹窗</button>
+      <button data-test="resetegg">重置彩蛋记录</button>
+      <button data-test="openfolder">数据目录</button>
+    </div>
+  </section>
+</main>
+
+<footer class="tp-foot">
+  <div id="tpLog">面板已就绪，点击按钮即可触发主程序功能。</div>
+  <div class="tp-keys">宠物内 Alt+1~0 / - 动作 · Alt+I 待机 · Alt+H/B/T 摸头/戳身/碰尾 · Alt+P 回面板</div>
+</footer>
+
+<script src="testpanel-window.js"></script>
+</body>
+</html>

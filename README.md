@@ -164,12 +164,12 @@ npm start
 
 - **上课时**：播放 AI 生成的 Q 版大肥鱼奔跑动画（透明背景 WebM），沿顶部边框从左向右移动，位置对应本节课的进度，跑到最右边时刚好下课；下一节课开始后重新从左边出发。偶尔会停下来播放伸懒腰、打哈欠或吃 Token 的完整动画，结束后继续跑。动画未加载时自动回退为静态立绘 + CSS 跑步。同时冒出学生时代的碎碎念气泡，内置 250+ 条。
 - **课间 / 还没上课**：播放参考项目的待机呼吸动画，并随机触发伸懒腰、打哈欠、吃 Token 的真实动画片段，每段约 10 秒；说完台词自动回落到待机呼吸。
-- **今日课程结束后**：移动到顶部中间，播放 AI 生成的写作业逐帧动画，坐在小课桌前写字；气泡说到「伸懒腰、喝水、揉眼睛、思考、托腮、吃零食、肚子饿、收拾桌面、看窗外、打气」等台词时，会播放对应的动作，播完继续写作业。气泡改为鼓励内容，内置 150+ 条，并按设置中勾选的科目补充知识点提醒，每隔几分钟换一句。
+- **今日课程结束后**：移动到顶部中间，播放 AI 生成的写作业逐帧动画，坐在小课桌前写字；气泡说到「伸懒腰、喝水、揉眼睛、思考、托腮、吃零食、肚子饿、收拾桌面、看窗外、打气」等台词时，会播放对应的动作（每段约 6 秒），播完继续写作业。所有动作的角色大小与写作业循环一致，切换时不跳变。气泡改为鼓励内容，内置 150+ 条，并按设置中勾选的科目补充知识点提醒，每隔几分钟换一句。
 - **互动**：点鱼的头、身体或尾巴会触发不同反应——摸头、戳一戳、碰尾巴各有专属小动画和台词（各 30 条），带 1.2 秒冷却，不会连点刷屏；台词按乱序抽完再重新洗牌，一轮内不重复。
 - 气泡显示约 9 秒后自动收起，不会一直挡住界面。
 - **整体随缩放变化**：调整宠物大小时，倒计时、签文、课程文字、大肥鱼和气泡会一起放大或缩小；签文区域已收紧，减少上下空白，卡片更紧凑。
 
-实现方式：角色素材为 `renderer/assets/feiyu-body.png` 全身立绘、`renderer/assets/feiyu-run.webm` 跑步动画（VP9 带 alpha 通道，24fps，174×200，2 秒无缝循环）、写作业逐帧动画（`renderer/assets/hw/` 下 169 张无损 WebP，24fps，206×200，由 canvas 播放）、写作业互动动作（`renderer/assets/hwact/` 下 11 组、每组 121 张无损 WebP），以及待机用的 `feiyu-idle.webm`、`feiyu-stretch.webm`、`feiyu-yawn.webm`、`feiyu-eat.webm`（24fps，177×200）；`renderer/fish.js` 保存台词，`renderer/app.js` 的 `renderFish()` 每秒根据 `coursePlan()` 计算当前状态与课堂进度，切换视频、更新鱼的位置与气泡；写作业用逐帧 canvas 避免视频 alpha 边缘的绿色闪烁，台词命中动作时在 canvas 上播放对应片段，上课和课间按参考项目的节奏播放完整待机动画片段，不依赖外部网络或运行时插件。
+实现方式：角色素材为 `renderer/assets/feiyu-body.png` 全身立绘、`renderer/assets/feiyu-run.webm` 跑步动画（VP9 带 alpha 通道，24fps，174×200，2 秒无缝循环）、写作业逐帧动画（`renderer/assets/hw/` 下 169 张无损 WebP，24fps，270×262，由 canvas 播放）、写作业互动动作（`renderer/assets/hwact/` 下 11 组、每组 121 张无损 WebP，270×262，20fps 播放），以及待机用的 `feiyu-idle.webm`、`feiyu-stretch.webm`、`feiyu-yawn.webm`、`feiyu-eat.webm`（24fps，177×200）；`renderer/fish.js` 保存台词，`renderer/app.js` 的 `renderFish()` 每秒根据 `coursePlan()` 计算当前状态与课堂进度，切换视频、更新鱼的位置与气泡；写作业用逐帧 canvas 避免视频 alpha 边缘的绿色闪烁，台词命中动作时在 canvas 上播放对应片段，上课和课间按参考项目的节奏播放完整待机动画片段，不依赖外部网络或运行时插件。
 
 动作素材的来源、抠像参数、逐帧方案、台词绑定与完整研究过程见 **[docs/character-actions.md](docs/character-actions.md)**。
 
@@ -248,8 +248,8 @@ gaokao-countdown/
 │   ├── assets/
 │   │   ├── feiyu-body.png  大肥鱼全身立绘素材（MIT，来自 deepseek-whale-girl）
 │   │   ├── feiyu-run.webm  AI 生成的奔跑动画（VP9 alpha，2 秒循环）
-│   │   ├── hw/            写作业逐帧动画（169 张无损 WebP，24fps）
-│   │   ├── hwact/         写作业互动动作（11 组 × 121 张无损 WebP）
+│   │   ├── hw/            写作业逐帧动画（169 张无损 WebP，24fps，270×262）
+│   │   ├── hwact/         写作业互动动作（11 组 × 121 张无损 WebP，20fps，270×262）
 │   │   ├── feiyu-idle.webm  待机呼吸动画（MIT，来自 dsh-pet）
 │   │   ├── feiyu-stretch.webm  伸懒腰动画（MIT，来自 dsh-pet）
 │   │   ├── feiyu-yawn.webm  打哈欠动画（MIT，来自 dsh-pet）
@@ -260,7 +260,9 @@ gaokao-countdown/
 │   └── sound.js            抽签与点名音效
 ├── update/version.json     版本清单（CDN 兜底更新源）
 ├── docs/
-│   └── character-actions.md  桌宠动作素材与研究过程
+│   ├── character-actions.md  桌宠动作素材与研究过程
+│   ├── development-workflow.md  开发与版本发布流程
+│   └── test-build.md  测试版与测试面板说明
 ├── build/
 │   ├── icon.png            应用图标
 │   └── license.txt         安装包用户协议
@@ -286,6 +288,10 @@ npx electron-builder --win portable nsis
 
 - `GaokaoCountdown-*-portable.exe`：便携版
 - `GaokaoCountdown-Setup-*.exe`：NSIS 安装包
+
+完整的版本发布流程（版本号、更新公告、构建、Release、安装包上传、CDN 刷新与校验）见 **[docs/development-workflow.md](docs/development-workflow.md)**。
+
+本地测试版（2.1.0-test，独立置顶的测试面板，可一键触发全部功能与彩蛋）的构建与使用见 **[docs/test-build.md](docs/test-build.md)**。
 
 ## 常见问题
 

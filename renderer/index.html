@@ -36,6 +36,7 @@
             <path d="M14.8 8.4c.6-.8.8-1.9.3-2.6-.5-.7-1.5-.6-2.3.3-.5.6-.7 1.4-.5 2.1"/>
           </svg>
         </button>
+        <button class="win-btn" id="btnTest" title="测试面板" hidden>测试</button>
         <button class="win-btn win-btn--settings" id="btnSettings" title="设置">设置<span class="update-dot" id="updateDot" hidden></span></button>
         <button class="win-btn" id="btnHide" title="隐藏到托盘，右键托盘图标可退出">—</button>
         <button class="win-btn win-btn--close" id="btnClose" title="收进桌面宠物">×</button>
@@ -161,7 +162,7 @@
         <img class="pet-fish__sprite" src="assets/feiyu-body.png" alt="" draggable="false" />
         <video class="pet-fish__run" id="petFishRun" src="assets/feiyu-run.webm" muted playsinline loop preload="auto"></video>
         <video class="pet-fish__homework" id="petFishHomework" src="assets/feiyu-homework.webm" muted playsinline loop preload="auto"></video>
-        <canvas class="pet-fish__hwframes" id="petFishHwFrames" width="206" height="200"></canvas>
+        <canvas class="pet-fish__hwframes" id="petFishHwFrames" width="270" height="262"></canvas>
         <video class="pet-fish__idle" id="petFishIdle" src="assets/feiyu-idle.webm" muted playsinline loop preload="auto"></video>
         <video class="pet-fish__clip pet-fish__clip--stretch" id="petFishStretch" src="assets/feiyu-stretch.webm" muted playsinline preload="auto"></video>
         <video class="pet-fish__clip pet-fish__clip--yawn" id="petFishYawn" src="assets/feiyu-yawn.webm" muted playsinline preload="auto"></video>
@@ -593,11 +594,14 @@
   <button class="pet-menu__item" data-menu-act="plus">放大</button>
   <button class="pet-menu__item" data-menu-act="minus">缩小</button>
 </div>
+
+
 <script src="sound.js"></script>
 <script src="solar-terms.js"></script>
 <script src="signs.js"></script>
 <script src="mottos.js"></script>
 <script src="fish.js"></script>
 <script src="app.js"></script>
+<script src="testpanel.js"></script>
 </body>
 </html>

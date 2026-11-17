@@ -63,6 +63,7 @@ const STORE_DEFAULTS = {
 };
 
 let win = null;
+let testWin = null;
 let currentView = 'home';
 let panelViewSnapshot = null;
 let classroomUnlocked = false;
@@ -1176,6 +1177,53 @@ function setAutoLaunchEnabled(on) {
   }
 }
 
+/* ---------------- 测试版控制面板 ---------------- */
+function isTestBuildApp() {
+  return /-test/i.test(app.getVersion()) || process.argv.includes('--test-mode');
+}
+
+function openTestPanel() {
+  if (!isTestBuildApp()) return { ok: false, error: '仅测试版可用' };
+  if (testWin && !testWin.isDestroyed()) {
+    if (testWin.isMinimized()) testWin.restore();
+    testWin.show();
+    testWin.focus();
+    return { ok: true };
+  }
+  const area = screen.getPrimaryDisplay().workArea;
+  const w = 380;
+  const h = Math.min(780, area.height - 80);
+  testWin = new BrowserWindow({
+    width: w,
+    height: h,
+    minWidth: 340,
+    minHeight: 480,
+    x: Math.max(area.x, area.x + area.width - w - 18),
+    y: area.y + 40,
+    frame: false,
+    resizable: true,
+    alwaysOnTop: true,
+    skipTaskbar: false,
+    show: false,
+    backgroundColor: '#0e1318',
+    title: '高考倒计时 · 测试面板',
+    icon: path.join(__dirname, 'build', 'icon.png'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      spellcheck: false
+    }
+  });
+  testWin.setMenuBarVisibility(false);
+  try { testWin.setAlwaysOnTop(true, 'floating'); } catch { /* 旧系统忽略 */ }
+  testWin.loadFile(path.join(__dirname, 'renderer', 'testpanel.html'));
+  testWin.once('ready-to-show', () => testWin.show());
+  testWin.on('closed', () => { testWin = null; });
+  return { ok: true };
+}
+
 /* ---------------- 窗口 ---------------- */
 function createWindow() {
   const area = screen.getPrimaryDisplay().workArea;
@@ -1218,7 +1266,10 @@ function createWindow() {
 
   win.setMenuBarVisibility(false);
   try { win.setBackgroundMaterial('none'); } catch { /* 旧系统忽略 */ }
-  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  win.loadFile(
+    path.join(__dirname, 'renderer', 'index.html'),
+    isTestBuildApp() ? { query: { test: '1' } } : undefined
+  );
   win.once('ready-to-show', () => {
     disableDwmShadow(win);
     // 开机自启与手动启动统一进入主界面，避免宠物模式与主界面来回切换
@@ -1257,10 +1308,10 @@ function rememberBounds() {
 }
 
 function petSize(scale) {
-  /* 卡片 334 + 顶部 74 的大肥鱼区域，加上外层 20px 留白；整体随缩放一起放大 */
+  /* 卡片 334 + 顶部 93.84 的大肥鱼区域，加上外层 20px 留白；整体随缩放一起放大 */
   return {
     width: Math.round(300 * scale + 20),
-    height: Math.round((334 + 74) * scale + 20)
+    height: Math.round((334 + 93.84) * scale + 20)
   };
 }
 
@@ -2547,6 +2598,24 @@ function wireIpc() {
     }, 260);
     return { ok: true };
   });
+
+  /* 测试版控制面板：独立窗口，命令转发给主界面执行 */
+  ipcMain.handle('test:open', () => openTestPanel());
+  ipcMain.handle('test:close', () => {
+    if (testWin && !testWin.isDestroyed()) testWin.close();
+    return { ok: true };
+  });
+  ipcMain.handle('test:run', (_e, action) => {
+    if (!isTestBuildApp()) return { ok: false, error: '仅测试版可用' };
+    const name = String(action || '');
+    if (name === 'showmain') {
+      showPanel();
+      return { ok: true };
+    }
+    if (!win || win.isDestroyed()) return { ok: false, error: '主窗口不可用' };
+    win.webContents.send('test:action', name);
+    return { ok: true };
+  });
 }
 
 /* ---------------- 全局快捷键 ---------------- */
@@ -2618,6 +2687,9 @@ if (!gotLock) {
     createTray();
     wireIpc();
     registerGlobalShortcuts();
+    if (isTestBuildApp()) {
+      setTimeout(() => openTestPanel(), 1600);
+    }
     if (process.argv.includes('--classroom')) {
       setTimeout(() => openClassroomWindow(), 500);
     }
@@ -2634,6 +2706,7 @@ if (!gotLock) {
 
   app.on('will-quit', () => {
     try { globalShortcut.unregisterAll(); } catch { /* 忽略 */ }
+    try { if (testWin && !testWin.isDestroyed()) testWin.destroy(); } catch { /* 忽略 */ }
   });
 
   app.on('before-quit', () => {

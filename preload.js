@@ -80,5 +80,11 @@ contextBridge.exposeInMainWorld('gaokao', {
   classroomParseSheet: (filePath) => ipcRenderer.invoke('classroom:parse-sheet', filePath),
   adminSetDebug: (on) => ipcRenderer.invoke('admin:set-debug', on),
   adminTriggerDraw: () => ipcRenderer.invoke('admin:trigger-draw'),
-  onAdminOpen: (cb) => ipcRenderer.on('admin:open', () => cb())
+  onAdminOpen: (cb) => ipcRenderer.on('admin:open', () => cb()),
+
+  /* 测试版控制面板 */
+  openTestPanel: () => ipcRenderer.invoke('test:open'),
+  closeTestPanel: () => ipcRenderer.invoke('test:close'),
+  testRun: (action) => ipcRenderer.invoke('test:run', action),
+  onTestAction: (cb) => ipcRenderer.on('test:action', (_e, action) => cb(action))
 });

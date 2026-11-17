@@ -522,13 +522,15 @@ const fishState = {
   idleAt: 0, idleBusy: false, idleTimer: null, idleMode: '',
   actionBusy: false, actionVideo: null, actionTimer: null, actionMode: '',
   hwFrames: [], hwLoaded: 0, hwFailed: 0, hwLoading: false, hwReady: false, hwRaf: 0, hwStart: 0, hwCtx: null,
-  hwAction: null, hwActionLoading: false, hwActionAt: 0, hwActionBag: [],
+  hwAction: null, hwActionLoading: false, hwActionAt: 0, hwActionBag: [], hwLastTs: 0,
   clickAt: 0, reactionTimer: null, videoMode: ''
 };
 
 const HW_FRAME_COUNT = 169;
 const HW_FPS = 24;
 const HW_ACTION_FRAMES = 121;
+/* 互动动作统一放慢到 20fps，整段约 6 秒，避免动作一闪而过 */
+const HW_ACTION_FPS = 20;
 
 /* 放学写作业：气泡台词命中时播放对应的动作片段 */
 const HOMEWORK_ACTIONS = [
@@ -711,17 +713,25 @@ function fishStartHwFrames() {
   if (!ctx) return;
   fishState.hwCtx = ctx;
   fishState.hwStart = 0;
+  fishState.hwLastTs = 0;
   const tick = (ts) => {
     const wrap = $('petFish');
     if (!fishState.hwReady || !wrap || wrap.dataset.mode !== 'homework' || wrap.dataset.action === 'on') {
       fishState.hwRaf = 0;
       return;
     }
+    /* 窗口被遮挡/最小化时 rAF 会暂停，恢复后跳过间隔而不是把动作直接播完 */
+    if (fishState.hwLastTs && ts - fishState.hwLastTs > 500) {
+      const gap = ts - fishState.hwLastTs;
+      if (fishState.hwAction) fishState.hwAction.start += gap;
+      if (fishState.hwStart) fishState.hwStart += gap;
+    }
+    fishState.hwLastTs = ts;
     let img = null;
     if (fishState.hwAction) {
       const act = fishState.hwAction;
       if (!act.start) act.start = ts;
-      const idx = Math.floor(((ts - act.start) / 1000) * HW_FPS);
+      const idx = Math.floor(((ts - act.start) / 1000) * HW_ACTION_FPS);
       if (idx >= act.count) {
         fishState.hwAction = null;
         fishState.hwStart = 0;
@@ -745,6 +755,7 @@ function fishStopHwFrames() {
   if (fishState.hwRaf) cancelAnimationFrame(fishState.hwRaf);
   fishState.hwRaf = 0;
   fishState.hwStart = 0;
+  fishState.hwLastTs = 0;
   fishState.hwAction = null;
   const canvas = $('petFishHwFrames');
   if (!canvas || !fishState.hwCtx) return;

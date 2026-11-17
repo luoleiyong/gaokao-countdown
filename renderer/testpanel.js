@@ -223,16 +223,6 @@
   function start() {
     if (started) return;
     started = true;
-    const btn = $('btnTest');
-    if (btn) {
-      btn.hidden = false;
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Promise.resolve(bridge.openTestPanel()).then((r) => {
-          if (!r || !r.ok) ok((r && r.error) || '测试面板不可用');
-        });
-      });
-    }
     if (bridge.onTestAction) bridge.onTestAction((action) => run(action));
 
     document.addEventListener('keydown', (e) => {
@@ -263,7 +253,7 @@
         e.preventDefault(); ensurePet(() => openPetMenu(Math.max(10, window.innerWidth - 260), 80));
       }
     });
-    ok('测试面板已启用：标题栏「测试」打开独立面板');
+    ok('测试面板已启用：Ctrl+Shift+T 打开独立面板');
   }
 
   let tries = 0;

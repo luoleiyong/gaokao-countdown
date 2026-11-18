@@ -1390,12 +1390,27 @@ function tomorrowEggDay() {
   return MILESTONE_EGGS[days] ? days : null;
 }
 
-/* 彩蛋可以重复触发：每次启动、跨天或点击按钮都会重新展示 */
+/* 彩蛋可以重复触发：自动只在当天播一次，之后通过按钮手动重播 */
 function maybeTodayEgg() {
   const days = todayEggDay();
   if (days == null) return;
+  if (msEggPending != null || !$('msEgg').hidden) return;
+  const key = 'gk-egg-auto-' + days + '-' + state.targetDate;
+  try {
+    if (localStorage.getItem(key)) return;
+  } catch (e) {
+    return;
+  }
+  msEggAutoKey = key;
   msEggPending = days;
   setTimeout(tryShowMilestoneEgg, 0);
+}
+
+/* 真正展示后记下当天已自动播过，避免切换页面或 renderAll 后重复弹出 */
+function markAutoEggShown() {
+  if (!msEggAutoKey) return;
+  try { localStorage.setItem(msEggAutoKey, '1'); } catch (e) { /* 忽略 */ }
+  msEggAutoKey = '';
 }
 
 /* ---------------- 倒计时里程碑 / 高考日彩蛋 ---------------- */
@@ -1447,6 +1462,7 @@ const MILESTONE_EGGS = {
   }
 };
 let msEggPending = null;
+let msEggAutoKey = '';
 let msEggFxRaf = 0;
 let msEggDays = 0;
 let msEggStage = 'idle';
@@ -1537,13 +1553,17 @@ function tryShowMilestoneEgg() {
   if (state.shaking) return;
   if (!$('onboard').hidden || !$('firstDraw').hidden || !$('drawModal').hidden) return;
   if (!$('msEgg').hidden) return;
+  const show = () => {
+    markAutoEggShown();
+    showMilestoneEgg(days, false);
+  };
   if (state.mode === 'pet') {
     Promise.resolve(bridge.setPetMode(false)).then(() => {
-      setTimeout(() => showMilestoneEgg(days, false), 420);
+      setTimeout(show, 420);
     });
     return;
   }
-  showMilestoneEgg(days, false);
+  show();
 }
 
 function msEggStopFx() {
@@ -2939,7 +2959,12 @@ function bindEvents() {
     const raw = $('btnDayEgg').dataset.eggDay;
     if (raw === '' || raw == null) return;
     const days = Number(raw);
-    if (!Number.isNaN(days)) showMilestoneEgg(days, true, true);
+    if (Number.isNaN(days)) return;
+    // 手动打开也视为当天已看过，避免关闭后自动补弹
+    try { localStorage.setItem('gk-egg-auto-' + days + '-' + state.targetDate, '1'); } catch (e) { /* 忽略 */ }
+    if (msEggPending === days) msEggPending = null;
+    msEggAutoKey = '';
+    showMilestoneEgg(days, true, true);
   });
   /* 彩蛋：准备阶段点任意位置播放视频，卡片阶段点空白处关闭 */
   $('msEgg').addEventListener('click', (e) => {

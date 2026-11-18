@@ -6,7 +6,8 @@ const $ = (id) => document.getElementById(id);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
 const SIGNS = Array.isArray(window.SIGNS) ? window.SIGNS : [];
-const SIGN_TOTAL = 280;
+/* 签池总数由 signs.js 决定，主页不直接展示总数 */
+const SIGN_TOTAL = SIGNS.length || 280;
 const LEVEL_ATTR = { '上上签': 'top', '上签': 'high', '中签': 'mid', '静心签': 'calm', '节气签': 'top' };
 const SUBJECT_META = [
   { id: 'chinese', name: '语文', color: '#dca0a0' },
@@ -120,7 +121,7 @@ function calc() {
   return { days, clock, progress, target, start, diff };
 }
 
-/* 倒计时天数 → 签池索引：13 与 280 互质，280 天内逐日不重复 */
+/* 倒计时天数 → 签池索引：13 与签池总数互质，一个完整周期内逐日不重复 */
 function signIndexFor(days) {
   const d = ((days % SIGN_TOTAL) + SIGN_TOTAL) % SIGN_TOTAL;
   return (d * 13 + 7) % SIGN_TOTAL;
@@ -268,6 +269,8 @@ async function boot() {
       }
     }, 900);
   }
+  // 倒计时里程碑彩蛋：启动时若正好是 200 / 100 / 30 天且当日未触发
+  setTimeout(() => maybeMilestoneEgg(calc().days), 2600);
 }
 
 /* ---------------- 渲染：倒计时 ---------------- */
@@ -339,14 +342,12 @@ function renderToday() {
     $('btnDraw').textContent = '现在就抽取';
   }
 
-  // 由倒计时天数反推点亮的签数：每天点亮一支，到高考当天 280 支全亮
+  // 由倒计时天数反推点亮的签数；主页只显示已开启数量，不暴露签池总数
   const days = calc().days;
   const pending = Math.max(0, Math.min(SIGN_TOTAL, days));
   const lit = SIGN_TOTAL - pending;
-  $('openCount').textContent = pending === 0
-    ? `全部点亮 ${SIGN_TOTAL} / ${SIGN_TOTAL}`
-    : `已开启 ${lit} / ${SIGN_TOTAL}`;
-  $('waitCount').textContent = pending === 0 ? '待开启 0' : `待开启 ${pending}`;
+  $('openCount').textContent = pending === 0 ? '今日全签点亮' : `已开启 ${lit} 签`;
+  $('waitCount').textContent = pending === 0 ? '愿你所求皆如愿' : '今日一签 · 静待落笔';
   $('openCount').setAttribute('data-all', pending === 0 ? '1' : '0');
 }
 
@@ -523,6 +524,7 @@ const fishState = {
   actionBusy: false, actionVideo: null, actionTimer: null, actionMode: '',
   hwFrames: [], hwLoaded: 0, hwFailed: 0, hwLoading: false, hwReady: false, hwRaf: 0, hwStart: 0, hwCtx: null,
   hwAction: null, hwActionLoading: false, hwActionAt: 0, hwActionBag: [], hwLastTs: 0,
+  hwActionCache: new Map(), panelPaused: false,
   clickAt: 0, reactionTimer: null, videoMode: ''
 };
 
@@ -797,7 +799,27 @@ function fishPickHomeworkAction() {
   return HOMEWORK_ACTIONS.find((a) => a.key === key) || HOMEWORK_ACTIONS[0];
 }
 
+/* 动作帧缓存：同一组动作命中第二次时直接复用已解码的帧，省掉 121 次加载与解码。
+   每组约 34MB 解码内存，只保留最近 2 组，避免常驻占用过高。 */
+const HW_ACTION_CACHE_MAX = 2;
+
+function fishUseHomeworkActionFrames(key, frames) {
+  const wrap = $('petFish');
+  if (!fishState.hwReady || !wrap || wrap.dataset.mode !== 'homework') return;
+  fishState.hwAction = { key, frames, count: frames.length, start: 0 };
+}
+
 function fishLoadHomeworkAction(key) {
+  const cache = fishState.hwActionCache;
+  const cached = cache.get(key);
+  if (cached) {
+    // 命中后移到队尾，保证最近使用的最后被淘汰
+    cache.delete(key);
+    cache.set(key, cached);
+    fishState.hwActionLoading = false;
+    fishUseHomeworkActionFrames(key, cached);
+    return;
+  }
   fishState.hwActionLoading = true;
   const frames = [];
   let done = 0;
@@ -805,9 +827,13 @@ function fishLoadHomeworkAction(key) {
   const finish = () => {
     if (done < HW_ACTION_FRAMES) return;
     fishState.hwActionLoading = false;
-    const wrap = $('petFish');
-    if (failed || !fishState.hwReady || !wrap || wrap.dataset.mode !== 'homework') return;
-    fishState.hwAction = { key, frames, count: HW_ACTION_FRAMES, start: 0 };
+    if (failed || !fishState.hwReady) return;
+    cache.set(key, frames);
+    while (cache.size > HW_ACTION_CACHE_MAX) {
+      const oldest = cache.keys().next().value;
+      cache.delete(oldest);
+    }
+    fishUseHomeworkActionFrames(key, frames);
   };
   for (let i = 1; i <= HW_ACTION_FRAMES; i++) {
     const img = new Image();
@@ -863,6 +889,16 @@ function renderFish() {
   const actor = $('petFishActor');
   const track = $('petFishTrack');
   if (!wrap || !actor) return;
+  /* 主界面模式下宠物整块不可见：停掉逐帧 canvas 与视频，避免后台白跑动画 */
+  if (state.mode !== 'pet') {
+    if (!fishState.panelPaused) {
+      fishState.panelPaused = true;
+      if (fishState.hwRaf) fishStopHwFrames();
+      fishPauseVideos();
+    }
+    return;
+  }
+  fishState.panelPaused = false;
   const plan = coursePlan();
   const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
@@ -1286,18 +1322,20 @@ function tick() {
     renderPet();
     toast('新的一天，今日签已更新');
     maybeAllSignsEgg(c.days);
+    maybeMilestoneEgg(c.days);
   } else if (c.days !== state.lastDays) {
     state.lastDays = c.days;
     renderToday();
     renderHistory();
     renderPet();
     maybeAllSignsEgg(c.days);
+    maybeMilestoneEgg(c.days);
   } else {
     renderPet();
   }
 }
 
-/* 高考当天：280 签全部点亮的彩蛋（同一考试日期只触发一次） */
+/* 高考当天：全部签点亮的彩蛋（同一考试日期只触发一次） */
 function maybeAllSignsEgg(days) {
   if (days > 0) return;
   const key = 'gk-all-signs-' + state.targetDate;
@@ -1310,6 +1348,377 @@ function maybeAllSignsEgg(days) {
   $('egg').hidden = false;
   requestAnimationFrame(() => $('egg').classList.add('show'));
   bridge.log('ALL_SIGNS_LIT', { targetDate: state.targetDate });
+}
+
+/* ---------------- 倒计时里程碑彩蛋：200 / 100 / 30 天 ---------------- */
+const MILESTONE_EGGS = {
+  200: {
+    eyebrow: '倒计时 200 天',
+    title: '二百日 · 已在半山',
+    sub: '回头看，你已经走了这么远；往前看，峰顶的光正在等你。',
+    seal: '进',
+    button: '收下这份底气',
+    tone: '#9fc0ff',
+    fx: 'star'
+  },
+  100: {
+    eyebrow: '倒计时 100 天',
+    title: '百日 · 万卷归一',
+    sub: '一百天，足够把会的变稳，把稳的变成分数。',
+    seal: '破',
+    button: '收下这份锐气',
+    tone: '#d9b64a',
+    fx: 'petal'
+  },
+  30: {
+    eyebrow: '倒计时 30 天',
+    title: '三十日 · 落笔如收剑',
+    sub: '不追新题，不惧旧错，把每一天过成考场上的一分从容。',
+    seal: '定',
+    button: '收下这份从容',
+    tone: '#d98a6a',
+    fx: 'ember'
+  }
+};
+let msEggPending = 0;
+let msEggFxRaf = 0;
+let msEggDays = 0;
+let msEggStage = 'idle';
+let msEggGuardTimer = null;
+/* 里程碑彩蛋背景视频：加载成功用视频，失败时回退到 Canvas 粒子 */
+const MS_EGG_VIDEO = {
+  200: 'assets/ms/ms-200.mp4',
+  100: 'assets/ms/ms-100.mp4',
+  30: 'assets/ms/ms-30.mp4'
+};
+
+/* 准备背景视频：只显示首帧，等用户点击后再播放 */
+function setupMsEggVideo(el, days) {
+  const video = $('msEggVideo');
+  if (!video) return;
+  el.removeAttribute('data-video');
+  const src = MS_EGG_VIDEO[days];
+  if (!src) return;
+  video.onplaying = null;
+  video.onloadeddata = () => {
+    if ($('msEgg').hidden) return;
+    el.setAttribute('data-video', 'on');
+    // 卡片已经弹出时视频才加载好，停掉兜底粒子，避免后台空转
+    if (msEggStage === 'card') msEggStopFx();
+  };
+  video.onended = () => showMsEggCard();
+  video.onerror = () => {
+    el.removeAttribute('data-video');
+    if (msEggStage === 'card') {
+      const meta = MILESTONE_EGGS[msEggDays];
+      if (meta) msEggStartFx(meta.fx, meta.tone);
+    } else {
+      showMsEggCard();
+    }
+  };
+  if (video.getAttribute('src') !== src) {
+    video.setAttribute('src', src);
+    try { video.load(); } catch (e) { /* 忽略 */ }
+  } else {
+    try { video.currentTime = 0; } catch (e) { /* 忽略 */ }
+    if (video.readyState >= 2) el.setAttribute('data-video', 'on');
+  }
+  try { video.pause(); } catch (e) { /* 忽略 */ }
+}
+
+/* 点击任意位置后播放视频，播完再弹出卡片 */
+function playMsEggVideo() {
+  const el = $('msEgg');
+  if (!el || el.hidden || msEggStage !== 'ready') return;
+  const video = $('msEggVideo');
+  msEggStage = 'playing';
+  el.setAttribute('data-stage', 'playing');
+  if (!video || !video.getAttribute('src') || video.error) {
+    showMsEggCard();
+    return;
+  }
+  video.loop = false;
+  try { video.currentTime = 0; } catch (e) { /* 忽略 */ }
+  // 用户点击后再播放，可安全开启视频自带的环境音乐
+  video.muted = false;
+  video.volume = 0.65;
+  if (window.GkSound) {
+    try {
+      GkSound.unlock();
+      GkSound.playEggStart();
+    } catch (e) { /* 忽略音效失败 */ }
+  }
+  const p = video.play();
+  if (p && p.catch) p.catch(() => showMsEggCard());
+  clearTimeout(msEggGuardTimer);
+  msEggGuardTimer = setTimeout(() => {
+    if (msEggStage === 'playing') showMsEggCard();
+  }, 15000);
+}
+
+/* 当日命中 200 / 100 / 30 天时排队展示，同一考试日期只触发一次 */
+function maybeMilestoneEgg(days) {
+  if (!MILESTONE_EGGS[days]) return;
+  const key = 'gk-milestone-' + days + '-' + state.targetDate;
+  try {
+    if (localStorage.getItem(key)) return;
+  } catch (e) {
+    return;
+  }
+  msEggPending = days;
+  setTimeout(tryShowMilestoneEgg, 0);
+}
+
+function tryShowMilestoneEgg() {
+  const days = msEggPending;
+  if (!days || !MILESTONE_EGGS[days]) return;
+  if (state.shaking) return;
+  if (!$('onboard').hidden || !$('firstDraw').hidden || !$('drawModal').hidden) return;
+  if (!$('msEgg').hidden) return;
+  if (state.mode === 'pet') {
+    Promise.resolve(bridge.setPetMode(false)).then(() => {
+      setTimeout(() => showMilestoneEgg(days, false), 420);
+    });
+    return;
+  }
+  showMilestoneEgg(days, false);
+}
+
+function msEggStopFx() {
+  if (msEggFxRaf) cancelAnimationFrame(msEggFxRaf);
+  msEggFxRaf = 0;
+  const canvas = $('msEggFx');
+  if (!canvas || !canvas.getContext) return;
+  const ctx = canvas.getContext('2d');
+  if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+/* 彩蛋粒子：200 天星光、100 天金瓣、30 天余烬 */
+function msEggStartFx(kind, tone) {
+  msEggStopFx();
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const canvas = $('msEggFx');
+  if (!canvas || !canvas.getContext) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const fit = () => {
+    const w = Math.floor(window.innerWidth * dpr);
+    const h = Math.floor(window.innerHeight * dpr);
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+  };
+  fit();
+  const W = () => canvas.width / dpr;
+  const H = () => canvas.height / dpr;
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const count = kind === 'petal' ? 34 : (kind === 'ember' ? 44 : 58);
+  const parts = [];
+  for (let i = 0; i < count; i++) {
+    parts.push({
+      x: rand(0, W()),
+      y: rand(0, H()),
+      r: rand(1.1, kind === 'petal' ? 4.4 : 2.4),
+      vx: rand(-0.35, 0.35),
+      vy: kind === 'ember' ? rand(-0.9, -0.35) : (kind === 'petal' ? rand(0.3, 0.75) : rand(-0.25, -0.06)),
+      rot: rand(0, Math.PI * 2),
+      vr: rand(-0.03, 0.03),
+      a: rand(0.3, 0.85),
+      ph: rand(0, Math.PI * 2)
+    });
+  }
+  let shoot = null;
+  let last = performance.now();
+  const draw = (now) => {
+    if ($('msEgg').hidden) { msEggFxRaf = 0; return; }
+    fit();
+    const dt = Math.min(48, now - last) / 16.7;
+    last = now;
+    const w = W();
+    const h = H();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    for (const p of parts) {
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.rot += p.vr * dt;
+      if (p.x < -24) p.x = w + 24;
+      else if (p.x > w + 24) p.x = -24;
+      if (kind === 'ember') {
+        if (p.y < -24) { p.y = h + 24; p.x = rand(0, w); }
+      } else if (p.y > h + 24) {
+        p.y = -24;
+        p.x = rand(0, w);
+      } else if (p.y < -24) {
+        p.y = h + 24;
+        p.x = rand(0, w);
+      }
+      const twinkle = kind === 'star' ? 0.55 + 0.45 * Math.sin(now / 620 + p.ph) : 1;
+      ctx.globalAlpha = Math.max(0, Math.min(1, p.a * twinkle));
+      ctx.fillStyle = tone;
+      if (kind === 'petal') {
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, p.r, p.r * 0.45, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      } else {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    if (kind === 'star') {
+      if (!shoot && Math.random() < 0.009) {
+        shoot = {
+          x: rand(w * 0.12, w * 0.82),
+          y: rand(-30, h * 0.22),
+          vx: rand(2.6, 4.2),
+          vy: rand(1.1, 1.9),
+          life: 1
+        };
+      }
+      if (shoot) {
+        shoot.x += shoot.vx * dt;
+        shoot.y += shoot.vy * dt;
+        shoot.life -= 0.012 * dt;
+        if (shoot.life <= 0 || shoot.x > w + 60 || shoot.y > h + 60) {
+          shoot = null;
+        } else {
+          ctx.globalAlpha = Math.max(0, shoot.life) * 0.85;
+          ctx.strokeStyle = tone;
+          ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          ctx.moveTo(shoot.x, shoot.y);
+          ctx.lineTo(shoot.x - shoot.vx * 12, shoot.y - shoot.vy * 12);
+          ctx.stroke();
+        }
+      }
+    }
+    ctx.globalAlpha = 1;
+    msEggFxRaf = requestAnimationFrame(draw);
+  };
+  msEggFxRaf = requestAnimationFrame(draw);
+}
+
+/* force=true 用于测试面板预览，不写入当日已触发的记录 */
+function showMilestoneEgg(days, force) {
+  const meta = MILESTONE_EGGS[days];
+  const el = $('msEgg');
+  if (!meta || !el) return;
+  if (!force) {
+    const key = 'gk-milestone-' + days + '-' + state.targetDate;
+    try {
+      if (localStorage.getItem(key)) return;
+      localStorage.setItem(key, '1');
+    } catch (e) {
+      return;
+    }
+    msEggPending = 0;
+  }
+  const reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  msEggDays = days;
+  msEggStage = 'ready';
+  clearTimeout(msEggGuardTimer);
+  el.classList.remove('is-settled');
+  el.setAttribute('data-stage', 'ready');
+  $('msEggEyebrow').textContent = meta.eyebrow;
+  $('msEggSub').textContent = meta.sub;
+  $('msEggSeal').textContent = meta.seal;
+  $('btnMsEggClose').textContent = meta.button;
+  // 标题等卡片阶段再逐字出现
+  $('msEggTitle').innerHTML = '';
+  $('msEggNum').textContent = '0';
+  const arc = $('msEggArc');
+  if (arc) {
+    const len = 2 * Math.PI * 58;
+    arc.style.strokeDasharray = String(len);
+    arc.style.strokeDashoffset = String(len);
+    arc.style.stroke = meta.tone;
+  }
+  el.setAttribute('data-fx', meta.fx);
+  setupMsEggVideo(el, days);
+  el.hidden = false;
+  requestAnimationFrame(() => el.classList.add('show'));
+  if (reduce) showMsEggCard();
+  bridge.log('MILESTONE_EGG', { days, targetDate: state.targetDate, preview: !!force });
+}
+
+/* 视频播完（或点击跳过）后弹出里程碑卡片 */
+function showMsEggCard() {
+  const el = $('msEgg');
+  const meta = MILESTONE_EGGS[msEggDays];
+  if (!el || el.hidden || !meta || msEggStage === 'card') return;
+  msEggStage = 'card';
+  clearTimeout(msEggGuardTimer);
+  el.setAttribute('data-stage', 'card');
+  setTimeout(() => {
+    if (msEggStage === 'card' && !el.hidden) el.classList.add('is-settled');
+  }, 1500);
+  const video = $('msEggVideo');
+  if (video) {
+    try { video.pause(); } catch (e) { /* 忽略 */ }
+  }
+  const reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  if (!reduce && window.GkSound) {
+    try {
+      GkSound.unlock();
+      GkSound.playEggReveal();
+    } catch (e) { /* 忽略音效失败 */ }
+  }
+  if (!reduce && el.getAttribute('data-video') !== 'on') {
+    msEggStartFx(meta.fx, meta.tone);
+  }
+  const titleEl = $('msEggTitle');
+  titleEl.innerHTML = Array.from(meta.title).map((ch, i) => (
+    reduce
+      ? `<span>${escapeHtml(ch)}</span>`
+      : `<span style="animation-delay:${(0.35 + i * 0.055).toFixed(2)}s">${escapeHtml(ch)}</span>`
+  )).join('');
+  const numEl = $('msEggNum');
+  const arc = $('msEggArc');
+  if (arc) {
+    requestAnimationFrame(() => { arc.style.strokeDashoffset = '0'; });
+  }
+  if (reduce) {
+    numEl.textContent = String(msEggDays);
+    return;
+  }
+  const target = msEggDays;
+  const t0 = performance.now();
+  const tickNum = (ts) => {
+    if (el.hidden || msEggStage !== 'card') return;
+    const p = Math.min(1, (ts - t0) / 1500);
+    const eased = 1 - Math.pow(1 - p, 3);
+    numEl.textContent = String(Math.round(target * eased));
+    if (p < 1) requestAnimationFrame(tickNum);
+  };
+  requestAnimationFrame(tickNum);
+  // 窗口被遮挡时 rAF 会暂停，用定时器保证最终数字一定到位
+  setTimeout(() => {
+    if (msEggStage === 'card' && !el.hidden) numEl.textContent = String(target);
+  }, 1700);
+}
+
+function closeMilestoneEgg() {
+  const el = $('msEgg');
+  if (!el || el.hidden) return;
+  clearTimeout(msEggGuardTimer);
+  const video = $('msEggVideo');
+  if (video) {
+    try { video.pause(); } catch (e) { /* 忽略 */ }
+  }
+  el.removeAttribute('data-video');
+  el.classList.remove('show');
+  msEggStopFx();
+  msEggStage = 'idle';
+  setTimeout(() => { el.hidden = true; }, 420);
+  setTimeout(() => { if (state.pendingUpdateNotes) maybeShowUpdateNotes(); }, 460);
+  setTimeout(tryShowMilestoneEgg, 520);
 }
 
 /* ---------------- 抽签 ---------------- */
@@ -1425,6 +1834,7 @@ function closeDrawModal() {
   pendingSign = null;
   state.debugPreview = false;
   setTimeout(() => { if (state.pendingUpdateNotes) maybeShowUpdateNotes(); }, 400);
+  setTimeout(tryShowMilestoneEgg, 460);
 }
 
 /* ---------------- 首次启动问候 ---------------- */
@@ -1441,6 +1851,7 @@ function hideFirstDraw() {
   el.classList.remove('show');
   setTimeout(() => { el.hidden = true; }, 320);
   setTimeout(() => { if (state.pendingUpdateNotes) maybeShowUpdateNotes(); }, 420);
+  setTimeout(tryShowMilestoneEgg, 480);
 }
 
 function swayBell(el) {
@@ -2042,6 +2453,7 @@ async function completeOnboarding() {
   setTimeout(() => {
     if (!todayEntry()) showFirstDraw();
   }, 500);
+  setTimeout(tryShowMilestoneEgg, 1100);
   setTimeout(() => { if (state.pendingUpdateNotes) maybeShowUpdateNotes(); }, 1000);
 }
 
@@ -2471,6 +2883,20 @@ function bindEvents() {
     $('egg').classList.remove('show');
     setTimeout(() => { $('egg').hidden = true; }, 350);
   });
+  $('btnMsEggClose').addEventListener('click', closeMilestoneEgg);
+  /* 彩蛋：准备阶段点任意位置播放视频，卡片阶段点空白处关闭 */
+  $('msEgg').addEventListener('click', (e) => {
+    if (e.target.closest('.ms-egg__card') || e.target.closest('.ms-egg__skip')) return;
+    if (msEggStage === 'ready') {
+      playMsEggVideo();
+      return;
+    }
+    if (msEggStage === 'card') closeMilestoneEgg();
+  });
+  $('btnMsEggSkip').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (msEggStage === 'playing' || msEggStage === 'ready') showMsEggCard();
+  });
   $('btnShake').addEventListener('click', shakeDraw);
   $('btnDrawDone').addEventListener('click', closeDrawModal);
   $('btnSaveCard').addEventListener('click', () => exportSignCard(state.currentEntry));
@@ -2496,6 +2922,7 @@ function bindEvents() {
     $('settings').hidden = true;
     $('drawModal').hidden = true;
     $('firstDraw').hidden = true;
+    if (!$('msEgg').hidden) closeMilestoneEgg();
     state.debugPreview = false;
     await enterPetMode();
     toast('已收进桌面宠物');
@@ -2571,6 +2998,7 @@ function bindEvents() {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
     state.targetDate = v;
     renderAll();
+    setTimeout(() => maybeMilestoneEgg(calc().days), 600);
     try {
       await bridge.saveSettings({ targetDate: v });
       toast('高考日期已更新');
@@ -2832,8 +3260,14 @@ function bindEvents() {
 
   // 键盘
   document.addEventListener('keydown', (e) => {
+    if (!$('msEgg').hidden && msEggStage === 'ready' && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      playMsEggVideo();
+      return;
+    }
     if (e.key === 'Escape') {
-      if (!$('agreementModal').hidden) closeAgreementModal();
+      if (!$('msEgg').hidden) closeMilestoneEgg();
+      else if (!$('agreementModal').hidden) closeAgreementModal();
       else if (!$('eventsModal').hidden) closeEventsModal();
       else if (!$('updateNotesModal').hidden) dismissUpdateNotes();
       else if (!$('updateReadyModal').hidden) hideUpdateReadyDialog();

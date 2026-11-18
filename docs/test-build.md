@@ -1,14 +1,14 @@
-# 测试版 2.1.0-test 使用说明
+# 测试版 2.1.5-test 使用说明
 
-> 这是本地测试版，**没有发布**。正式版 2.1.1 发布后，`update/version.json` 与它保持一致；测试版只用于本地验证。
+> 这是本地测试版，**没有发布**。正式版 2.2.0 已发布，`update/version.json` 与它保持一致；测试版只用于本地验证性能、资源、稳定性与本次功能优化。
 
 ## 一、程序位置
 
-- 便携版：`dist15-test/GaokaoCountdown-2.1.0-test-portable.exe`
-- 安装版：`dist15-test/GaokaoCountdown-Setup-2.1.0-test.exe`
-- 免安装目录：`dist15-test/win-unpacked/高考倒计时.exe`
+- 便携版：`dist21-test/GaokaoCountdown-2.1.5-test-portable.exe`
+- 安装版：`dist21-test/GaokaoCountdown-Setup-2.1.5-test.exe`
+- 免安装目录：`dist21-test/win-unpacked/高考倒计时.exe`
 
-测试版的版本号由构建参数 `--config.extraMetadata.version=2.1.0-test` 注入，源码 `package.json` 仍保持 2.0.7。
+测试版的版本号由构建参数 `--config.extraMetadata.version=2.1.5-test` 注入，源码 `package.json` 保持 2.2.0。
 
 ## 二、打开测试面板
 
@@ -34,7 +34,10 @@
 | 重要日子 | `openEventsModal()` |
 | 保存签卡 | `exportSignCard()`，弹出保存图片对话框 |
 | 展开签运簿 | `state.historyExpanded=true; renderHistory()` |
-| 全签彩蛋 | 清除本地 `gk-all-signs-*` 后 `maybeAllSignsEgg(0)`，展示高考当天 280 签全点亮 |
+| 全签彩蛋 | 清除本地 `gk-all-signs-*` 后 `maybeAllSignsEgg(0)`，展示高考当天全部签点亮 |
+| 200 天彩蛋 | `showMilestoneEgg(200, true)`，先显示视频首帧与「点击任意位置」提示 |
+| 100 天彩蛋 | `showMilestoneEgg(100, true)`，金色花瓣动画预览 |
+| 30 天彩蛋 | `showMilestoneEgg(30, true)`，余烬动画预览 |
 
 ### 桌面宠物
 
@@ -96,10 +99,11 @@
 | 主界面 | 倒计时、进度、里程碑、今日剩余 | 直接查看 |
 | 主界面 | 天气详情 | 点击天气卡片 |
 | 主界面 | 重要日子 | 点击「管理」或测试面板 |
-| 抽签 | 280 签按天数落签 | 每天第一次打开的主界面 / 摇签 |
+| 抽签 | 签池按天数落签 | 每天第一次打开的主界面 / 摇签 |
 | 抽签 | 首次抽签全屏引导 | 删除今日签后重启，或测试面板「首次抽签」 |
 | 抽签 | 调试预览首抽 | 管理员模式开启调试，或测试面板「调试预览首抽」 |
-| 抽签 | 高考当天 280 签全点亮 | 测试面板「全签彩蛋」，或把高考日期改到当天 |
+| 抽签 | 高考当天全部签点亮 | 测试面板「全签彩蛋」，或把高考日期改到当天 |
+| 抽签 | 倒计时 200 / 100 / 30 天彩蛋 | 测试面板「200 / 100 / 30 天彩蛋」，或把高考日期改到对应天数；点击屏幕播放动画，播完弹出卡片 |
 | 抽签 | 签卡保存为图片 | 结果页「保存签卡」 |
 | 节气 | 节气当天自动切换节气签 | 节气日期打开主界面；测试面板「节气签」随机预览 |
 | 课程表 | 工作日 / 周末 / 晚自习 | 打开课程表切换 |
@@ -133,15 +137,30 @@
 1. 测试版使用真实数据目录 `%APPDATA%\GaokaoCountdown`，演示前建议先在设置里导出备份。
 2. 「下载完成弹窗」只是构造状态，**不要点击“现在更新”**，否则会尝试运行假路径。
 3. 「全签彩蛋」只影响本地彩蛋标记，不会修改签运记录。
-4. 测试版没有发布，不要用它替换正式版；正式版为 2.1.1。
+4. 测试版没有发布，不要用它替换正式版；正式版为 2.2.0。
 5. 重新构建测试版：
 
 ```powershell
-$env:ELECTRON_BUILDER_COMPRESSION_LEVEL="1"
+$env:ELECTRON_BUILDER_COMPRESSION_LEVEL="9"
 npx electron-builder --win portable nsis `
   --config.npmRebuild=false `
-  --config.compression=normal `
-  --config.directories.output=dist15-test `
-  --config.extraMetadata.version=2.1.0-test `
+  --config.compression=maximum `
+  --config.directories.output=dist21-test `
+  --config.extraMetadata.version=2.1.5-test `
   --publish never
 ```
+
+本次 2.1.5-test 重点验证：
+
+- 200 / 100 / 30 天彩蛋：先显示视频首帧和「点击任意位置 · 播放动画」，点击后播放 AI 动画，播完再弹出卡片；右上角「跳过动画」可直接看卡片
+- 视频加载失败或系统减少动态效果时自动回退到 Canvas 粒子或直接展示卡片
+- 课堂随机点名：重复 / 不重复模式均为完全随机，导入顺序不影响结果；管理员权重越高越容易被抽到
+- 不重复模式一轮内不重复，抽完自动开启新一轮
+- 倒计时 200 / 100 / 30 天当天自动触发全屏彩蛋（星光 / 金瓣 / 余烬动画），可用测试面板预览
+- 主页不再显示签池总数，签池已扩充并新增更多签文
+- 主界面模式下桌宠逐帧动画不再后台空转（进入宠物才启动）
+- 写作业动作第二次触发走缓存，无明显加载等待
+- 快速连续改设置时写盘合并为一次，退出不丢数据
+- 界面进程异常后自动重新加载，数据文件损坏时保留 `store.损坏-*.json`
+- 安装包下载完成后校验 PE 头，镜像返回错误页时不会当成安装包
+- 关闭窗口到托盘、宠物模式来回切换、抽签/课堂/知识签等常规功能无回归

@@ -296,6 +296,23 @@ async function downloadAssetToFile(url, tmpPath, sender, version) {
 }
 
 
+/* 检查文件开头是否为 Windows 可执行文件的 MZ 头 */
+function hasExeHeader(file) {
+  let fd = null;
+  try {
+    fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(2);
+    fs.readSync(fd, buf, 0, 2, 0);
+    return buf[0] === 0x4d && buf[1] === 0x5a;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch { /* 忽略 */ }
+    }
+  }
+}
+
 /* 静默运行安装程序（/S 无界面安装，--force-run 安装完成后自动启动） */
 function spawnSilentInstaller(setup) {
   try {
@@ -485,6 +502,8 @@ function runAutoBackup(force) {
   const today = dateKey();
   if (!force && store.lastBackupDate === today) return null;
   try {
+    // 备份的是磁盘上的 store.json，先把挂起的写入落盘，避免备份到旧数据
+    flushStore();
     if (!fs.existsSync(STORE_FILE)) return null;
     fs.mkdirSync(backupDir(), { recursive: true });
     const file = path.join(backupDir(), `store-${today}.json`);
@@ -551,6 +570,13 @@ function loadStore() {
     merged.updateUrl = DEFAULT_UPDATE_URL;
     return merged;
   } catch {
+    // 文件损坏时先留一份原件，避免用户数据被直接覆盖
+    try {
+      if (fs.existsSync(STORE_FILE)) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        fs.copyFileSync(STORE_FILE, path.join(USER_DIR, `store.损坏-${stamp}.json`));
+      }
+    } catch { /* 忽略备份失败 */ }
     const fresh = Object.assign({}, STORE_DEFAULTS);
     fresh.classroom = defaultClassroom();
     return fresh;
@@ -559,13 +585,32 @@ function loadStore() {
 const store = loadStore();
 petScale = clampScale(store.petScale);
 
-function saveStore() {
+/* 存储写盘：400ms 内多次修改合并成一次原子写，退出前用 flushStore() 兜底 */
+let storeDirty = false;
+let storeSaveTimer = null;
+
+function flushStore() {
+  if (storeSaveTimer) {
+    clearTimeout(storeSaveTimer);
+    storeSaveTimer = null;
+  }
+  if (!storeDirty) return;
+  storeDirty = false;
   try {
     ensureDirs();
     const tmp = STORE_FILE + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf8');
     fs.renameSync(tmp, STORE_FILE);
   } catch { /* 忽略写盘失败，不影响主流程 */ }
+}
+
+function saveStore() {
+  storeDirty = true;
+  if (storeSaveTimer) return;
+  storeSaveTimer = setTimeout(() => {
+    storeSaveTimer = null;
+    flushStore();
+  }, 400);
 }
 const LOG_LABELS = {
   APP_START: '程序启动',
@@ -607,12 +652,16 @@ const LOG_LABELS = {
   HISTORY_RESTORE: '恢复签运簿',
   BACKUP_AUTO: '自动备份数据',
   BACKUP_ERR: '自动备份失败',
+  STORE_RECOVER: '数据文件损坏已保留备份',
   DATA_EXPORT: '导出数据',
   DATA_IMPORT: '导入数据',
   EVENT_SAVE: '保存重要日子',
   GROUP_DRAW: '随机分组',
   TIMER_DONE: '课堂计时结束',
   SHORTCUT_FAIL: '全局快捷键注册失败',
+  RENDER_GONE: '界面进程异常退出',
+  RENDER_RECOVER: '界面进程已重新加载',
+  MILESTONE_EGG: '倒计时里程碑彩蛋',
   PET_ENCOURAGE: '桌面宠物课程提示',
   MAIN_ERROR: '主进程异常',
   DWM_ERR: '窗口特效设置失败',
@@ -642,6 +691,10 @@ function logCandidates() {
   return Array.from(new Set(list));
 }
 
+/* 日志批量异步追加：避免每次点按都同步阻塞主进程，退出前用 flushLogsSync() 兜底 */
+const logQueue = [];
+let logWriting = false;
+
 function appendLog(event, detail) {
   try {
     ensureDirs();
@@ -650,14 +703,43 @@ function appendLog(event, detail) {
     const time = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())} ` +
       `${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}`;
     const label = LOG_LABELS[event] || event;
-    const line = `[${time}] ${label}${logDetailText(detail)}\n`;
-    for (const file of logCandidates()) {
-      try {
-        fs.appendFileSync(file, line, 'utf8');
-        return;
-      } catch { /* 尝试下一个位置 */ }
-    }
+    logQueue.push(`[${time}] ${label}${logDetailText(detail)}\n`);
+    if (logQueue.length > 200) logQueue.splice(0, logQueue.length - 200);
+    drainLogs();
   } catch { /* 忽略日志失败 */ }
+}
+
+function drainLogs() {
+  if (logWriting || !logQueue.length) return;
+  logWriting = true;
+  const batch = logQueue.splice(0, logQueue.length).join('');
+  const files = logCandidates();
+  const tryWrite = (i) => {
+    if (i >= files.length) {
+      logWriting = false;
+      return;
+    }
+    fs.appendFile(files[i], batch, 'utf8', (err) => {
+      if (err) {
+        tryWrite(i + 1);
+        return;
+      }
+      logWriting = false;
+      if (logQueue.length) drainLogs();
+    });
+  };
+  tryWrite(0);
+}
+
+function flushLogsSync() {
+  if (!logQueue.length) return;
+  const batch = logQueue.splice(0, logQueue.length).join('');
+  for (const file of logCandidates()) {
+    try {
+      fs.appendFileSync(file, batch, 'utf8');
+      return;
+    } catch { /* 尝试下一个位置 */ }
+  }
 }
 
 /* 新版本首次启动时清理旧便携版与安装包（安装成功后才可能执行成功） */
@@ -1276,6 +1358,20 @@ function createWindow() {
     win.show();
   });
 
+  /* 渲染进程崩溃/被杀后自动重新加载，避免只剩一个空窗口 */
+  win.webContents.on('render-process-gone', (_e, details) => {
+    appendLog('RENDER_GONE', { reason: details.reason, exitCode: details.exitCode });
+    if (quitting) return;
+    if (details.reason === 'clean-exit') return;
+    setTimeout(() => {
+      if (!win || win.isDestroyed()) return;
+      try {
+        win.reload();
+        appendLog('RENDER_RECOVER', { reason: details.reason });
+      } catch { /* 忽略重载失败 */ }
+    }, 800);
+  });
+
   win.on('close', (e) => {
     if (!quitting) {
       e.preventDefault();
@@ -1659,15 +1755,25 @@ function classroomAdminData() {
   data.historyBackupCount = historyBackup ? historyBackup.length : 0;
   return data;
 }
+/* 权重随机：先累加权重再二分定位，命中概率只由权重决定，与名单导入顺序无关 */
 function weightedPick(candidates) {
-  const total = candidates.reduce((sum, n) => sum + n.weight, 0);
-  let r = Math.random() * total;
-  let hit = candidates[candidates.length - 1];
-  for (const n of candidates) {
-    r -= n.weight;
-    if (r <= 0) { hit = n; break; }
+  const n = candidates.length;
+  if (n <= 1) return candidates[0];
+  const cum = new Array(n);
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    total += Math.max(0.0001, Number(candidates[i].weight) || 0.0001);
+    cum[i] = total;
   }
-  return hit;
+  const r = Math.random() * total;
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (cum[mid] <= r) lo = mid + 1;
+    else hi = mid;
+  }
+  return candidates[lo];
 }
 function drawFromRoster(rosterId, count, options) {
   const roster = store.classroom.rosters.find((r) => r.id === rosterId);
@@ -1681,45 +1787,33 @@ function drawFromRoster(rosterId, count, options) {
   let wrapped = false;
 
   if (noRepeat) {
+    // 不重复模式：在本轮剩余的人里按权重随机抽，抽完自动开启新一轮
     let round = new Set(
       (Array.isArray(roster.roundIds) ? roster.roundIds : []).filter((id) => pool.some((n) => n.id === id))
     );
-    while (picked.length < want) {
+    while (picked.length < want && picked.length < pool.length) {
       let remain = pool.filter((n) => !round.has(n.id));
       if (!remain.length) {
         round = new Set();
-        wrapped = picked.length > 0;
+        wrapped = true;
         remain = pool.slice();
       }
-      if (pool.length > 1 && picked.length === 0 && remain.length > 1) {
-        const filtered = remain.filter((n) => n.id !== roster.lastPickId);
-        if (filtered.length) remain = filtered;
-      }
-      // 不重复模式按权重从大到小依次抽出，权重相同时优先抽次数少的
-      remain.sort((a, b) =>
-        (b.weight - a.weight) ||
-        (a.count - b.count) ||
-        String(a.name).localeCompare(String(b.name), 'zh')
-      );
-      const hit = remain[0];
+      const hit = weightedPick(remain);
       round.add(hit.id);
       hit.count += 1;
       hit.pickedAt = Date.now();
       picked.push(hit);
       roster.roundIds = Array.from(round);
-      if (picked.length >= pool.length) break;
     }
   } else {
-    let candidates = pool.slice();
-    // 多人抽取时尽量避开上一次最后抽到的学生
-    if (pool.length > want) candidates = candidates.filter((n) => n.id !== roster.lastPickId);
-    if (!candidates.length) candidates = pool.slice();
+    // 重复模式：每次都在全部学生里独立按权重随机，不排除任何人
+    const candidates = pool.slice();
     for (let i = 0; i < want && candidates.length; i++) {
       const hit = weightedPick(candidates);
       hit.count += 1;
       hit.pickedAt = Date.now();
       picked.push(hit);
-      candidates = candidates.filter((n) => n.id !== hit.id);
+      candidates.splice(candidates.indexOf(hit), 1);
     }
     roster.roundIds = [];
   }
@@ -2171,6 +2265,8 @@ function wireIpc() {
 
           const mode = await downloadAssetToFile(url, tmp, sender, version);
           if (fs.statSync(tmp).size < 20 * 1024 * 1024) throw new Error('安装包大小异常');
+          // 镜像有时会返回 HTML 错误页，用 PE 头再确认一次
+          if (!hasExeHeader(tmp)) throw new Error('下载内容不是有效的安装包');
           renameWithRetry(tmp, filePath);
           updateTask = { version, filePath, downloading: false, done: true };
           if (sender && !sender.isDestroyed()) {
@@ -2707,6 +2803,8 @@ if (!gotLock) {
   app.on('will-quit', () => {
     try { globalShortcut.unregisterAll(); } catch { /* 忽略 */ }
     try { if (testWin && !testWin.isDestroyed()) testWin.destroy(); } catch { /* 忽略 */ }
+    flushStore();
+    flushLogsSync();
   });
 
   app.on('before-quit', () => {
@@ -2728,5 +2826,6 @@ if (!gotLock) {
       }
     }
     saveStore();
+    flushStore();
   });
 }

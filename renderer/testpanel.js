@@ -103,6 +103,12 @@
       bridge.saveSettings({ skin: id }).then(() => ok('已切换皮肤')).catch(() => {});
       return;
     }
+    if (action.startsWith('ms:')) {
+      const days = Number(action.slice(3));
+      showMilestoneEgg(days, true);
+      ok('已触发倒计时 ' + days + ' 天彩蛋');
+      return;
+    }
     switch (action) {
       case 'draw':
         startDrawFlow(true);
@@ -189,18 +195,26 @@
         Promise.resolve(checkUpdates(false)).then(() => ok('检查完成')).catch(() => ok('检查失败'));
         break;
       case 'closeall':
-        ['drawModal', 'firstDraw', 'egg', 'termModal', 'weatherModal', 'eventsModal', 'updateNotesModal', 'updateReadyModal', 'settings', 'agreementModal'].forEach((id) => {
+        ['drawModal', 'firstDraw', 'egg', 'msEgg', 'termModal', 'weatherModal', 'eventsModal', 'updateNotesModal', 'updateReadyModal', 'settings', 'agreementModal'].forEach((id) => {
           const el = $(id);
           if (!el) return;
           el.hidden = true;
           el.classList.remove('show');
         });
+        msEggStopFx();
+        msEggStage = 'idle';
+        (function () {
+          const v = $('msEggVideo');
+          if (v) { try { v.pause(); } catch (e) { /* 忽略 */ } }
+          const egg = $('msEgg');
+          if (egg) egg.removeAttribute('data-video');
+        })();
         closePetMenu();
         ok('已关闭所有弹窗');
         break;
       case 'resetegg':
         try {
-          Object.keys(localStorage).filter((k) => k.indexOf('gk-all-signs-') === 0).forEach((k) => localStorage.removeItem(k));
+          Object.keys(localStorage).filter((k) => k.indexOf('gk-all-signs-') === 0 || k.indexOf('gk-milestone-') === 0).forEach((k) => localStorage.removeItem(k));
           ok('彩蛋记录已重置');
         } catch (e) { ok('重置失败'); }
         break;

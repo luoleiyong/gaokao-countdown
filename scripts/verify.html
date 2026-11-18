@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>素材校验</title>
+</head>
+<body>
+<script>
+/* 由 scripts/verify-assets.js 通过 executeJavaScript 调用。
+   逐帧解码 WebP，统计尺寸、非透明像素与绿色边缘像素。 */
+window.verifyFrames = async function (list) {
+  const out = [];
+  for (const item of list) {
+    const result = await new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const w = img.naturalWidth;
+        const h = img.naturalHeight;
+        if (!w || !h) {
+          resolve({ error: 'empty' });
+          return;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0);
+        let data;
+        try {
+          data = ctx.getImageData(0, 0, w, h).data;
+        } catch (e) {
+          resolve({ error: 'readback' });
+          return;
+        }
+        let green = 0;
+        let maxDelta = 0;
+        let opaque = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          if (!data[i + 3]) continue;
+          opaque += 1;
+          const delta = data[i + 1] - Math.max(data[i], data[i + 2]);
+          if (delta > 10) {
+            green += 1;
+            if (delta > maxDelta) maxDelta = delta;
+          }
+        }
+        resolve({ w, h, green, maxDelta, opaque });
+      };
+      img.onerror = () => resolve({ error: 'decode' });
+      img.src = item.url;
+    });
+    out.push(Object.assign({ file: item.rel }, result));
+  }
+  return out;
+};
+</script>
+</body>
+</html>

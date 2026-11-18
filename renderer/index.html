@@ -120,8 +120,8 @@
           </div>
 
           <div class="today-card__foot">
-            <span id="openCount">已开启 0 / 280</span>
-            <span id="waitCount">待开启 280</span>
+            <span id="openCount">已开启 0 签</span>
+            <span id="waitCount">今日一签 · 静待落笔</span>
           </div>
         </section>
 
@@ -146,7 +146,7 @@
     </main>
 
     <footer class="foot">
-      <span>每天仅可开启一签 · 依倒计时天数落签 · 共 280 签</span>
+      <span>每天仅可开启一签 · 依倒计时天数落签</span>
       <span id="versionLabel">v1.0.0</span>
     </footer>
   </div>
@@ -240,7 +240,7 @@
           <div class="sign-sheet__wish" id="resWish">—</div>
           <div class="sign-sheet__meta">
             <span id="resTag">学业</span>
-            <span id="resDays">距高考 280 天</span>
+            <span id="resDays">距高考 — 天</span>
           </div>
           <div class="sign-sheet__seal">今日<br>已启</div>
         </div>
@@ -567,11 +567,34 @@
     <div class="egg__glow"></div>
     <div class="egg__card">
       <div class="egg__seal">全</div>
-      <p class="egg__eyebrow">280 签 · 全部点亮</p>
+      <p class="egg__eyebrow">全部签 · 全部点亮</p>
       <h2 class="egg__title">今日，去赴那场笃定的约</h2>
       <p class="egg__sub">从第一支签到最后一支签，每一页都算数。</p>
       <div class="egg__stars">✦ ✦ ✦ ✦ ✦ ✦ ✦</div>
       <button class="btn-primary" id="btnEggClose">收下这份笃定</button>
+    </div>
+  </div>
+
+  <!-- ======================= 倒计时里程碑彩蛋（200 / 100 / 30 天） ======================= -->
+  <div class="ms-egg" id="msEgg" hidden data-stage="ready">
+    <video class="ms-egg__video" id="msEggVideo" muted playsinline preload="auto"></video>
+    <canvas class="ms-egg__fx" id="msEggFx"></canvas>
+    <div class="ms-egg__halo"></div>
+    <p class="ms-egg__hint" id="msEggHint"><i></i>点击任意位置 · 播放动画</p>
+    <button class="ms-egg__skip" id="btnMsEggSkip">跳过动画</button>
+    <div class="ms-egg__card" id="msEggCard">
+      <div class="ms-egg__ring">
+        <svg viewBox="0 0 132 132" aria-hidden="true">
+          <circle class="ms-egg__ring-track" cx="66" cy="66" r="58"></circle>
+          <circle class="ms-egg__ring-arc" id="msEggArc" cx="66" cy="66" r="58"></circle>
+        </svg>
+        <div class="ms-egg__num"><b id="msEggNum">0</b><span>天</span></div>
+      </div>
+      <p class="ms-egg__eyebrow" id="msEggEyebrow">倒计时</p>
+      <h2 class="ms-egg__title" id="msEggTitle"></h2>
+      <p class="ms-egg__sub" id="msEggSub"></p>
+      <div class="ms-egg__seal" id="msEggSeal">定</div>
+      <button class="btn-primary ms-egg__btn" id="btnMsEggClose">收下</button>
     </div>
   </div>
 

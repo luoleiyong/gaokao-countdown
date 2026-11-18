@@ -82,5 +82,46 @@ window.GkSound = (function () {
     tone(0.35, 392, 0.045, 0.35);
   }
 
-  return { unlock, playChime, playShake, playDrawDone };
+  /* 里程碑彩蛋开场：低频风声渐起 + 上行三连音 */
+  function playEggStart() {
+    const c = getCtx();
+    if (!c) return;
+    const dur = 1.2;
+    const sr = c.sampleRate;
+    const len = Math.floor(sr * dur);
+    const buffer = c.createBuffer(1, len, sr);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      const t = i / sr;
+      const env = Math.sin((t / dur) * Math.PI);
+      data[i] = (Math.random() * 2 - 1) * env * env * 0.35;
+    }
+    const src = c.createBufferSource();
+    src.buffer = buffer;
+    const filter = c.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(320, c.currentTime);
+    filter.frequency.exponentialRampToValueAtTime(1200, c.currentTime + dur);
+    filter.Q.value = 0.7;
+    const gain = c.createGain();
+    gain.gain.setValueAtTime(0.0001, c.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.12, c.currentTime + 0.25);
+    gain.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(c.destination);
+    src.start();
+    [523.25, 659.25, 783.99].forEach((f, i) => tone(0.12 + i * 0.11, f, 0.05, 0.5));
+  }
+
+  /* 里程碑彩蛋卡片出现：低频钟声 + 泛音 */
+  function playEggReveal() {
+    tone(0, 196, 0.1, 1.6);
+    tone(0.02, 392, 0.05, 1.3);
+    tone(0.06, 587.33, 0.035, 1.0);
+    tone(0.1, 1046.5, 0.03, 0.8);
+    [1318.5, 1568, 2093].forEach((f, i) => tone(0.18 + i * 0.06, f, 0.04, 0.7));
+  }
+
+  return { unlock, playChime, playShake, playDrawDone, playEggStart, playEggReveal };
 })();

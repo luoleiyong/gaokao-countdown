@@ -1,6 +1,6 @@
 {
   "name": "gaokao-countdown",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "高考倒计时",
   "main": "main.js",
   "author": {
@@ -9,7 +9,9 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --win portable nsis"
+    "build": "electron-builder --win portable nsis",
+    "verify": "electron scripts/verify-assets.js",
+    "verify:fast": "electron scripts/verify-assets.js --fast"
   },
   "devDependencies": {
     "electron": "^33.0.0",
@@ -18,7 +20,7 @@
   "build": {
     "appId": "com.trae.gaokao.countdown",
     "productName": "高考倒计时",
-    "compression": "normal",
+    "compression": "maximum",
     "files": [
       "main.js",
       "preload.js",

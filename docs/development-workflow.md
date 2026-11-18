@@ -45,6 +45,15 @@ node --check main.js
 node --check preload.js
 ```
 
+改动桌宠逐帧素材后，跑一次素材校验（在 Electron 渲染进程里真实解码 WebP）：
+
+```powershell
+npm run verify        # 全量 1500 帧：帧数、270×262、非透明像素、绿边像素
+npm run verify:fast   # 每 8 帧抽 1 帧，改完代码快速自检
+```
+
+校验失败会列出具体文件与原因，退出码为 1。
+
 ## 3. 版本号与更新公告
 
 ### 3.1 需要发布新版本时
@@ -74,7 +83,7 @@ node --check preload.js
 $env:ELECTRON_BUILDER_COMPRESSION_LEVEL="1"
 npx electron-builder --win portable nsis `
   --config.npmRebuild=false `
-  --config.compression=normal `
+  --config.compression=maximum `
   --config.directories.output=distNN `
   --publish never
 ```
@@ -112,6 +121,8 @@ Get-ChildItem "renderer\assets\hwact" -Directory | ForEach-Object {
 
 每个动作应为 121 张，写作业循环 `renderer/assets/hw` 应为 169 张；两组都应是 **270×262** 无损 WebP。
 
+可以直接跑 `npm run verify` 一次性检查帧数、尺寸、非透明像素与绿边。
+
 ### 5.3 启动验证
 
 关闭旧进程后运行 `distNN\win-unpacked\高考倒计时.exe`，约 10 秒后查看同目录 `启动日志.txt`：
@@ -129,10 +140,12 @@ Get-ChildItem "renderer\assets\hwact" -Directory | ForEach-Object {
 
 ```powershell
 git add main.js preload.js renderer/app.js renderer/fish.js renderer/index.html renderer/styles.css
-git add package.json package-lock.json update/version.json README.md docs
+git add scripts package.json package-lock.json update/version.json README.md docs .gitignore
 git commit -m "高考倒计时 X.Y.Z：一句话说明本次更新"
 git push origin master
 ```
+
+`.gitignore` 用 `dist*/` 覆盖所有构建目录（`dist2`、`dist17`、`dist15-test` 等），只提交源码、素材与文档。
 
 提交信息沿用现有风格：
 

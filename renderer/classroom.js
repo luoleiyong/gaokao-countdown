@@ -1104,8 +1104,14 @@ function createMockBridge() {
       const pool = r.names.slice();
       const want = Math.max(1, Math.min(count || 1, pool.length));
       const picked = [];
-      for (let i = 0; i < want; i++) {
-        const idx = Math.floor(Math.random() * pool.length);
+      for (let i = 0; i < want && pool.length; i++) {
+        const total = pool.reduce((sum, n) => sum + (Number(n.weight) || 1), 0);
+        let roll = Math.random() * total;
+        let idx = pool.length - 1;
+        for (let j = 0; j < pool.length; j++) {
+          roll -= Number(pool[j].weight) || 1;
+          if (roll <= 0) { idx = j; break; }
+        }
         const n = pool.splice(idx, 1)[0];
         n.count += 1;
         picked.push(n.name);

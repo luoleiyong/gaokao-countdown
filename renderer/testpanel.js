@@ -146,11 +146,8 @@
         ok('已展开签运簿');
         break;
       case 'egg':
-        try {
-          Object.keys(localStorage).filter((k) => k.indexOf('gk-all-signs-') === 0).forEach((k) => localStorage.removeItem(k));
-        } catch (e) { /* 忽略 */ }
-        maybeAllSignsEgg(0);
-        ok('已触发高考当天全签彩蛋');
+        showMilestoneEgg(0, true);
+        ok('已触发高考日彩蛋');
         break;
       case 'pet':
         bridge.setPetMode(true);

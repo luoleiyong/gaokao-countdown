@@ -127,6 +127,17 @@ function signIndexFor(days) {
   return (d * 13 + 7) % SIGN_TOTAL;
 }
 function todaySignObj() {
+  // 彩蛋当天的签文主题与当天动画主题保持一致
+  const eggDay = todayEggDay();
+  if (eggDay != null) {
+    const meta = MILESTONE_EGGS[eggDay];
+    const pool = SIGNS.filter((s) => s.tag === meta.signPick);
+    if (pool.length) {
+      const days = calc().days;
+      const idx = ((days % pool.length) + pool.length) % pool.length;
+      return Object.assign({}, pool[idx], { tag: meta.signTag });
+    }
+  }
   const term = todayTerm();
   if (term) {
     return {
@@ -269,8 +280,8 @@ async function boot() {
       }
     }, 900);
   }
-  // 倒计时里程碑彩蛋：启动时若正好是 200 / 100 / 30 天且当日未触发
-  setTimeout(() => maybeMilestoneEgg(calc().days), 2600);
+  // 倒计时里程碑彩蛋：今天正好命中 200 / 100 / 30 天或高考日时展示
+  setTimeout(maybeTodayEgg, 2600);
 }
 
 /* ---------------- 渲染：倒计时 ---------------- */
@@ -349,6 +360,14 @@ function renderToday() {
   $('openCount').textContent = pending === 0 ? '今日全签点亮' : `已开启 ${lit} 签`;
   $('waitCount').textContent = pending === 0 ? '愿你所求皆如愿' : '今日一签 · 静待落笔';
   $('openCount').setAttribute('data-all', pending === 0 ? '1' : '0');
+
+  // 当天命中彩蛋时才显示入口，其他时间隐藏
+  const eggDay = todayEggDay();
+  const dayEggBtn = $('btnDayEgg');
+  if (dayEggBtn) {
+    dayEggBtn.hidden = eggDay == null;
+    dayEggBtn.dataset.eggDay = eggDay == null ? '' : String(eggDay);
+  }
 }
 
 /* ---------------- 渲染：签运簿 ---------------- */
@@ -517,9 +536,13 @@ const FISH_IDLE_LINES = Array.isArray(window.FISH_IDLE_LINES) ? window.FISH_IDLE
 const FISH_HEAD_LINES = Array.isArray(window.FISH_HEAD_LINES) ? window.FISH_HEAD_LINES : [];
 const FISH_POKE_LINES = Array.isArray(window.FISH_POKE_LINES) ? window.FISH_POKE_LINES : [];
 const FISH_TAIL_LINES = Array.isArray(window.FISH_TAIL_LINES) ? window.FISH_TAIL_LINES : [];
+const FISH_EGG_PREVIEW_LINES = (window.FISH_EGG_PREVIEW_LINES && typeof window.FISH_EGG_PREVIEW_LINES === 'object')
+  ? window.FISH_EGG_PREVIEW_LINES
+  : {};
 const FISH_ACTOR_W = 56;
 const fishState = {
   phase: '', spokenAt: 0, last: '', hideTimer: null,
+  previewSaid: false,
   idleAt: 0, idleBusy: false, idleTimer: null, idleMode: '',
   actionBusy: false, actionVideo: null, actionTimer: null, actionMode: '',
   hwFrames: [], hwLoaded: 0, hwFailed: 0, hwLoading: false, hwReady: false, hwRaf: 0, hwStart: 0, hwCtx: null,
@@ -578,6 +601,19 @@ function fishPickLine(lines) {
   const line = bag.pop();
   fishState.last = line;
   return line;
+}
+
+/* 明天命中彩蛋时，气泡优先说一句不明显的预告（每次启动最多一次） */
+function fishPickScheduledLine(lines) {
+  const egg = tomorrowEggDay();
+  if (egg != null && !fishState.previewSaid) {
+    const pool = FISH_EGG_PREVIEW_LINES[egg];
+    if (Array.isArray(pool) && pool.length) {
+      fishState.previewSaid = true;
+      return fishPickLine(pool);
+    }
+  }
+  return fishPickLine(lines);
 }
 
 function fishSay(text) {
@@ -967,10 +1003,10 @@ function renderFish() {
   if (phase !== fishState.phase) {
     fishState.phase = phase;
     fishState.spokenAt = nowTs;
-    fishSay(fishPickLine(lines));
+    fishSay(fishPickScheduledLine(lines));
   } else if (nowTs - fishState.spokenAt > interval) {
     fishState.spokenAt = nowTs;
-    fishSay(fishPickLine(lines));
+    fishSay(fishPickScheduledLine(lines));
   }
 
   /* 写作业动作定时出现：按当前频率档位缩放，保证实际使用时能看到动作 */
@@ -1321,37 +1357,63 @@ function tick() {
     renderHistory();
     renderPet();
     toast('新的一天，今日签已更新');
-    maybeAllSignsEgg(c.days);
-    maybeMilestoneEgg(c.days);
+    maybeTodayEgg();
   } else if (c.days !== state.lastDays) {
     state.lastDays = c.days;
     renderToday();
     renderHistory();
     renderPet();
-    maybeAllSignsEgg(c.days);
-    maybeMilestoneEgg(c.days);
+    maybeTodayEgg();
   } else {
     renderPet();
   }
 }
 
-/* 高考当天：全部签点亮的彩蛋（同一考试日期只触发一次） */
-function maybeAllSignsEgg(days) {
-  if (days > 0) return;
-  const key = 'gk-all-signs-' + state.targetDate;
-  try {
-    if (localStorage.getItem(key)) return;
-    localStorage.setItem(key, '1');
-  } catch (e) {
-    return;
-  }
-  $('egg').hidden = false;
-  requestAnimationFrame(() => $('egg').classList.add('show'));
-  bridge.log('ALL_SIGNS_LIT', { targetDate: state.targetDate });
+/* 当天命中的彩蛋：高考日 0 天，或 200 / 100 / 30 天 */
+function isExamDay() {
+  return dateKey() === state.targetDate;
 }
 
-/* ---------------- 倒计时里程碑彩蛋：200 / 100 / 30 天 ---------------- */
+function todayEggDay() {
+  if (isExamDay()) return 0;
+  const days = calc().days;
+  if (days === 0) return null;
+  return MILESTONE_EGGS[days] ? days : null;
+}
+
+/* 明天命中的彩蛋日：用于桌宠提前一天暗示 */
+function tomorrowEggDay() {
+  const t = new Date();
+  t.setHours(0, 0, 0, 0);
+  t.setDate(t.getDate() + 1);
+  if (dateKey(t) === state.targetDate) return 0;
+  const days = calc().days - 1;
+  if (days <= 0) return null;
+  return MILESTONE_EGGS[days] ? days : null;
+}
+
+/* 彩蛋可以重复触发：每次启动、跨天或点击按钮都会重新展示 */
+function maybeTodayEgg() {
+  const days = todayEggDay();
+  if (days == null) return;
+  msEggPending = days;
+  setTimeout(tryShowMilestoneEgg, 0);
+}
+
+/* ---------------- 倒计时里程碑 / 高考日彩蛋 ---------------- */
 const MILESTONE_EGGS = {
+  0: {
+    eyebrow: '高考日 · 全部签',
+    title: '今日，去赴那场笃定的约',
+    sub: '从第一支签到最后一支签，每一页都算数。',
+    seal: '全',
+    button: '收下这份笃定',
+    tone: '#d9b64a',
+    fx: 'star',
+    stars: true,
+    signTag: '赴约',
+    signPick: '考场'
+  },
   200: {
     eyebrow: '倒计时 200 天',
     title: '二百日 · 已在半山',
@@ -1359,7 +1421,9 @@ const MILESTONE_EGGS = {
     seal: '进',
     button: '收下这份底气',
     tone: '#9fc0ff',
-    fx: 'star'
+    fx: 'star',
+    signTag: '半山',
+    signPick: '坚持'
   },
   100: {
     eyebrow: '倒计时 100 天',
@@ -1368,7 +1432,9 @@ const MILESTONE_EGGS = {
     seal: '破',
     button: '收下这份锐气',
     tone: '#d9b64a',
-    fx: 'petal'
+    fx: 'petal',
+    signTag: '万卷',
+    signPick: '学业'
   },
   30: {
     eyebrow: '倒计时 30 天',
@@ -1377,16 +1443,19 @@ const MILESTONE_EGGS = {
     seal: '定',
     button: '收下这份从容',
     tone: '#d98a6a',
-    fx: 'ember'
+    fx: 'ember',
+    signTag: '收剑',
+    signPick: '技巧'
   }
 };
-let msEggPending = 0;
+let msEggPending = null;
 let msEggFxRaf = 0;
 let msEggDays = 0;
 let msEggStage = 'idle';
 let msEggGuardTimer = null;
-/* 里程碑彩蛋背景视频：加载成功用视频，失败时回退到 Canvas 粒子 */
+/* 彩蛋背景视频：加载成功用视频，失败时回退到 Canvas 粒子 */
 const MS_EGG_VIDEO = {
+  0: 'assets/ms/ms-0.mp4',
   200: 'assets/ms/ms-200.mp4',
   100: 'assets/ms/ms-100.mp4',
   30: 'assets/ms/ms-30.mp4'
@@ -1456,22 +1525,10 @@ function playMsEggVideo() {
   }, 15000);
 }
 
-/* 当日命中 200 / 100 / 30 天时排队展示，同一考试日期只触发一次 */
-function maybeMilestoneEgg(days) {
-  if (!MILESTONE_EGGS[days]) return;
-  const key = 'gk-milestone-' + days + '-' + state.targetDate;
-  try {
-    if (localStorage.getItem(key)) return;
-  } catch (e) {
-    return;
-  }
-  msEggPending = days;
-  setTimeout(tryShowMilestoneEgg, 0);
-}
-
+/* 排队展示：首抽、抽签、设置等弹窗打开时先等它们关闭 */
 function tryShowMilestoneEgg() {
+  if (msEggPending == null || !MILESTONE_EGGS[msEggPending]) return;
   const days = msEggPending;
-  if (!days || !MILESTONE_EGGS[days]) return;
   if (state.shaking) return;
   if (!$('onboard').hidden || !$('firstDraw').hidden || !$('drawModal').hidden) return;
   if (!$('msEgg').hidden) return;
@@ -1605,21 +1662,12 @@ function msEggStartFx(kind, tone) {
   msEggFxRaf = requestAnimationFrame(draw);
 }
 
-/* force=true 用于测试面板预览，不写入当日已触发的记录 */
-function showMilestoneEgg(days, force) {
+/* preview=true 用于测试面板预览（只影响日志）；autoplay=true 点击按钮后直接播放 */
+function showMilestoneEgg(days, preview, autoplay) {
   const meta = MILESTONE_EGGS[days];
   const el = $('msEgg');
   if (!meta || !el) return;
-  if (!force) {
-    const key = 'gk-milestone-' + days + '-' + state.targetDate;
-    try {
-      if (localStorage.getItem(key)) return;
-      localStorage.setItem(key, '1');
-    } catch (e) {
-      return;
-    }
-    msEggPending = 0;
-  }
+  msEggPending = null;
   const reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   msEggDays = days;
   msEggStage = 'ready';
@@ -1628,6 +1676,7 @@ function showMilestoneEgg(days, force) {
   el.setAttribute('data-stage', 'ready');
   $('msEggEyebrow').textContent = meta.eyebrow;
   $('msEggSub').textContent = meta.sub;
+  $('msEggStars').hidden = !meta.stars;
   $('msEggSeal').textContent = meta.seal;
   $('btnMsEggClose').textContent = meta.button;
   // 标题等卡片阶段再逐字出现
@@ -1645,7 +1694,8 @@ function showMilestoneEgg(days, force) {
   el.hidden = false;
   requestAnimationFrame(() => el.classList.add('show'));
   if (reduce) showMsEggCard();
-  bridge.log('MILESTONE_EGG', { days, targetDate: state.targetDate, preview: !!force });
+  else if (autoplay) playMsEggVideo();
+  bridge.log('MILESTONE_EGG', { days, targetDate: state.targetDate, preview: !!preview });
 }
 
 /* 视频播完（或点击跳过）后弹出里程碑卡片 */
@@ -2879,11 +2929,13 @@ function bindEvents() {
   $('btnTermRandom').addEventListener('click', () => openTermModal(true));
   $('btnTermClose').addEventListener('click', closeTermModal);
   $('termModal').querySelector('.modal__backdrop').addEventListener('click', closeTermModal);
-  $('btnEggClose').addEventListener('click', () => {
-    $('egg').classList.remove('show');
-    setTimeout(() => { $('egg').hidden = true; }, 350);
-  });
   $('btnMsEggClose').addEventListener('click', closeMilestoneEgg);
+  $('btnDayEgg').addEventListener('click', () => {
+    const raw = $('btnDayEgg').dataset.eggDay;
+    if (raw === '' || raw == null) return;
+    const days = Number(raw);
+    if (!Number.isNaN(days)) showMilestoneEgg(days, true, true);
+  });
   /* 彩蛋：准备阶段点任意位置播放视频，卡片阶段点空白处关闭 */
   $('msEgg').addEventListener('click', (e) => {
     if (e.target.closest('.ms-egg__card') || e.target.closest('.ms-egg__skip')) return;
@@ -2998,7 +3050,7 @@ function bindEvents() {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
     state.targetDate = v;
     renderAll();
-    setTimeout(() => maybeMilestoneEgg(calc().days), 600);
+    setTimeout(maybeTodayEgg, 600);
     try {
       await bridge.saveSettings({ targetDate: v });
       toast('高考日期已更新');

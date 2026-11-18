@@ -78,6 +78,7 @@
           <button class="btn-ghost" id="btnTerm">二十四节气签</button>
           <button class="btn-ghost" id="btnClassroom">课堂点名</button>
           <button class="btn-ghost" id="btnViewToday" hidden>查看今日签</button>
+          <button class="btn-ghost day-egg-btn" id="btnDayEgg" hidden>观看高考彩蛋</button>
         </div>
 
         <section class="events-card" id="eventsCard">
@@ -562,20 +563,7 @@
     </aside>
   </div>
 
-  <!-- ======================= 高考当天 · 全签点亮彩蛋 ======================= -->
-  <div class="egg" id="egg" hidden>
-    <div class="egg__glow"></div>
-    <div class="egg__card">
-      <div class="egg__seal">全</div>
-      <p class="egg__eyebrow">全部签 · 全部点亮</p>
-      <h2 class="egg__title">今日，去赴那场笃定的约</h2>
-      <p class="egg__sub">从第一支签到最后一支签，每一页都算数。</p>
-      <div class="egg__stars">✦ ✦ ✦ ✦ ✦ ✦ ✦</div>
-      <button class="btn-primary" id="btnEggClose">收下这份笃定</button>
-    </div>
-  </div>
-
-  <!-- ======================= 倒计时里程碑彩蛋（200 / 100 / 30 天） ======================= -->
+  <!-- ======================= 倒计时里程碑 / 高考日彩蛋 ======================= -->
   <div class="ms-egg" id="msEgg" hidden data-stage="ready">
     <video class="ms-egg__video" id="msEggVideo" muted playsinline preload="auto"></video>
     <canvas class="ms-egg__fx" id="msEggFx"></canvas>
@@ -593,6 +581,7 @@
       <p class="ms-egg__eyebrow" id="msEggEyebrow">倒计时</p>
       <h2 class="ms-egg__title" id="msEggTitle"></h2>
       <p class="ms-egg__sub" id="msEggSub"></p>
+      <div class="ms-egg__stars" id="msEggStars" hidden>✦ ✦ ✦ ✦ ✦ ✦ ✦</div>
       <div class="ms-egg__seal" id="msEggSeal">定</div>
       <button class="btn-primary ms-egg__btn" id="btnMsEggClose">收下</button>
     </div>

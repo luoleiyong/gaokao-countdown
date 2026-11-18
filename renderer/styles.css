@@ -1657,51 +1657,8 @@ body[data-skin="bamboo"] .logs{background:rgba(255,255,255,.55);color:var(--dim)
   padding:14px 20px;border-top:1px dashed var(--line);
 }
 
-/* 高考当天 · 全签点亮彩蛋 */
-.egg{position:fixed;inset:0;z-index:90;display:grid;place-items:center;opacity:0;transition:opacity .4s}
-.egg.show{opacity:1}
-.egg__glow{
-  position:absolute;inset:0;overflow:hidden;
-  background:
-    radial-gradient(circle at 50% 46%, rgba(255,226,150,.26), transparent 52%),
-    radial-gradient(circle at 50% 46%, rgba(217,182,74,.16), transparent 72%),
-    rgba(8,12,10,.82);
-}
-.egg__glow::before{
-  content:"";position:absolute;inset:-40%;
-  background:conic-gradient(from 0deg, transparent 0 9deg, rgba(255,226,150,.055) 13deg 15deg, transparent 19deg 360deg);
-  animation:egg-rotate 28s linear infinite;
-}
+/* 彩蛋公用动画 */
 @keyframes egg-rotate{to{transform:rotate(360deg)}}
-.egg__card{
-  position:relative;z-index:1;text-align:center;
-  padding:36px 44px 30px;
-  background:var(--bg-solid);
-  border:1px solid rgba(217,182,74,.45);
-  border-radius:18px;
-  box-shadow:0 0 70px rgba(217,182,74,.2), var(--shadow);
-  animation:box-in .6s cubic-bezier(.2,.9,.3,1.1) both;
-}
-.egg__seal{
-  width:56px;height:56px;margin:0 auto 16px;
-  border:2px solid rgba(217,182,74,.6);border-radius:10px;
-  display:grid;place-items:center;
-  font-family:var(--font-title);font-size:28px;color:var(--gold);
-  transform:rotate(-6deg);
-  box-shadow:0 0 22px rgba(217,182,74,.24), inset 0 0 14px rgba(217,182,74,.12);
-}
-.egg__eyebrow{font-size:12px;letter-spacing:.38em;color:var(--gold)}
-.egg__title{
-  font-family:var(--font-title);font-weight:400;
-  font-size:30px;letter-spacing:.12em;margin:12px 0 8px;
-  color:var(--text);
-}
-.egg__sub{font-size:12.5px;letter-spacing:.12em;color:var(--dim)}
-.egg__stars{
-  margin:24px 0 20px;
-  color:var(--gold);letter-spacing:14px;font-size:14px;
-  animation:egg-twinkle 2.4s ease-in-out infinite;
-}
 @keyframes egg-twinkle{0%,100%{opacity:.5}50%{opacity:1}}
 
 /* 倒计时里程碑彩蛋 · 200 / 100 / 30 天 */
@@ -1789,7 +1746,9 @@ body[data-skin="bamboo"] .logs{background:rgba(255,255,255,.55);color:var(--dim)
   position:relative;z-index:3;text-align:center;overflow:hidden;
   width:min(420px,90vw);
   padding:34px 38px 30px;
-  background:var(--bg-solid);
+  background:var(--bg-glass);
+  backdrop-filter:blur(20px) saturate(1.08);
+  -webkit-backdrop-filter:blur(20px) saturate(1.08);
   border:1px solid rgba(217,182,74,.42);
   border-radius:20px;
   box-shadow:0 0 80px rgba(217,182,74,.18), var(--shadow);
@@ -1799,7 +1758,16 @@ body[data-skin="bamboo"] .logs{background:rgba(255,255,255,.55);color:var(--dim)
 .ms-egg[data-stage="card"] .ms-egg__card{
   opacity:1;
   pointer-events:auto;
-  animation:box-in .65s cubic-bezier(.2,.9,.3,1.1) both;
+  animation:ms-card-in .8s cubic-bezier(.2,.9,.3,1.05) both, ms-card-glow 4.5s ease-in-out 1.2s infinite;
+}
+@keyframes ms-card-in{
+  0%{opacity:0;transform:translateY(26px) scale(.94);filter:blur(8px)}
+  60%{opacity:1;filter:blur(0)}
+  100%{opacity:1;transform:none;filter:none}
+}
+@keyframes ms-card-glow{
+  0%,100%{box-shadow:0 0 70px rgba(217,182,74,.16), var(--shadow)}
+  50%{box-shadow:0 0 120px rgba(217,182,74,.34), var(--shadow)}
 }
 /* 窗口被遮挡时 CSS 动画会暂停，用 settled 兜底保证内容最终可见 */
 .ms-egg.is-settled .ms-egg__card{opacity:1;animation:none}
@@ -1842,6 +1810,11 @@ body[data-skin="bamboo"] .logs{background:rgba(255,255,255,.55);color:var(--dim)
 .ms-egg__title span{display:inline-block;opacity:0;transform:translateY(8px);animation:ms-char .5s ease forwards}
 @keyframes ms-char{to{opacity:1;transform:none}}
 .ms-egg__sub{font-size:12.5px;line-height:1.9;letter-spacing:.1em;color:var(--dim);max-width:340px;margin:0 auto}
+.ms-egg__stars{
+  margin:16px 0 2px;
+  color:var(--gold);letter-spacing:12px;font-size:13px;
+  animation:egg-twinkle 2.4s ease-in-out infinite;
+}
 .ms-egg__seal{
   width:50px;height:50px;margin:20px auto 18px;
   border:2px solid rgba(217,182,74,.55);border-radius:10px;
@@ -1855,6 +1828,12 @@ body[data-skin="bamboo"] .logs{background:rgba(255,255,255,.55);color:var(--dim)
 }
 @keyframes ms-seal{0%{transform:rotate(-26deg) scale(.4);opacity:0}100%{transform:rotate(-5deg) scale(1);opacity:1}}
 .ms-egg__btn{min-width:160px}
+.day-egg-btn{
+  color:var(--gold);
+  border-color:rgba(217,182,74,.55);
+  background:rgba(217,182,74,.08);
+}
+.day-egg-btn:hover{background:rgba(217,182,74,.16);border-color:rgba(217,182,74,.75)}
 
 /* 轻提示 */
 .toast{

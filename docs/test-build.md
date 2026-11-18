@@ -1,14 +1,13 @@
-# 测试版 2.2.1-test 使用说明
+# 测试版 2.2.3-test 使用说明
 
-> 这是本地测试版，**没有发布**。正式版 2.2.2 已发布，`update/version.json` 与它保持一致；测试版只用于本地验证本次彩蛋优化。
+> 这是本地测试版，**没有发布**。正式版 2.2.3 已发布，`update/version.json` 与它保持一致；测试版只用于本地验证本次彩蛋修复。
 
 ## 一、程序位置
 
-- 便携版：`dist23-test/GaokaoCountdown-2.2.1-test-portable.exe`
-- 安装版：`dist23-test/GaokaoCountdown-Setup-2.2.1-test.exe`
-- 免安装目录：`dist23-test/win-unpacked/高考倒计时.exe`
+- 便携版：`dist25-test/GaokaoCountdown-2.2.3-test-portable.exe`
+- 免安装目录：`dist25-test/win-unpacked/高考倒计时.exe`
 
-测试版的版本号由构建参数 `--config.extraMetadata.version=2.2.1-test` 注入，源码 `package.json` 为 2.2.2。
+测试版的版本号由构建参数 `--config.extraMetadata.version=2.2.3-test` 注入，源码 `package.json` 为 2.2.3。
 
 ## 二、打开测试面板
 
@@ -137,23 +136,21 @@
 1. 测试版使用真实数据目录 `%APPDATA%\GaokaoCountdown`，演示前建议先在设置里导出备份。
 2. 「下载完成弹窗」只是构造状态，**不要点击“现在更新”**，否则会尝试运行假路径。
 3. 彩蛋可以重复触发，不会修改签运记录。
-4. 测试版没有发布，不要用它替换正式版；正式版为 2.2.2。
-5. 重新构建测试版：
+4. 测试版没有发布，不要用它替换正式版；正式版为 2.2.3。
+5. 重新构建测试版（只打便携版）：
 
 ```powershell
 $env:ELECTRON_BUILDER_COMPRESSION_LEVEL="9"
-npx electron-builder --win portable nsis `
+npx electron-builder --win portable `
   --config.npmRebuild=false `
   --config.compression=maximum `
-  --config.directories.output=dist23-test `
-  --config.extraMetadata.version=2.2.1-test `
+  --config.directories.output=dist25-test `
+  --config.extraMetadata.version=2.2.3-test `
   --publish never
 ```
 
-本次 2.2.1-test 重点验证：
+本次 2.2.3-test 重点验证：
 
-- 倒计时 200 / 100 / 30 天与高考日彩蛋均可重复触发，关闭后可再次打开
-- 命中彩蛋的当天，主页会出现「观看今日彩蛋 / 观看高考彩蛋」按钮，点击直接播放动画；其他日期不显示
-- 高考日彩蛋接入归零动画视频，卡片增加星星、玻璃拟态背景与更柔和的入场动画
-- 彩蛋视频自带背景音乐在点击后开启，卡片弹出时播放揭示音效
-- 课堂随机点名、签库扩充、桌宠性能等既有功能无回归
+- 彩蛋关闭后再次点击观看按钮，视频能正常重新播放，不再出现只有压暗层没有画面的情况
+- 彩蛋前一天的预告台词不再限制次数，与正常台词一起随机出现
+- 200 / 100 天为 10 秒动画，高考日归零动画与 30 天动画保持原样

@@ -542,7 +542,6 @@ const FISH_EGG_PREVIEW_LINES = (window.FISH_EGG_PREVIEW_LINES && typeof window.F
 const FISH_ACTOR_W = 56;
 const fishState = {
   phase: '', spokenAt: 0, last: '', hideTimer: null,
-  previewSaid: false,
   idleAt: 0, idleBusy: false, idleTimer: null, idleMode: '',
   actionBusy: false, actionVideo: null, actionTimer: null, actionMode: '',
   hwFrames: [], hwLoaded: 0, hwFailed: 0, hwLoading: false, hwReady: false, hwRaf: 0, hwStart: 0, hwCtx: null,
@@ -603,13 +602,12 @@ function fishPickLine(lines) {
   return line;
 }
 
-/* 明天命中彩蛋时，气泡优先说一句不明显的预告（每次启动最多一次） */
+/* 明天命中彩蛋时，气泡会和正常台词一样随机出现预告，不限次数 */
 function fishPickScheduledLine(lines) {
   const egg = tomorrowEggDay();
-  if (egg != null && !fishState.previewSaid) {
+  if (egg != null) {
     const pool = FISH_EGG_PREVIEW_LINES[egg];
-    if (Array.isArray(pool) && pool.length) {
-      fishState.previewSaid = true;
+    if (Array.isArray(pool) && pool.length && Math.random() < 0.5) {
       return fishPickLine(pool);
     }
   }
@@ -1468,7 +1466,14 @@ function setupMsEggVideo(el, days) {
   el.removeAttribute('data-video');
   const src = MS_EGG_VIDEO[days];
   if (!src) return;
-  video.onplaying = null;
+  // 先把已有的首帧状态记下来：跳回 0 秒会让 readyState 短暂下降
+  const hadFrame = video.readyState >= 2 || video.videoWidth > 0;
+  video.onplaying = () => {
+    if (!$('msEgg').hidden) el.setAttribute('data-video', 'on');
+  };
+  video.onseeked = () => {
+    if (!$('msEgg').hidden) el.setAttribute('data-video', 'on');
+  };
   video.onloadeddata = () => {
     if ($('msEgg').hidden) return;
     el.setAttribute('data-video', 'on');
@@ -1490,7 +1495,7 @@ function setupMsEggVideo(el, days) {
     try { video.load(); } catch (e) { /* 忽略 */ }
   } else {
     try { video.currentTime = 0; } catch (e) { /* 忽略 */ }
-    if (video.readyState >= 2) el.setAttribute('data-video', 'on');
+    if (hadFrame) el.setAttribute('data-video', 'on');
   }
   try { video.pause(); } catch (e) { /* 忽略 */ }
 }

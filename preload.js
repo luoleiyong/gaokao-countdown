@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('gaokao', {
   exportData: () => ipcRenderer.invoke('app:export-data'),
   importData: () => ipcRenderer.invoke('app:import-data'),
   setFullScreen: (on) => ipcRenderer.invoke('window:set-fullscreen', on),
+  setEggFullscreen: (on) => ipcRenderer.invoke('window:set-egg-fullscreen', on),
   getWeather: () => ipcRenderer.invoke('weather:get'),
   getWeatherHourly: () => ipcRenderer.invoke('weather:hourly'),
   checkUpdate: () => ipcRenderer.invoke('app:check-update'),

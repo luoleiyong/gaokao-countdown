@@ -70,6 +70,8 @@ let classroomUnlocked = false;
 let tray = null;
 let quitting = false;
 let mode = 'panel';
+let eggFullscreen = false;
+let eggBounds = null;
 let firstTodayLaunch = false;
 let petScale = 1;
 let panelBounds = null;
@@ -662,6 +664,7 @@ const LOG_LABELS = {
   RENDER_GONE: '界面进程异常退出',
   RENDER_RECOVER: '界面进程已重新加载',
   MILESTONE_EGG: '倒计时里程碑彩蛋',
+  MILESTONE_EGG_RESET: '重置彩蛋播放',
   PET_ENCOURAGE: '桌面宠物课程提示',
   MAIN_ERROR: '主进程异常',
   DWM_ERR: '窗口特效设置失败',
@@ -2076,6 +2079,32 @@ function wireIpc() {
     if (!win || win.isDestroyed()) return { ok: false };
     win.setFullScreen(!!on);
     return { ok: true, fullscreen: win.isFullScreen() };
+  });
+
+  /* 彩蛋专用全屏：铺满当前显示器并置顶，结束后恢复到原来的窗口位置 */
+  ipcMain.handle('window:set-egg-fullscreen', (_e, on) => {
+    if (!win || win.isDestroyed()) return { ok: false };
+    if (on) {
+      if (eggFullscreen) return { ok: true };
+      eggBounds = win.getBounds();
+      const display = screen.getDisplayMatching(eggBounds);
+      eggFullscreen = true;
+      win.setAlwaysOnTop(true, 'screen-saver');
+      win.setSkipTaskbar(true);
+      win.setBounds(display.bounds);
+      win.show();
+      win.focus();
+    } else if (eggFullscreen) {
+      eggFullscreen = false;
+      const b = eggBounds || store.panelBounds;
+      eggBounds = null;
+      win.setAlwaysOnTop(false);
+      win.setSkipTaskbar(mode === 'pet');
+      if (b) win.setBounds(b);
+      win.show();
+      win.focus();
+    }
+    return { ok: true };
   });
 
   ipcMain.handle('weather:get', async () => {

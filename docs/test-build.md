@@ -1,13 +1,13 @@
-# 测试版 2.2.3-test 使用说明
+# 测试版 2.2.5-test 使用说明
 
-> 这是本地测试版，**没有发布**。正式版 2.2.4 已发布，`update/version.json` 与它保持一致；测试版只用于本地验证本次彩蛋修复。
+> 这是本地测试版，**没有发布**。正式版 2.2.5 已发布；测试版用于验证彩蛋全屏展示，以及性能与稳定性优化。
 
 ## 一、程序位置
 
-- 便携版：`dist25-test/GaokaoCountdown-2.2.3-test-portable.exe`
-- 免安装目录：`dist25-test/win-unpacked/高考倒计时.exe`
+- 便携版：`dist28-test/GaokaoCountdown-2.2.5-test-portable.exe`
+- 免安装目录：`dist28-test/win-unpacked/高考倒计时.exe`
 
-测试版的版本号由构建参数 `--config.extraMetadata.version=2.2.3-test` 注入，源码 `package.json` 为 2.2.3。
+测试版的版本号由构建参数 `--config.extraMetadata.version=2.2.5-test` 注入，源码 `package.json` 为 2.2.5。
 
 ## 二、打开测试面板
 
@@ -136,7 +136,7 @@
 1. 测试版使用真实数据目录 `%APPDATA%\GaokaoCountdown`，演示前建议先在设置里导出备份。
 2. 「下载完成弹窗」只是构造状态，**不要点击“现在更新”**，否则会尝试运行假路径。
 3. 彩蛋可以重复触发，不会修改签运记录。
-4. 测试版没有发布，不要用它替换正式版；正式版为 2.2.4。
+4. 测试版没有发布，不要用它替换正式版；正式版为 2.2.5。
 5. 重新构建测试版（只打便携版）：
 
 ```powershell
@@ -144,13 +144,17 @@ $env:ELECTRON_BUILDER_COMPRESSION_LEVEL="9"
 npx electron-builder --win portable `
   --config.npmRebuild=false `
   --config.compression=maximum `
-  --config.directories.output=dist25-test `
-  --config.extraMetadata.version=2.2.3-test `
+  --config.directories.output=dist28-test `
+  --config.extraMetadata.version=2.2.5-test `
   --publish never
 ```
 
-本次 2.2.3-test 重点验证：
+本次 2.2.5-test 重点验证：
 
-- 彩蛋关闭后再次点击观看按钮，视频能正常重新播放，不再出现只有压暗层没有画面的情况
-- 彩蛋前一天的预告台词不再限制次数，与正常台词一起随机出现
-- 200 / 100 天为 10 秒动画，高考日归零动画与 30 天动画保持原样
+- 彩蛋当天主页显示「重置彩蛋播放」，重置后下次启动会像第一次一样自动全屏播放
+- 彩蛋触发后窗口先铺满当前屏幕，点击任意位置才开始播放
+- 播放结束或点击「跳过」后，窗口恢复到原来的位置与大小，并弹出彩蛋卡片
+- 当天自动播放仍只触发一次，之后主页按钮可手动重播
+- 主界面模式下桌宠动画与视频完全暂停，切回宠物模式后正常继续
+- 写作业动作第二次触发时直接复用缓存帧，不再重复加载 121 张图片
+- 数据文件损坏时会在 `%APPDATA%\GaokaoCountdown` 留一份 `store.损坏-*.json` 备份

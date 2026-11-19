@@ -368,6 +368,11 @@ function renderToday() {
     dayEggBtn.hidden = eggDay == null;
     dayEggBtn.dataset.eggDay = eggDay == null ? '' : String(eggDay);
   }
+  const eggResetBtn = $('btnEggReset');
+  if (eggResetBtn) {
+    eggResetBtn.hidden = eggDay == null;
+    eggResetBtn.dataset.eggDay = eggDay == null ? '' : String(eggDay);
+  }
 }
 
 /* ---------------- 渲染：签运簿 ---------------- */
@@ -1396,6 +1401,8 @@ function maybeTodayEgg() {
   if (days == null) return;
   if (msEggPending != null || !$('msEgg').hidden) return;
   const key = 'gk-egg-auto-' + days + '-' + state.targetDate;
+  // 刚点过「重置彩蛋播放」的当天不立即补弹，留到下次打开程序
+  if (msEggResetHold === key) return;
   try {
     if (localStorage.getItem(key)) return;
   } catch (e) {
@@ -1463,6 +1470,8 @@ const MILESTONE_EGGS = {
 };
 let msEggPending = null;
 let msEggAutoKey = '';
+let msEggResetHold = '';
+let msEggFullscreen = false;
 let msEggFxRaf = 0;
 let msEggDays = 0;
 let msEggStage = 'idle';
@@ -1546,6 +1555,19 @@ function playMsEggVideo() {
   }, 15000);
 }
 
+/* 彩蛋先用全屏展示，播放结束或关闭后恢复原来的窗口 */
+async function enterEggFullscreen() {
+  msEggFullscreen = true;
+  try { await bridge.setEggFullscreen(true); } catch (e) { /* 忽略 */ }
+  await wait(240);
+}
+
+function exitEggFullscreen() {
+  if (!msEggFullscreen) return;
+  msEggFullscreen = false;
+  try { bridge.setEggFullscreen(false); } catch (e) { /* 忽略 */ }
+}
+
 /* 排队展示：首抽、抽签、设置等弹窗打开时先等它们关闭 */
 function tryShowMilestoneEgg() {
   if (msEggPending == null || !MILESTONE_EGGS[msEggPending]) return;
@@ -1553,8 +1575,9 @@ function tryShowMilestoneEgg() {
   if (state.shaking) return;
   if (!$('onboard').hidden || !$('firstDraw').hidden || !$('drawModal').hidden) return;
   if (!$('msEgg').hidden) return;
-  const show = () => {
+  const show = async () => {
     markAutoEggShown();
+    await enterEggFullscreen();
     showMilestoneEgg(days, false);
   };
   if (state.mode === 'pet') {
@@ -1731,6 +1754,11 @@ function showMsEggCard() {
   msEggStage = 'card';
   clearTimeout(msEggGuardTimer);
   el.setAttribute('data-stage', 'card');
+  // 全屏彩蛋在视频结束后回到原来的窗口，最后画面让位给粒子背景
+  if (msEggFullscreen) {
+    el.removeAttribute('data-video');
+    exitEggFullscreen();
+  }
   setTimeout(() => {
     if (msEggStage === 'card' && !el.hidden) el.classList.add('is-settled');
   }, 1500);
@@ -1783,6 +1811,10 @@ function closeMilestoneEgg() {
   const el = $('msEgg');
   if (!el || el.hidden) return;
   clearTimeout(msEggGuardTimer);
+  if (msEggFullscreen) {
+    el.removeAttribute('data-video');
+    exitEggFullscreen();
+  }
   const video = $('msEggVideo');
   if (video) {
     try { video.pause(); } catch (e) { /* 忽略 */ }
@@ -2964,7 +2996,21 @@ function bindEvents() {
     try { localStorage.setItem('gk-egg-auto-' + days + '-' + state.targetDate, '1'); } catch (e) { /* 忽略 */ }
     if (msEggPending === days) msEggPending = null;
     msEggAutoKey = '';
-    showMilestoneEgg(days, true, true);
+    enterEggFullscreen().then(() => showMilestoneEgg(days, true, true));
+  });
+  /* 重置当天彩蛋记录：下次打开程序时像第一次一样自动全屏播放 */
+  $('btnEggReset').addEventListener('click', () => {
+    const raw = $('btnEggReset').dataset.eggDay;
+    if (raw === '' || raw == null) return;
+    const days = Number(raw);
+    if (Number.isNaN(days)) return;
+    const key = 'gk-egg-auto-' + days + '-' + state.targetDate;
+    try { localStorage.removeItem(key); } catch (e) { /* 忽略 */ }
+    msEggResetHold = key;
+    if (msEggAutoKey === key) msEggAutoKey = '';
+    if (msEggPending === days) msEggPending = null;
+    bridge.log('MILESTONE_EGG_RESET', { days, targetDate: state.targetDate });
+    toast('彩蛋已重置 · 下次打开程序会再次播放');
   });
   /* 彩蛋：准备阶段点任意位置播放视频，卡片阶段点空白处关闭 */
   $('msEgg').addEventListener('click', (e) => {

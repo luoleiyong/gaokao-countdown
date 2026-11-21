@@ -6,10 +6,9 @@
   let started = false;
 
   function isTestBuild() {
+    if (window.__gkTestMode === true) return true;
     const label = $('versionLabel');
-    return (label && /-test/i.test(label.textContent)) ||
-      /[?&]test=1/.test(location.search) ||
-      (function () { try { return localStorage.getItem('gk-test') === '1'; } catch (e) { return false; } })();
+    return !!(label && /-test/i.test(label.textContent));
   }
 
   function ok(msg) {
@@ -74,6 +73,30 @@
     });
   }
 
+  /* 测试版示例数据：名单与课程表写入本机数据目录 */
+  function seedTestData(kind) {
+    if (!bridge.testSeedData) { ok('当前版本不支持载入测试数据'); return; }
+    Promise.resolve(bridge.testSeedData(kind)).then((r) => {
+      if (!r || !r.ok) { ok((r && r.error) || '测试数据载入失败'); return; }
+      if (kind === 'clean') { ok('测试数据已清除，课程表已从当天备份恢复'); return; }
+      ok(kind === 'timetable' ? '测试课程表已载入' : (kind === 'roster' ? '测试名单已载入' : '测试名单与课程表已载入'));
+    }).catch(() => ok('测试数据载入失败'));
+  }
+
+  /* 强制桌宠进入上课 / 放学状态，便于演示 */
+  function setPetState(mode) {
+    ensurePet(() => {
+      state.testPetState = mode === 'auto' ? '' : mode;
+      renderFish();
+      if (mode === 'homework' && !fishState.hwReady && !fishState.hwLoading && !fishState.hwFailed) {
+        fishLoadHwFrames();
+      }
+      if (mode === 'auto') ok('已恢复按课程表自动切换');
+      else if (mode === 'crawl') ok('已切换到上课状态');
+      else ok('已切换到放学状态');
+    });
+  }
+
   function fakeUpdateInfo() {
     state.updateInfo = {
       ok: true,
@@ -90,6 +113,8 @@
     if (action.startsWith('act:')) { runAction(action.slice(4)); return; }
     if (action.startsWith('clip:')) { playIdleClip(action.slice(5)); return; }
     if (action.startsWith('touch:')) { touch(action.slice(6)); return; }
+    if (action.startsWith('seed:')) { seedTestData(action.slice(5)); return; }
+    if (action.startsWith('petstate:')) { setPetState(action.slice(9)); return; }
     if (action.startsWith('freq:')) {
       const btn = document.querySelector('#petFreqGrid [data-freq="' + action.slice(5) + '"]');
       if (btn) btn.click(); else ok('频率按钮未找到');

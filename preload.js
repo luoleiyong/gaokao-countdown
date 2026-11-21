@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld('gaokao', {
   importData: () => ipcRenderer.invoke('app:import-data'),
   setFullScreen: (on) => ipcRenderer.invoke('window:set-fullscreen', on),
   setEggFullscreen: (on) => ipcRenderer.invoke('window:set-egg-fullscreen', on),
+  setTimerFullscreen: (on) => ipcRenderer.invoke('window:set-timer-fullscreen', on),
+  pickTimerBackground: () => ipcRenderer.invoke('timer:pick-background'),
+  deleteTimerBackground: (url) => ipcRenderer.invoke('timer:delete-background', url),
   getWeather: () => ipcRenderer.invoke('weather:get'),
   getWeatherHourly: () => ipcRenderer.invoke('weather:hourly'),
   checkUpdate: () => ipcRenderer.invoke('app:check-update'),
@@ -87,5 +90,6 @@ contextBridge.exposeInMainWorld('gaokao', {
   openTestPanel: () => ipcRenderer.invoke('test:open'),
   closeTestPanel: () => ipcRenderer.invoke('test:close'),
   testRun: (action) => ipcRenderer.invoke('test:run', action),
+  testSeedData: (kind) => ipcRenderer.invoke('test:seed-data', kind),
   onTestAction: (cb) => ipcRenderer.on('test:action', (_e, action) => cb(action))
 });

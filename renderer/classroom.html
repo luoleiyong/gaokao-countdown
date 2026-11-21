@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; media-src 'self' file:; font-src 'self';" />
 <title>课堂助手</title>
 <link rel="stylesheet" href="styles.css" />
 <link rel="stylesheet" href="classroom.css" />
@@ -104,22 +104,102 @@
       </div>
     </section>
 
-    <!-- 课堂计时 -->
+    <!-- 课堂计时：整窗液态玻璃界面 -->
     <section class="cls-page cls-timer" id="pageTimer" hidden>
-      <div class="timer-panel">
-        <div class="timer-display" id="timerDisplay">05:00</div>
-        <div class="timer-presets" id="timerPresets">
-          <button data-min="1">1 分钟</button>
-          <button data-min="3">3 分钟</button>
-          <button data-min="5" class="on">5 分钟</button>
-          <button data-min="10">10 分钟</button>
-          <button data-min="15">15 分钟</button>
+      <div class="timer-bg" aria-hidden="true">
+        <div class="timer-bg__liquid">
+          <i class="timer-blob timer-blob--a"></i>
+          <i class="timer-blob timer-blob--b"></i>
+          <i class="timer-blob timer-blob--c"></i>
+          <i class="timer-shine"></i>
         </div>
-        <div class="timer-actions">
-          <button class="cls-primary" id="btnTimerStart">开始计时</button>
-          <button class="cls-ghost" id="btnTimerReset">重置</button>
+        <img class="timer-bg__media" id="timerBgImg" alt="" hidden />
+        <video class="timer-bg__media" id="timerBgVideo" muted playsinline loop preload="auto" hidden></video>
+        <div class="timer-bg__veil"></div>
+      </div>
+      <div class="timer-stage">
+        <button class="timer-back timer-glass" id="btnTimerBack">‹ 返回</button>
+        <div class="timer-mode timer-glass" id="timerMode">
+          <button data-mode="countdown" class="on">倒计时</button>
+          <button data-mode="stopwatch">计时器</button>
         </div>
-        <p class="timer-tip" id="timerTip">选择时长后点击「开始计时」</p>
+        <div class="timer-clock" id="timerClock">
+          <div class="timer-digit-group">
+            <div class="timer-digit-col">
+              <button data-step="600" aria-label="加十分钟">+</button>
+              <b id="timerM1">0</b>
+              <button data-step="-600" aria-label="减十分钟">−</button>
+            </div>
+            <div class="timer-digit-col">
+              <button data-step="60" aria-label="加一分钟">+</button>
+              <b id="timerM0">5</b>
+              <button data-step="-60" aria-label="减一分钟">−</button>
+            </div>
+          </div>
+          <span class="timer-colon">:</span>
+          <div class="timer-digit-group">
+            <div class="timer-digit-col">
+              <button data-step="10" aria-label="加十秒">+</button>
+              <b id="timerS1">0</b>
+              <button data-step="-10" aria-label="减十秒">−</button>
+            </div>
+            <div class="timer-digit-col">
+              <button data-step="1" aria-label="加一秒">+</button>
+              <b id="timerS0">0</b>
+              <button data-step="-1" aria-label="减一秒">−</button>
+            </div>
+          </div>
+        </div>
+        <div class="timer-fixed timer-glass" id="timerFixed">
+          <button data-sec="60">1 分钟</button>
+          <button data-sec="180">3 分钟</button>
+          <button data-sec="300" class="on">5 分钟</button>
+          <button data-sec="600">10 分钟</button>
+          <button data-sec="900">15 分钟</button>
+        </div>
+        <div class="timer-bottom">
+          <button class="timer-tool timer-glass" id="btnTimerFull"><i>⛶</i>全屏</button>
+          <button class="timer-play" id="btnTimerStart" title="开始计时"></button>
+          <button class="timer-tool timer-glass" id="btnTimerReset"><i>↻</i>重置</button>
+        </div>
+        <div class="timer-full-actions">
+          <button class="timer-full-btn is-primary" id="btnTimerPause">暂停</button>
+          <button class="timer-full-btn" id="btnTimerExit">退出</button>
+        </div>
+        <p class="timer-tip" id="timerTip">设置时长后点击开始，3 秒后自动全屏</p>
+        <button class="timer-bg-btn timer-glass" id="btnTimerBg">更换背景</button>
+        <div class="timer-settings timer-glass" id="timerBgPanel" hidden>
+          <div class="timer-settings__head">
+            <b>计时背景</b>
+            <button id="btnTimerBgClose" title="关闭">×</button>
+          </div>
+          <div class="timer-settings__actions">
+            <button class="timer-settings__btn" id="btnTimerBgPick">导入动画 / 图片</button>
+          </div>
+          <p class="timer-settings__label" id="timerBgListLabel" hidden>已导入背景</p>
+          <div class="timer-bg-list" id="timerBgList" hidden></div>
+          <div class="timer-settings__actions">
+            <button class="timer-settings__btn timer-bg-opt" data-bg-mode="theme">主题</button>
+            <button class="timer-settings__btn timer-bg-opt" data-bg-mode="black">纯黑</button>
+            <button class="timer-settings__btn timer-bg-opt" data-bg-mode="white">纯白</button>
+          </div>
+          <p class="timer-settings__name" id="timerBgName">当前：主题默认背景</p>
+          <label class="timer-settings__range">
+            <span>界面透明度</span>
+            <input id="timerOpacity" type="range" min="20" max="95" value="55" />
+            <em id="timerOpacityVal">55%</em>
+          </label>
+          <label class="timer-settings__range">
+            <span>背景遮罩</span>
+            <input id="timerVeil" type="range" min="0" max="80" value="25" />
+            <em id="timerVeilVal">25%</em>
+          </label>
+          <label class="timer-settings__range">
+            <span>毛玻璃模糊</span>
+            <input id="timerBlur" type="range" min="0" max="30" value="18" />
+            <em id="timerBlurVal">18px</em>
+          </label>
+        </div>
       </div>
     </section>
   </main>

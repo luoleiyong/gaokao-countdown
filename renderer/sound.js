@@ -114,6 +114,11 @@ window.GkSound = (function () {
     [523.25, 659.25, 783.99].forEach((f, i) => tone(0.12 + i * 0.11, f, 0.05, 0.5));
   }
 
+  /* 课堂计时读秒：最后几秒每秒轻响，3 秒内提高音调 */
+  function playTimerTick(strong) {
+    tone(0, strong ? 1320 : 880, strong ? 0.06 : 0.032, strong ? 0.16 : 0.09);
+  }
+
   /* 里程碑彩蛋卡片出现：低频钟声 + 泛音 */
   function playEggReveal() {
     tone(0, 196, 0.1, 1.6);
@@ -123,5 +128,5 @@ window.GkSound = (function () {
     [1318.5, 1568, 2093].forEach((f, i) => tone(0.18 + i * 0.06, f, 0.04, 0.7));
   }
 
-  return { unlock, playChime, playShake, playDrawDone, playEggStart, playEggReveal };
+  return { unlock, playChime, playShake, playDrawDone, playTimerTick, playEggStart, playEggReveal };
 })();

@@ -6,6 +6,7 @@
 const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, dialog, net, shell, globalShortcut } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const { pathToFileURL, fileURLToPath } = require('url');
 const crypto = require('crypto');
 const { execFile, execFileSync, spawn } = require('child_process');
 
@@ -72,6 +73,8 @@ let quitting = false;
 let mode = 'panel';
 let eggFullscreen = false;
 let eggBounds = null;
+let timerFullscreen = false;
+let timerBounds = null;
 let firstTodayLaunch = false;
 let petScale = 1;
 let panelBounds = null;
@@ -382,6 +385,18 @@ function defaultTimetable() {
     }
   };
 }
+/* 测试版示例课程表：工作日填满科目，周末留空 */
+function demoTimetable() {
+  const t = defaultTimetable();
+  t.title = '测试课程表（示例）';
+  const subjects = ['语文', '数学', '英语', '物理', '化学', '生物', '自习', '体育'];
+  t.periods = t.periods.map((p, i) => ({
+    ...p,
+    cells: TIMETABLE_DAYS.map((_, day) => (day > 4 ? '' : subjects[(i + day) % subjects.length]))
+  }));
+  return t;
+}
+
 function normalizeTimetableDate(v) {
   const s = String(v == null ? '' : v).trim();
   let m = s.match(/(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})/);
@@ -660,11 +675,14 @@ const LOG_LABELS = {
   EVENT_SAVE: '保存重要日子',
   GROUP_DRAW: '随机分组',
   TIMER_DONE: '课堂计时结束',
+  TIMER_BG: '更换计时背景',
+  TIMER_BG_DEL: '删除计时背景',
   SHORTCUT_FAIL: '全局快捷键注册失败',
   RENDER_GONE: '界面进程异常退出',
   RENDER_RECOVER: '界面进程已重新加载',
   MILESTONE_EGG: '倒计时里程碑彩蛋',
   MILESTONE_EGG_RESET: '重置彩蛋播放',
+  TEST_SEED: '载入测试数据',
   PET_ENCOURAGE: '桌面宠物课程提示',
   MAIN_ERROR: '主进程异常',
   DWM_ERR: '窗口特效设置失败',
@@ -1264,7 +1282,9 @@ function setAutoLaunchEnabled(on) {
 
 /* ---------------- 测试版控制面板 ---------------- */
 function isTestBuildApp() {
-  return /-test/i.test(app.getVersion()) || process.argv.includes('--test-mode');
+  // 正式版只认版本号：打包后的程序即使带 --test-mode 也不会启用测试面板
+  if (/-test/i.test(app.getVersion())) return true;
+  return !app.isPackaged && process.argv.includes('--test-mode');
 }
 
 function openTestPanel() {
@@ -1950,6 +1970,7 @@ function wireIpc() {
     mode,
     skins: SKINS,
     version: app.getVersion(),
+    testMode: isTestBuildApp(),
     platform: process.platform,
     startedAt: new Date().toISOString()
   }));
@@ -2107,6 +2128,69 @@ function wireIpc() {
     return { ok: true };
   });
 
+  /* 课堂计时全屏：手动保存/恢复窗口尺寸，避免系统全屏切换残留大窗口 */
+  ipcMain.handle('window:set-timer-fullscreen', (_e, on) => {
+    if (!win || win.isDestroyed()) return { ok: false };
+    if (on) {
+      if (timerFullscreen) return { ok: true };
+      const bounds = win.getBounds();
+      const display = screen.getDisplayMatching(bounds);
+      const alreadyFull = bounds.width >= display.bounds.width - 2 && bounds.height >= display.bounds.height - 2;
+      timerBounds = alreadyFull ? (store.panelBounds || bounds) : bounds;
+      timerFullscreen = true;
+      win.setBounds(display.bounds);
+      win.show();
+    } else if (timerFullscreen) {
+      timerFullscreen = false;
+      const b = timerBounds || store.panelBounds;
+      timerBounds = null;
+      if (b) win.setBounds(b);
+      win.show();
+    }
+    return { ok: true };
+  });
+
+  /* 计时背景：选择图片或动画，复制到数据目录后返回本地地址 */
+  ipcMain.handle('timer:pick-background', async () => {
+    if (!win || win.isDestroyed()) return { ok: false };
+    const res = await dialog.showOpenDialog(win, {
+      title: '选择计时背景动画或图片',
+      properties: ['openFile'],
+      filters: [
+        { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
+        { name: '视频', extensions: ['mp4', 'webm'] }
+      ]
+    });
+    if (res.canceled || !res.filePaths.length) return { ok: false, canceled: true };
+    const src = res.filePaths[0];
+    const ext = path.extname(src).toLowerCase();
+    try {
+      const dir = path.join(USER_DIR, 'timer-bg');
+      fs.mkdirSync(dir, { recursive: true });
+      const dest = path.join(dir, 'timer-bg-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) + ext);
+      fs.copyFileSync(src, dest);
+      appendLog('TIMER_BG', { ext });
+      return { ok: true, url: pathToFileURL(dest).href, name: path.basename(src), ext };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  /* 删除已导入的计时背景：仅允许删除数据目录 timer-bg 内的文件 */
+  ipcMain.handle('timer:delete-background', (_e, url) => {
+    try {
+      const file = fileURLToPath(String(url || ''));
+      const dir = path.resolve(path.join(USER_DIR, 'timer-bg')) + path.sep;
+      const resolved = path.resolve(file);
+      if (!resolved.startsWith(dir)) return { ok: false, error: '路径不允许' };
+      if (fs.existsSync(resolved)) fs.unlinkSync(resolved);
+      appendLog('TIMER_BG_DEL', { file: path.basename(resolved) });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
   ipcMain.handle('weather:get', async () => {
     const cache = store.weatherCache;
     const fresh = cache && cache.data && cache.data.source === 'weather.com.cn' &&
@@ -2147,6 +2231,33 @@ function wireIpc() {
   });
 
   ipcMain.handle('app:check-update', async () => {
+    // 测试版：返回固定的演示更新，不访问 GitHub 或任何更新源
+    if (isTestBuildApp()) {
+      const current = app.getVersion();
+      const latest = '2.2.7-test';
+      appendLog('UPDATE_CHECK', { latest, current, hasUpdate: true, source: 'test-fake' });
+      return {
+        configured: true,
+        ok: true,
+        current,
+        latest,
+        notes: '测试版演示更新（不读取 GitHub）',
+        notesFull: '这是测试版的假更新推送，不会访问 GitHub 或任何更新源。\n- 用于验证更新公告与更新按钮\n- 新增课堂计时自定义时长、最后 10 秒提示音与自动全屏\n- 测试数据与上课 / 放学状态一键切换',
+        highlights: ['测试版假更新，不访问 GitHub', '课堂计时支持自定义时长与自动全屏', '测试数据与桌宠状态一键切换'],
+        url: '',
+        pageUrl: '',
+        mirrors: [],
+        setupUrl: '',
+        portableUrl: '',
+        setupMirrors: [],
+        portableMirrors: [],
+        downloaded: false,
+        downloadFilePath: '',
+        downloading: false,
+        hasUpdate: true,
+        source: 'test-fake'
+      };
+    }
     const current = app.getVersion();
     let latest = '';
     let notes = '';
@@ -2730,6 +2841,65 @@ function wireIpc() {
     if (testWin && !testWin.isDestroyed()) testWin.close();
     return { ok: true };
   });
+  /* 测试版：一键写入示例名单与课程表，方便直接演示 */
+  ipcMain.handle('test:seed-data', (_e, kind) => {
+    if (!isTestBuildApp()) return { ok: false, error: '仅测试版可用' };
+    const what = String(kind || 'all');
+    const result = { ok: true, roster: false, timetable: false };
+    if (what === 'clean') {
+      const before = store.classroom.rosters.length;
+      store.classroom.rosters = store.classroom.rosters.filter((r) => r.name !== '测试班级（示例）');
+      if (!store.classroom.rosters.some((r) => r.id === store.classroom.activeRosterId)) {
+        store.classroom.activeRosterId = store.classroom.rosters.length ? store.classroom.rosters[0].id : '';
+      }
+      // 课程表从当天启动备份恢复，避免测试数据覆盖真实课表
+      try {
+        const file = path.join(backupDir(), `store-${dateKey()}.json`);
+        if (fs.existsSync(file)) {
+          const backup = JSON.parse(fs.readFileSync(file, 'utf8'));
+          if (backup.classroom && backup.classroom.timetable) {
+            store.classroom.timetable = normalizeTimetable(backup.classroom.timetable);
+            result.timetable = true;
+          }
+        }
+      } catch { /* 忽略恢复失败 */ }
+      saveStore();
+      appendLog('TEST_SEED', { kind: what });
+      result.removed = before - store.classroom.rosters.length;
+      return result;
+    }
+    if (what === 'roster' || what === 'all') {
+      let roster = store.classroom.rosters.find((r) => r.name === '测试班级（示例）');
+      if (!roster) {
+        roster = {
+          id: uid('r'),
+          name: '测试班级（示例）',
+          createdAt: Date.now(),
+          names: [],
+          lastPickId: '',
+          roundIds: []
+        };
+        store.classroom.rosters.push(roster);
+      }
+      const exists = new Set(roster.names.map((n) => n.name));
+      ['张明', '李华', '王芳', '刘洋', '陈晨', '杨帆', '赵磊', '周悦', '吴桐', '徐宁', '孙可', '马骁', '朱琳', '胡佳', '高远', '林夏']
+        .forEach((name) => {
+          if (exists.has(name)) return;
+          exists.add(name);
+          roster.names.push({ id: uid('n'), name, weight: 1, count: 0, pickedAt: 0 });
+        });
+      store.classroom.activeRosterId = roster.id;
+      result.roster = true;
+    }
+    if (what === 'timetable' || what === 'all') {
+      store.classroom.timetable = demoTimetable();
+      result.timetable = true;
+    }
+    saveStore();
+    appendLog('TEST_SEED', { kind: what });
+    return result;
+  });
+
   ipcMain.handle('test:run', (_e, action) => {
     if (!isTestBuildApp()) return { ok: false, error: '仅测试版可用' };
     const name = String(action || '');

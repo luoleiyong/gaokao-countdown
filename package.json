@@ -1,6 +1,6 @@
 {
   "name": "gaokao-countdown",
-  "version": "2.2.5",
+  "version": "2.2.8",
   "description": "高考倒计时",
   "main": "main.js",
   "author": {
@@ -10,6 +10,7 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --win portable nsis",
+    "build:official": "node scripts/build-official.js dist30",
     "verify": "electron scripts/verify-assets.js",
     "verify:fast": "electron scripts/verify-assets.js --fast"
   },

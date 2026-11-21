@@ -51,6 +51,7 @@ const state = {
   shaking: false,
   debug: false,
   debugPreview: false,
+  testPetState: '',
   onboarded: false,
   onboardAutoLaunch: false,
   weather: null,
@@ -89,6 +90,11 @@ function escapeHtml(v) {
   return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[c]));
+}
+
+/* 测试版：更新检查走假数据，不访问 GitHub */
+function isTestBuildClient() {
+  return !!state.testMode || /-test/i.test(state.version);
 }
 
 function fmtTargetCN(target) {
@@ -179,6 +185,8 @@ async function boot() {
   state.updateUrl = s.updateUrl || '';
   state.weatherCity = s.weatherCity || '';
   state.version = init.version || '1.0.0';
+  state.testMode = !!init.testMode;
+  window.__gkTestMode = state.testMode;
   const sel = Array.isArray(s.selectedSubjects) ? s.selectedSubjects : [];
   state.selectedSubjects = sel
     .map((id) => (id === 'foreign' ? 'english' : id))
@@ -200,6 +208,12 @@ async function boot() {
   applySkin(state.skin);
   renderVersion(init.version);
   bindEvents();
+  // 测试版才加载控制面板脚本，正式版包内不会出现入口
+  if (state.testMode) {
+    const script = document.createElement('script');
+    script.src = 'testpanel.js';
+    document.body.appendChild(script);
+  }
   renderSkinGrid();
   renderPetFreq();
   renderAll();
@@ -256,12 +270,12 @@ async function boot() {
 
   refreshWeather();
   setInterval(() => refreshWeather(), 10 * 60 * 1000);
-  // 自动检测更新（可在设置中关闭），每 6 小时静默检测一次
-  if (state.updateAutoCheck) {
+  // 自动检测更新（可在设置中关闭），每 6 小时静默检测一次；测试版不自动联网检查
+  if (state.updateAutoCheck && !isTestBuildClient()) {
     setTimeout(() => checkUpdates(true), 1800);
   }
   setInterval(() => {
-    if (state.updateAutoCheck) checkUpdates(true);
+    if (state.updateAutoCheck && !isTestBuildClient()) checkUpdates(true);
   }, 6 * 60 * 60 * 1000);
 
   // 首次使用先完成配置；之后每天启动若今日尚未抽签，弹出全屏首抽引导
@@ -959,6 +973,18 @@ function renderFish() {
     phase = `class-${course.start}-${course.end}-${course.subject}`;
   } else {
     phase = 'idle-' + (first ? first.course.label + first.course.time : dateKey(now));
+  }
+
+  // 测试面板：强制上课 / 放学状态，便于演示与验收
+  if (state.testPetState === 'crawl') {
+    mode = 'crawl';
+    progress = 0.5;
+    phase = 'test-crawl';
+    lines = FISH_CLASS_LINES;
+  } else if (state.testPetState === 'homework') {
+    mode = 'homework';
+    phase = 'test-homework';
+    lines = homeworkLines();
   }
 
   if (fishState.actionBusy && mode !== fishState.actionMode) fishStopAction(false);

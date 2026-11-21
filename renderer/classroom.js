@@ -22,7 +22,7 @@ const state = {
   projection: false,
   groupMode: 'count',
   groupValue: 4,
-  timer: { total: 300, left: 300, running: false, tick: null }
+  timer: { mode: 'countdown', total: 300, left: 300, elapsed: 0, running: false, tick: null, endAt: 0, startAt: 0, full: false, autoFullTimer: null }
 };
 
 function esc(v) {
@@ -802,12 +802,36 @@ function fmtTimer(sec) {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+function timerParts(sec) {
+  const total = Math.max(0, Math.floor(sec));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return [Math.floor(m / 10) % 10, m % 10, Math.floor(s / 10), s % 10];
+}
+
 function renderTimer() {
-  $('timerDisplay').textContent = fmtTimer(state.timer.left);
-  $('btnTimerStart').textContent = state.timer.running
+  const t = state.timer;
+  const value = t.mode === 'stopwatch' ? t.elapsed : t.left;
+  const parts = timerParts(value);
+  ['timerM1', 'timerM0', 'timerS1', 'timerS0'].forEach((id, i) => {
+    const el = $(id);
+    if (el) el.textContent = String(parts[i]);
+  });
+  document.body.classList.toggle('timer-running', t.running);
+  document.body.classList.toggle('timer-done', t.mode === 'countdown' && t.left <= 0);
+  document.body.classList.toggle('timer-stopwatch', t.mode === 'stopwatch');
+  $('btnTimerPause').textContent = t.running
     ? '暂停'
-    : (state.timer.left < state.timer.total && state.timer.left > 0 ? '继续计时' : '开始计时');
-  document.body.classList.toggle('timer-running', state.timer.running);
+    : (t.left < t.total && t.left > 0 && t.mode === 'countdown' ? '继续' : (t.mode === 'stopwatch' && t.elapsed > 0 ? '继续' : '开始'));
+  document.querySelectorAll('#timerMode button').forEach((b) => {
+    b.classList.toggle('on', b.dataset.mode === t.mode);
+  });
+  document.querySelectorAll('#timerFixed button').forEach((b) => {
+    b.classList.toggle('on', t.mode === 'countdown' && Number(b.dataset.sec) === t.total);
+  });
+  document.querySelectorAll('.timer-digit-col button').forEach((b) => {
+    b.disabled = t.running;
+  });
 }
 
 function stopTimerTick() {
@@ -817,16 +841,110 @@ function stopTimerTick() {
   }
 }
 
-function setTimerMinutes(min) {
+/* 设置倒计时时长（固定时间 / 数字加减共用） */
+function applyTimerSeconds(total, tip) {
   stopTimerTick();
-  state.timer.running = false;
-  state.timer.total = Math.max(60, (Number(min) || 5) * 60);
-  state.timer.left = state.timer.total;
+  cancelTimerFullscreen();
+  const t = state.timer;
+  t.mode = 'countdown';
+  t.running = false;
+  t.endAt = 0;
+  t.startAt = 0;
+  t.total = Math.max(5, Math.min(99 * 60 + 59, total));
+  t.left = t.total;
+  document.body.classList.remove('timer-done');
   renderTimer();
-  $('timerTip').textContent = `已选择 ${Math.round(state.timer.total / 60)} 分钟`;
+  $('timerTip').textContent = tip || `已设置 ${fmtTimer(t.total)}`;
 }
 
-function onTimerDone() {
+/* 倒计时 / 计时器（正计时）切换 */
+function setTimerMode(mode) {
+  const t = state.timer;
+  const next = mode === 'stopwatch' ? 'stopwatch' : 'countdown';
+  if (t.mode === next) return;
+  stopTimerTick();
+  cancelTimerFullscreen();
+  t.running = false;
+  t.endAt = 0;
+  t.startAt = 0;
+  t.mode = next;
+  if (next === 'stopwatch') t.elapsed = 0;
+  else t.left = t.total;
+  document.body.classList.remove('timer-done');
+  renderTimer();
+  $('timerTip').textContent = next === 'stopwatch'
+    ? '计时器：从 0 开始正计时'
+    : '设置时长后点击开始，3 秒后自动全屏';
+}
+
+function stepTimer(delta) {
+  if (state.timer.mode !== 'countdown') return;
+  applyTimerSeconds(state.timer.total + Number(delta || 0), '');
+}
+
+function cancelTimerFullscreen() {
+  if (state.timer.autoFullTimer) {
+    clearTimeout(state.timer.autoFullTimer);
+    state.timer.autoFullTimer = null;
+  }
+}
+
+/* 开始计时 3 秒后自动进入全屏，只保留大号倒计时 */
+function scheduleTimerFullscreen() {
+  const t = state.timer;
+  if (t.full) return;
+  cancelTimerFullscreen();
+  $('timerTip').textContent = '计时中 · 3 秒后自动全屏';
+  t.autoFullTimer = setTimeout(() => {
+    t.autoFullTimer = null;
+    enterTimerFullscreen();
+  }, 3000);
+}
+
+async function enterTimerFullscreen() {
+  const t = state.timer;
+  if (t.full) return;
+  t.full = true;
+  if (state.projection) setProjection(false);
+  document.body.classList.add('timer-full');
+  renderTimer();
+  const bgVideo = $('timerBgVideo');
+  if (bgVideo && !bgVideo.hidden) {
+    const p = bgVideo.play();
+    if (p && p.catch) p.catch(() => { /* 忽略 */ });
+  }
+  $('timerTip').textContent = '按 Esc 或点击空白处退出全屏';
+  try {
+    if (bridge.setTimerFullscreen) await bridge.setTimerFullscreen(true);
+    else if (bridge.setFullScreen) await bridge.setFullScreen(true);
+  } catch (e) { /* 忽略 */ }
+}
+
+async function exitTimerFullscreen() {
+  const t = state.timer;
+  if (!t.full) return;
+  t.full = false;
+  document.body.classList.remove('timer-full');
+  renderTimer();
+  const done = t.mode === 'countdown' && t.left <= 0;
+  const paused = t.mode === 'stopwatch' ? t.elapsed > 0 : t.left < t.total;
+  $('timerTip').textContent = done
+    ? '时间到！'
+    : (t.running ? (t.mode === 'stopwatch' ? '计时中…' : '倒计时中…') : (paused ? '已暂停' : '设置时长后点击开始，3 秒后自动全屏'));
+  try {
+    if (bridge.setTimerFullscreen) await bridge.setTimerFullscreen(false);
+    else if (bridge.setFullScreen) await bridge.setFullScreen(false);
+  } catch (e) { /* 忽略 */ }
+}
+
+function finishTimer() {
+  const t = state.timer;
+  stopTimerTick();
+  cancelTimerFullscreen();
+  t.running = false;
+  t.endAt = 0;
+  t.startAt = 0;
+  renderTimer();
   if (window.GkSound) {
     try {
       GkSound.unlock();
@@ -836,41 +954,375 @@ function onTimerDone() {
   toast('时间到！');
   document.body.classList.add('timer-flash');
   setTimeout(() => document.body.classList.remove('timer-flash'), 1600);
-  if (bridge.log) bridge.log('TIMER_DONE', { total: state.timer.total });
+  $('timerTip').textContent = t.full ? '时间到！按 Esc 退出全屏' : '时间到！';
+  if (bridge.log) bridge.log('TIMER_DONE', { total: t.total });
+}
+
+function timerTick() {
+  const t = state.timer;
+  if (!t.running) return;
+  if (t.mode === 'stopwatch') {
+    const elapsed = Math.max(0, Math.floor((Date.now() - t.startAt) / 1000));
+    if (elapsed !== t.elapsed) {
+      t.elapsed = elapsed;
+      renderTimer();
+    }
+    return;
+  }
+  if (!t.endAt) return;
+  const left = Math.max(0, Math.ceil((t.endAt - Date.now()) / 1000));
+  if (left === t.left) return;
+  t.left = left;
+  renderTimer();
+  if (left <= 0) {
+    finishTimer();
+    return;
+  }
+  // 最后 10 秒每秒提示，最后 3 秒提高音调
+  if (left <= 10 && window.GkSound) {
+    try {
+      GkSound.unlock();
+      GkSound.playTimerTick(left <= 3);
+    } catch (e) { /* 忽略 */ }
+  }
 }
 
 function toggleTimer() {
-  if (state.timer.running) {
+  const t = state.timer;
+  if (t.running) {
+    if (t.mode === 'stopwatch') {
+      t.elapsed = Math.max(0, Math.floor((Date.now() - t.startAt) / 1000));
+    } else {
+      t.left = Math.max(0, Math.ceil((t.endAt - Date.now()) / 1000));
+    }
     stopTimerTick();
-    state.timer.running = false;
+    cancelTimerFullscreen();
+    t.running = false;
+    t.endAt = 0;
+    t.startAt = 0;
     renderTimer();
-    $('timerTip').textContent = '已暂停';
+    $('timerTip').textContent = t.full ? '已暂停 · 按 Esc 或点击空白处退出' : '已暂停';
     return;
   }
-  if (state.timer.left <= 0) state.timer.left = state.timer.total;
-  state.timer.running = true;
-  state.timer.tick = setInterval(() => {
-    state.timer.left -= 1;
-    if (state.timer.left <= 0) {
-      state.timer.left = 0;
-      stopTimerTick();
-      state.timer.running = false;
-      renderTimer();
-      onTimerDone();
-      return;
-    }
-    renderTimer();
-  }, 1000);
+  document.body.classList.remove('timer-done');
+  t.running = true;
+  if (t.mode === 'stopwatch') {
+    t.startAt = Date.now() - t.elapsed * 1000;
+  } else {
+    if (t.left <= 0) t.left = t.total;
+    t.endAt = Date.now() + t.left * 1000;
+  }
+  if (window.GkSound) {
+    try { GkSound.unlock(); } catch (e) { /* 忽略 */ }
+  }
+  stopTimerTick();
+  t.tick = setInterval(timerTick, 250);
   renderTimer();
-  $('timerTip').textContent = '计时中…';
+  scheduleTimerFullscreen();
 }
 
 function resetTimer() {
+  const t = state.timer;
   stopTimerTick();
-  state.timer.running = false;
-  state.timer.left = state.timer.total;
+  cancelTimerFullscreen();
+  t.running = false;
+  t.endAt = 0;
+  t.startAt = 0;
+  if (t.mode === 'stopwatch') t.elapsed = 0;
+  else t.left = t.total;
+  document.body.classList.remove('timer-done');
+  if (t.full) exitTimerFullscreen();
   renderTimer();
-  $('timerTip').textContent = '已重置';
+  $('timerTip').textContent = t.mode === 'stopwatch' ? '计时器已归零' : '已重置，点击开始计时';
+}
+
+/* ---------------- 计时背景与液态玻璃设置 ---------------- */
+const TIMER_LOOK_KEY = 'cls-timer-look';
+const TIMER_BG_KEY = 'cls-timer-bg';
+const TIMER_BG_MODE_KEY = 'cls-timer-bg-mode';
+const TIMER_BG_LIST_KEY = 'cls-timer-bg-list';
+
+function readTimerLook() {
+  const look = { opacity: 55, veil: 25, blur: 18 };
+  try {
+    const saved = JSON.parse(localStorage.getItem(TIMER_LOOK_KEY) || 'null');
+    if (saved && typeof saved === 'object') {
+      if (Number.isFinite(Number(saved.opacity))) look.opacity = Math.min(95, Math.max(20, Number(saved.opacity)));
+      if (Number.isFinite(Number(saved.veil))) look.veil = Math.min(80, Math.max(0, Number(saved.veil)));
+      if (Number.isFinite(Number(saved.blur))) look.blur = Math.min(30, Math.max(0, Number(saved.blur)));
+    }
+  } catch (e) { /* 忽略 */ }
+  return look;
+}
+
+function applyTimerLook(look) {
+  const panel = $('pageTimer');
+  if (!panel) return;
+  panel.style.setProperty('--timer-opacity', String(look.opacity / 100));
+  panel.style.setProperty('--timer-veil', String(look.veil / 100));
+  panel.style.setProperty('--timer-blur', look.blur + 'px');
+  $('timerOpacity').value = String(look.opacity);
+  $('timerVeil').value = String(look.veil);
+  $('timerBlur').value = String(look.blur);
+  $('timerOpacityVal').textContent = look.opacity + '%';
+  $('timerVeilVal').textContent = look.veil + '%';
+  $('timerBlurVal').textContent = look.blur + 'px';
+}
+
+function readTimerBg() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TIMER_BG_KEY) || 'null');
+    return saved && saved.url ? saved : null;
+  } catch (e) { return null; }
+}
+
+function saveTimerBgList(list) {
+  try { localStorage.setItem(TIMER_BG_LIST_KEY, JSON.stringify(list.slice(0, 12))); } catch (e) { /* 忽略 */ }
+}
+
+function readTimerBgList() {
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem(TIMER_BG_LIST_KEY) || '[]'); } catch (e) { list = []; }
+  if (!Array.isArray(list)) list = [];
+  list = list.filter((x) => x && x.url).slice(0, 12);
+  const current = readTimerBg();
+  if (current && current.url && !list.some((x) => x.url === current.url)) {
+    list.unshift(current);
+    saveTimerBgList(list);
+  }
+  return list.slice(0, 12);
+}
+
+function rememberTimerBg(cfg) {
+  if (!cfg || !cfg.url) return;
+  const list = readTimerBgList().filter((x) => x.url !== cfg.url);
+  list.unshift(cfg);
+  saveTimerBgList(list);
+}
+
+function renderTimerBgList() {
+  const box = $('timerBgList');
+  const label = $('timerBgListLabel');
+  if (!box) return;
+  const list = readTimerBgList();
+  const current = readTimerBg();
+  const mode = readTimerBgMode();
+  box.innerHTML = '';
+  if (label) label.hidden = !list.length;
+  box.hidden = !list.length;
+  list.forEach((cfg) => {
+    const chip = document.createElement('div');
+    chip.className = 'timer-bg-chip' + (mode === 'custom' && current && current.url === cfg.url ? ' on' : '');
+    const nameBtn = document.createElement('button');
+    nameBtn.className = 'timer-bg-chip__name';
+    nameBtn.textContent = cfg.name || '已导入背景';
+    nameBtn.title = cfg.name || '';
+    nameBtn.addEventListener('click', () => selectTimerBg(cfg));
+    const delBtn = document.createElement('button');
+    delBtn.className = 'timer-bg-chip__del';
+    delBtn.textContent = '×';
+    delBtn.title = '删除这个背景';
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteTimerBg(cfg);
+    });
+    chip.appendChild(nameBtn);
+    chip.appendChild(delBtn);
+    box.appendChild(chip);
+  });
+}
+
+async function deleteTimerBg(cfg) {
+  if (!cfg || !cfg.url) return;
+  const label = cfg.name || '未命名背景';
+  if (typeof window.confirm === 'function' && !window.confirm('删除已导入的背景「' + label + '」？')) return;
+  saveTimerBgList(readTimerBgList().filter((x) => x.url !== cfg.url));
+  const current = readTimerBg();
+  if (current && current.url === cfg.url) setTimerBackground(null);
+  else applyTimerBackground();
+  if (bridge.deleteTimerBackground) {
+    try { await bridge.deleteTimerBackground(cfg.url); } catch (e) { /* 忽略 */ }
+  }
+  toast('已删除背景');
+}
+
+function selectTimerBg(cfg) {
+  if (!cfg || !cfg.url) return;
+  try {
+    localStorage.setItem(TIMER_BG_KEY, JSON.stringify(cfg));
+    localStorage.setItem(TIMER_BG_MODE_KEY, 'custom');
+  } catch (e) { /* 忽略 */ }
+  applyTimerBackground();
+}
+
+function handleTimerBgError() {
+  const current = readTimerBg();
+  if (current && current.url) {
+    saveTimerBgList(readTimerBgList().filter((x) => x.url !== current.url));
+  }
+  setTimerBackground(null);
+}
+
+function readTimerBgMode() {
+  let mode = '';
+  try { mode = localStorage.getItem(TIMER_BG_MODE_KEY) || ''; } catch (e) { /* 忽略 */ }
+  if (!['theme', 'black', 'white', 'custom'].includes(mode)) {
+    mode = readTimerBg() ? 'custom' : 'theme';
+  }
+  if (mode === 'custom' && !readTimerBg()) mode = 'theme';
+  return mode;
+}
+
+function updateTimerBgUi(mode, media) {
+  const panel = $('pageTimer');
+  if (panel) panel.setAttribute('data-bg', mode);
+  const name = $('timerBgName');
+  if (name) {
+    if (mode === 'black') name.textContent = '当前：纯黑背景';
+    else if (mode === 'white') name.textContent = '当前：纯白背景';
+    else if (mode === 'custom' && media) name.textContent = '当前：' + (media.name || '自定义背景');
+    else name.textContent = '当前：主题默认背景';
+  }
+  document.querySelectorAll('.timer-bg-opt').forEach((btn) => {
+    btn.classList.toggle('on', btn.dataset.bgMode === mode);
+  });
+}
+
+function applyTimerBackground() {
+  const img = $('timerBgImg');
+  const video = $('timerBgVideo');
+  if (!img || !video) return;
+  const mode = readTimerBgMode();
+  const media = readTimerBg();
+  if (mode === 'custom' && media) {
+    const isVideo = /\.(mp4|webm)(\?|$)/i.test(media.url);
+    if (isVideo) {
+      img.hidden = true;
+      img.removeAttribute('src');
+      video.hidden = false;
+      video.src = media.url;
+      video.muted = true;
+      video.loop = true;
+      if (!$('pageTimer').hidden) {
+        const p = video.play();
+        if (p && p.catch) p.catch(() => { /* 等用户交互或加载完成 */ });
+      }
+    } else {
+      video.pause();
+      video.hidden = true;
+      video.removeAttribute('src');
+      img.hidden = false;
+      img.src = media.url;
+    }
+  } else {
+    img.hidden = true;
+    img.removeAttribute('src');
+    video.pause();
+    video.hidden = true;
+    video.removeAttribute('src');
+  }
+  updateTimerBgUi(mode, media);
+  renderTimerBgList();
+}
+
+function setTimerBgMode(mode) {
+  const next = ['theme', 'black', 'white', 'custom'].includes(mode) ? mode : 'theme';
+  try { localStorage.setItem(TIMER_BG_MODE_KEY, next); } catch (e) { /* 忽略 */ }
+  applyTimerBackground();
+}
+
+function setTimerBackground(cfg) {
+  try {
+    if (cfg) {
+      localStorage.setItem(TIMER_BG_KEY, JSON.stringify(cfg));
+      localStorage.setItem(TIMER_BG_MODE_KEY, 'custom');
+    } else {
+      localStorage.removeItem(TIMER_BG_KEY);
+      localStorage.setItem(TIMER_BG_MODE_KEY, 'theme');
+    }
+  } catch (e) { /* 忽略 */ }
+  applyTimerBackground();
+}
+
+async function pickTimerBackground() {
+  if (!bridge.pickTimerBackground) { toast('当前版本不支持导入背景'); return; }
+  try {
+    const res = await bridge.pickTimerBackground();
+    if (!res || !res.ok) {
+      if (res && !res.canceled) toast(res.error || '导入失败');
+      return;
+    }
+    const cfg = { url: res.url, name: res.name, ext: res.ext };
+    rememberTimerBg(cfg);
+    setTimerBackground(cfg);
+    toast(/^(mp4|webm)$/i.test(res.ext) ? '背景已更新，全屏时循环播放' : '背景已更新');
+  } catch (e) {
+    toast('导入失败');
+  }
+}
+
+function bindTimerLook() {
+  const look = readTimerLook();
+  applyTimerLook(look);
+  const save = () => {
+    const next = {
+      opacity: Number($('timerOpacity').value),
+      veil: Number($('timerVeil').value),
+      blur: Number($('timerBlur').value)
+    };
+    applyTimerLook(next);
+    try { localStorage.setItem(TIMER_LOOK_KEY, JSON.stringify(next)); } catch (e) { /* 忽略 */ }
+  };
+  ['timerOpacity', 'timerVeil', 'timerBlur'].forEach((id) => {
+    $(id).addEventListener('input', save);
+  });
+  $('btnTimerBg').addEventListener('click', () => {
+    $('timerBgPanel').hidden = !$('timerBgPanel').hidden;
+  });
+  $('btnTimerBgClose').addEventListener('click', () => { $('timerBgPanel').hidden = true; });
+  $('btnTimerBgPick').addEventListener('click', pickTimerBackground);
+  document.querySelectorAll('.timer-bg-opt').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setTimerBgMode(btn.dataset.bgMode);
+      if (btn.dataset.bgMode !== 'custom') toast('背景已切换为' + btn.textContent.trim());
+    });
+  });
+  $('timerBgImg').addEventListener('error', handleTimerBgError);
+  $('timerBgVideo').addEventListener('error', handleTimerBgError);
+  applyTimerBackground();
+  document.addEventListener('click', (e) => {
+    const panel = $('timerBgPanel');
+    if (!panel || panel.hidden) return;
+    // 点击列表项会立即重建按钮，用事件路径判断，避免元素被移除后误判为点击空白
+    const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+    if (path.includes(panel) || path.includes($('btnTimerBg'))) return;
+    if (e.target.closest && e.target.closest('#btnTimerBg')) return;
+    panel.hidden = true;
+  });
+}
+
+/* 课堂内的标签切换：计时页占满整个窗口 */
+function activateTab(name) {
+  document.querySelectorAll('.cls-tab').forEach((t) => t.classList.toggle('on', t.dataset.tab === name));
+  $('pageRoll').hidden = name !== 'roll';
+  $('pageGroup').hidden = name !== 'group';
+  $('pageTimer').hidden = name !== 'timer';
+  document.body.classList.toggle('timer-page', name === 'timer');
+  if (name !== 'timer') {
+    cancelTimerFullscreen();
+    $('timerBgPanel').hidden = true;
+  }
+  const bgVideo = $('timerBgVideo');
+  if (bgVideo && !bgVideo.hidden) {
+    if (name === 'timer') {
+      const p = bgVideo.play();
+      if (p && p.catch) p.catch(() => { /* 忽略 */ });
+    } else {
+      bgVideo.pause();
+    }
+  }
+  if (name === 'timer') renderTimer();
+  if (name === 'group') renderGroupPlaceholder();
 }
 
 /* ---------------- 事件绑定 ---------------- */
@@ -957,23 +1409,34 @@ function bindStaticEvents() {
     renderGroupPlaceholder();
   });
   $('btnTimerStart').addEventListener('click', toggleTimer);
+  $('btnTimerPause').addEventListener('click', toggleTimer);
   $('btnTimerReset').addEventListener('click', resetTimer);
-  $('timerPresets').addEventListener('click', (e) => {
-    const btn = e.target.closest('button[data-min]');
-    if (!btn) return;
-    $('timerPresets').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === btn));
-    setTimerMinutes(Number(btn.dataset.min) || 5);
+  $('btnTimerFull').addEventListener('click', enterTimerFullscreen);
+  $('btnTimerExit').addEventListener('click', exitTimerFullscreen);
+  $('btnTimerBack').addEventListener('click', () => activateTab('roll'));
+  $('timerMode').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-mode]');
+    if (btn) setTimerMode(btn.dataset.mode);
   });
+  $('timerFixed').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-sec]');
+    if (!btn) return;
+    applyTimerSeconds(Number(btn.dataset.sec) || 300, `已选择 ${btn.textContent.trim()}`);
+  });
+  document.querySelectorAll('.timer-digit-col button').forEach((btn) => {
+    btn.addEventListener('click', () => stepTimer(Number(btn.dataset.step) || 0));
+  });
+  /* 全屏时点击空白处退出（按钮和数字区域除外） */
+  $('pageTimer').addEventListener('click', (e) => {
+    if (!state.timer.full) return;
+    if (e.target.closest('button') || e.target.closest('.timer-clock')) return;
+    exitTimerFullscreen();
+  });
+  renderTimer();
+  bindTimerLook();
 
   document.querySelectorAll('.cls-tab').forEach((tab) => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.cls-tab').forEach((t) => t.classList.toggle('on', t === tab));
-      const name = tab.dataset.tab;
-      $('pageRoll').hidden = name !== 'roll';
-      $('pageGroup').hidden = name !== 'group';
-      $('pageTimer').hidden = name !== 'timer';
-      if (name === 'group') renderGroupPlaceholder();
-    });
+    tab.addEventListener('click', () => activateTab(tab.dataset.tab));
   });
 
   $('btnAdmin') && $('btnAdmin').addEventListener('click', openAdmin);
@@ -1032,6 +1495,11 @@ function bindStaticEvents() {
 
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
+    if (state.timer.full) {
+      e.preventDefault();
+      exitTimerFullscreen();
+      return;
+    }
     if (!$('adminModal').hidden) return closeAdmin();
     if (state.projection) return setProjection(false);
     bridge.closeClassroom();

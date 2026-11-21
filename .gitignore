@@ -1,6 +1,7 @@
 node_modules/
 dist/
 dist*/
+.testpanel-stash/
 *.log
 .DS_Store
 Thumbs.db

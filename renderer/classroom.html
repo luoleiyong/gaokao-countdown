@@ -9,9 +9,23 @@
 <link rel="stylesheet" href="classroom.css" />
 </head>
 <body data-skin="board">
+<!-- 窗口最上方拖动区：全屏模式顶栏隐藏时仍然可拖 -->
+<div class="cls-dragbar" aria-hidden="true"></div>
 <div class="cls">
+  <!-- 与课堂计时完全一致的整窗背景：自定义图片/视频 + 液态玻璃 + 皮肤遮罩 -->
+  <div class="cls-liquid" aria-hidden="true">
+    <img class="timer-bg__media" id="clsBgImg" alt="" hidden />
+    <video class="timer-bg__media" id="clsBgVideo" muted playsinline loop preload="auto" hidden></video>
+    <div class="timer-bg__liquid">
+      <i class="timer-blob timer-blob--a"></i>
+      <i class="timer-blob timer-blob--b"></i>
+      <i class="timer-blob timer-blob--c"></i>
+      <i class="timer-shine"></i>
+    </div>
+    <div class="timer-bg__veil"></div>
+  </div>
   <header class="cls-top">
-    <button class="cls-back" id="btnBackHome" title="返回主界面">‹ 返回</button>
+    <button class="cls-back timer-glass" id="btnBackHome" title="返回主界面">‹ 返回</button>
     <div class="cls-brand">
       <span class="cls-seal">课</span>
       <span class="cls-brand__text">
@@ -19,18 +33,23 @@
         <i>随机点名 · 分组 · 计时</i>
       </span>
     </div>
-    <nav class="cls-tabs">
+    <nav class="cls-tabs timer-glass">
       <button class="cls-tab on" data-tab="roll">随机点名</button>
       <button class="cls-tab" data-tab="group">随机分组</button>
       <button class="cls-tab" data-tab="timer">课堂计时</button>
     </nav>
-    <button class="cls-project" id="btnProjection" title="全屏投影模式（Esc 退出）">投影</button>
+    <button class="cls-full timer-glass" id="btnFull" title="全屏模式（右上角「退出全屏」或 Esc 退出）">全屏</button>
+    <button class="bg-picbtn cls-bgpic timer-glass" id="btnClsBg" title="更换背景" aria-label="更换背景">
+      <img class="bg-picbtn__img" id="clsBgThumb" alt="" hidden />
+      <i class="bg-picbtn__theme" aria-hidden="true"></i>
+      <i class="bg-picbtn__mark" aria-hidden="true"></i>
+    </button>
   </header>
 
   <main class="cls-main">
     <!-- 随机点名 -->
     <section class="cls-page cls-roll" id="pageRoll">
-      <aside class="roster-pane" id="rosterPane">
+      <aside class="roster-pane timer-glass" id="rosterPane">
         <div class="roster-head">
           <span>名单</span>
           <button class="cls-link" id="btnImportRoster">导入</button>
@@ -82,7 +101,7 @@
 
     <!-- 随机分组 -->
     <section class="cls-page cls-group" id="pageGroup" hidden>
-      <div class="group-panel">
+      <div class="group-panel timer-glass">
         <div class="group-controls">
           <div class="group-field">
             <span>分组方式</span>
@@ -117,7 +136,7 @@
         <video class="timer-bg__media" id="timerBgVideo" muted playsinline loop preload="auto" hidden></video>
         <div class="timer-bg__veil"></div>
       </div>
-      <div class="timer-stage">
+      <div class="timer-stage timer-card">
         <button class="timer-back timer-glass" id="btnTimerBack">‹ 返回</button>
         <div class="timer-mode timer-glass" id="timerMode">
           <button data-mode="countdown" class="on">倒计时</button>
@@ -167,42 +186,72 @@
           <button class="timer-full-btn" id="btnTimerExit">退出</button>
         </div>
         <p class="timer-tip" id="timerTip">设置时长后点击开始，3 秒后自动全屏</p>
-        <button class="timer-bg-btn timer-glass" id="btnTimerBg">更换背景</button>
-        <div class="timer-settings timer-glass" id="timerBgPanel" hidden>
-          <div class="timer-settings__head">
-            <b>计时背景</b>
-            <button id="btnTimerBgClose" title="关闭">×</button>
-          </div>
-          <div class="timer-settings__actions">
-            <button class="timer-settings__btn" id="btnTimerBgPick">导入动画 / 图片</button>
-          </div>
-          <p class="timer-settings__label" id="timerBgListLabel" hidden>已导入背景</p>
-          <div class="timer-bg-list" id="timerBgList" hidden></div>
-          <div class="timer-settings__actions">
-            <button class="timer-settings__btn timer-bg-opt" data-bg-mode="theme">主题</button>
-            <button class="timer-settings__btn timer-bg-opt" data-bg-mode="black">纯黑</button>
-            <button class="timer-settings__btn timer-bg-opt" data-bg-mode="white">纯白</button>
-          </div>
-          <p class="timer-settings__name" id="timerBgName">当前：主题默认背景</p>
-          <label class="timer-settings__range">
-            <span>界面透明度</span>
-            <input id="timerOpacity" type="range" min="20" max="95" value="55" />
-            <em id="timerOpacityVal">55%</em>
-          </label>
-          <label class="timer-settings__range">
-            <span>背景遮罩</span>
-            <input id="timerVeil" type="range" min="0" max="80" value="25" />
-            <em id="timerVeilVal">25%</em>
-          </label>
-          <label class="timer-settings__range">
-            <span>毛玻璃模糊</span>
-            <input id="timerBlur" type="range" min="0" max="30" value="18" />
-            <em id="timerBlurVal">18px</em>
-          </label>
-        </div>
+        <button class="bg-picbtn timer-bg-btn timer-glass" id="btnTimerBg" title="更换背景" aria-label="更换背景">
+          <img class="bg-picbtn__img" id="timerBgThumb" alt="" hidden />
+          <i class="bg-picbtn__theme" aria-hidden="true"></i>
+          <i class="bg-picbtn__mark" aria-hidden="true"></i>
+        </button>
       </div>
     </section>
   </main>
+</div>
+
+<button class="cls-exitfull timer-glass" id="btnExitFull" hidden>退出全屏</button>
+
+<!-- 外观与背景：液态玻璃参数 + 背景更换合并为同一个面板（点名 / 分组 / 计时共用） -->
+<div class="timer-settings timer-glass bg-panel" id="timerBgPanel" hidden>
+  <div class="timer-settings__head">
+    <b>外观与背景</b>
+    <button id="btnTimerBgClose" title="关闭">×</button>
+  </div>
+  <div class="timer-settings__actions">
+    <button class="timer-settings__btn" id="btnTimerBgPick">导入动画 / 图片</button>
+  </div>
+  <p class="timer-settings__label" id="timerBgListLabel" hidden>已导入背景</p>
+  <div class="timer-bg-list" id="timerBgList" hidden></div>
+  <p class="timer-settings__label">内置动画</p>
+  <div class="timer-bg-list bg-builtin-list" id="timerBgBuiltin"></div>
+  <div class="timer-settings__actions">
+    <button class="timer-settings__btn timer-bg-opt" data-bg-mode="theme"><i class="bg-swatch" data-swatch="theme"></i>主题</button>
+  </div>
+  <p class="timer-settings__name" id="timerBgName">当前：主题默认背景</p>
+
+  <p class="timer-settings__label">液态玻璃</p>
+  <label class="timer-settings__range">
+    <span>界面透明度</span>
+    <input id="timerOpacity" type="range" min="20" max="95" value="55" />
+    <em id="timerOpacityVal">55%</em>
+  </label>
+  <label class="timer-settings__range">
+    <span>背景遮罩</span>
+    <input id="timerVeil" type="range" min="0" max="80" value="25" />
+    <em id="timerVeilVal">25%</em>
+  </label>
+  <label class="timer-settings__range">
+    <span>毛玻璃模糊</span>
+    <input id="timerBlur" type="range" min="0" max="40" value="18" />
+    <em id="timerBlurVal">18px</em>
+  </label>
+
+  <p class="timer-settings__label">界面</p>
+  <label class="timer-settings__range">
+    <span>文字大小</span>
+    <input id="lookFont" type="range" min="85" max="140" value="100" step="1" />
+    <em id="lookFontVal">100%</em>
+  </label>
+  <label class="timer-settings__range">
+    <span>面板宽度</span>
+    <input id="lookWidth" type="range" min="80" max="140" value="100" step="1" />
+    <em id="lookWidthVal">100%</em>
+  </label>
+  <label class="timer-settings__range">
+    <span>圆角大小</span>
+    <input id="lookRadius" type="range" min="4" max="36" value="18" step="1" />
+    <em id="lookRadiusVal">18px</em>
+  </label>
+  <div class="timer-settings__actions">
+    <button class="timer-settings__btn" id="btnLookReset">恢复默认</button>
+  </div>
 </div>
 
 <input type="file" id="fileRoster" accept=".txt,.csv,.xlsx,.xls" multiple hidden />

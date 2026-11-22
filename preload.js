@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('gaokao', {
   setFullScreen: (on) => ipcRenderer.invoke('window:set-fullscreen', on),
   setEggFullscreen: (on) => ipcRenderer.invoke('window:set-egg-fullscreen', on),
   setTimerFullscreen: (on) => ipcRenderer.invoke('window:set-timer-fullscreen', on),
+  setClassFullscreen: (on) => ipcRenderer.invoke('window:set-class-fullscreen', on),
   pickTimerBackground: () => ipcRenderer.invoke('timer:pick-background'),
   deleteTimerBackground: (url) => ipcRenderer.invoke('timer:delete-background', url),
   getWeather: () => ipcRenderer.invoke('weather:get'),
@@ -44,7 +45,6 @@ contextBridge.exposeInMainWorld('gaokao', {
   closeClassroom: () => ipcRenderer.send('classroom:close'),
   openTimetable: () => ipcRenderer.invoke('timetable:open'),
   closeTimetable: () => ipcRenderer.send('timetable:close'),
-  hideToTray: () => ipcRenderer.send('window:hide'),
   quit: () => ipcRenderer.send('app:quit'),
   onModeChanged: (cb) => ipcRenderer.on('mode:changed', (_e, data) => cb(data)),
   onSkinChanged: (cb) => ipcRenderer.on('skin:changed', (_e, data) => cb(data)),
@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld('gaokao', {
     }
   },
   classroomGet: () => ipcRenderer.invoke('classroom:get'),
+  classroomBuiltinBgs: () => ipcRenderer.invoke('classroom:builtin-bgs'),
   classroomAdminStatus: () => ipcRenderer.invoke('classroom:admin-status'),
   classroomAdminData: () => ipcRenderer.invoke('classroom:admin-data'),
   classroomAdminSetup: (password) => ipcRenderer.invoke('classroom:admin-setup', password),

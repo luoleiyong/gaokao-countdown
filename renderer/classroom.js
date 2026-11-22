@@ -19,7 +19,7 @@ const state = {
   mute: false,
   noRepeat: false,
   drawCount: 1,
-  projection: false,
+  classFull: false,
   groupMode: 'count',
   groupValue: 4,
   timer: { mode: 'countdown', total: 300, left: 300, elapsed: 0, running: false, tick: null, endAt: 0, startAt: 0, full: false, autoFullTimer: null }
@@ -723,14 +723,22 @@ async function doImportTimetable() {
   toast(`课程表已导入，共 ${periods.length} 节`);
 }
 
-/* ---------------- 全屏投影 ---------------- */
-async function setProjection(on) {
-  state.projection = !!on;
-  document.body.classList.toggle('projection', state.projection);
+/* ---------------- 全屏模式（点点名 / 分组 / 计时通用，右上角退出） ---------------- */
+async function setClassFullscreen(on) {
+  const next = !!on;
+  if (state.classFull === next) return;
+  state.classFull = next;
+  document.body.classList.toggle('cls-fullscreen', next);
+  const exit = $('btnExitFull');
+  if (exit) exit.hidden = !next;
+  if (next) {
+    $('timerBgPanel').hidden = true;
+    toast('全屏模式 · 点击右上角「退出全屏」或按 Esc 退出');
+  }
   try {
-    if (bridge.setFullScreen) await bridge.setFullScreen(state.projection);
+    if (bridge.setClassFullscreen) await bridge.setClassFullscreen(next);
+    else if (bridge.setFullScreen) await bridge.setFullScreen(next);
   } catch (e) { /* 忽略 */ }
-  if (state.projection) toast('投影模式 · 按 Esc 退出');
 }
 
 /* ---------------- 随机分组 ---------------- */
@@ -905,7 +913,6 @@ async function enterTimerFullscreen() {
   const t = state.timer;
   if (t.full) return;
   t.full = true;
-  if (state.projection) setProjection(false);
   document.body.classList.add('timer-full');
   renderTimer();
   const bgVideo = $('timerBgVideo');
@@ -1036,37 +1043,127 @@ function resetTimer() {
   $('timerTip').textContent = t.mode === 'stopwatch' ? '计时器已归零' : '已重置，点击开始计时';
 }
 
-/* ---------------- 计时背景与液态玻璃设置 ---------------- */
-const TIMER_LOOK_KEY = 'cls-timer-look';
+/* ---------------- 外观与背景：液态玻璃参数 + 背景设置合并为一个面板 ---------------- */
+const GLASS_KEY = 'cls-glass-look';
+const TIMER_LOOK_KEY = 'cls-timer-look'; // 旧版键：仅用于一次性迁移
+const UI_LOOK_KEY = 'cls-ui-look';       // 旧版键：仅用于一次性迁移
 const TIMER_BG_KEY = 'cls-timer-bg';
 const TIMER_BG_MODE_KEY = 'cls-timer-bg-mode';
 const TIMER_BG_LIST_KEY = 'cls-timer-bg-list';
+const GLASS_DEFAULT = { opacity: 55, veil: 25, blur: 18, font: 100, width: 100, radius: 18 };
 
-function readTimerLook() {
-  const look = { opacity: 55, veil: 25, blur: 18 };
-  try {
-    const saved = JSON.parse(localStorage.getItem(TIMER_LOOK_KEY) || 'null');
-    if (saved && typeof saved === 'object') {
-      if (Number.isFinite(Number(saved.opacity))) look.opacity = Math.min(95, Math.max(20, Number(saved.opacity)));
-      if (Number.isFinite(Number(saved.veil))) look.veil = Math.min(80, Math.max(0, Number(saved.veil)));
-      if (Number.isFinite(Number(saved.blur))) look.blur = Math.min(30, Math.max(0, Number(saved.blur)));
-    }
-  } catch (e) { /* 忽略 */ }
+function clampLook(v, min, max, def) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def;
+}
+
+/* 六个参数只存一份：透明度 / 遮罩 / 模糊 / 字号 / 宽度 / 圆角，面板里不再出现重复滑杆 */
+function readGlassLook() {
+  const look = Object.assign({}, GLASS_DEFAULT);
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(GLASS_KEY) || 'null'); } catch (e) { saved = null; }
+  if (!saved || typeof saved !== 'object') {
+    // 首次升级：把旧版「计时背景」与「液态玻璃外观」两份设置合并保存
+    saved = {};
+    try {
+      const oldTimer = JSON.parse(localStorage.getItem(TIMER_LOOK_KEY) || 'null');
+      const oldUi = JSON.parse(localStorage.getItem(UI_LOOK_KEY) || 'null');
+      if (oldTimer && typeof oldTimer === 'object') Object.assign(saved, oldTimer);
+      if (oldUi && typeof oldUi === 'object') Object.assign(saved, oldUi);
+    } catch (e) { /* 忽略 */ }
+    try { localStorage.setItem(GLASS_KEY, JSON.stringify(saved)); } catch (e) { /* 忽略 */ }
+  }
+  look.opacity = clampLook(saved.opacity, 20, 95, GLASS_DEFAULT.opacity);
+  look.veil = clampLook(saved.veil, 0, 80, GLASS_DEFAULT.veil);
+  look.blur = clampLook(saved.blur, 0, 40, GLASS_DEFAULT.blur);
+  look.font = clampLook(saved.font, 85, 140, GLASS_DEFAULT.font);
+  look.width = clampLook(saved.width, 80, 140, GLASS_DEFAULT.width);
+  look.radius = clampLook(saved.radius, 4, 36, GLASS_DEFAULT.radius);
   return look;
 }
 
-function applyTimerLook(look) {
-  const panel = $('pageTimer');
-  if (!panel) return;
-  panel.style.setProperty('--timer-opacity', String(look.opacity / 100));
-  panel.style.setProperty('--timer-veil', String(look.veil / 100));
-  panel.style.setProperty('--timer-blur', look.blur + 'px');
-  $('timerOpacity').value = String(look.opacity);
-  $('timerVeil').value = String(look.veil);
-  $('timerBlur').value = String(look.blur);
-  $('timerOpacityVal').textContent = look.opacity + '%';
-  $('timerVeilVal').textContent = look.veil + '%';
-  $('timerBlurVal').textContent = look.blur + 'px';
+function applyGlassLook(look) {
+  const root = document.body;
+  root.style.setProperty('--timer-opacity', String(look.opacity / 100));
+  root.style.setProperty('--timer-veil', String(look.veil / 100));
+  // 一个「毛玻璃模糊」同时驱动计时卡片与所有玻璃面板，两边不再各调一套
+  root.style.setProperty('--timer-blur', look.blur + 'px');
+  root.style.setProperty('--ui-glass-blur', look.blur + 'px');
+  root.style.setProperty('--ui-text-scale', String(look.font / 100));
+  root.style.setProperty('--ui-glass-w', String(look.width / 100));
+  root.style.setProperty('--glass-radius', look.radius + 'px');
+  // 字体颜色与强调色不再开放调节，始终跟随当前皮肤，避免拖动滑杆时整页变色
+  root.style.removeProperty('--text');
+  root.style.removeProperty('--gold');
+  const sync = (id, v) => { const el = $(id); if (el) el.value = String(v); };
+  const setTxt = (id, t) => { const el = $(id); if (el) el.textContent = t; };
+  sync('timerOpacity', look.opacity); setTxt('timerOpacityVal', look.opacity + '%');
+  sync('timerVeil', look.veil); setTxt('timerVeilVal', look.veil + '%');
+  sync('timerBlur', look.blur); setTxt('timerBlurVal', look.blur + 'px');
+  sync('lookFont', look.font); setTxt('lookFontVal', look.font + '%');
+  sync('lookWidth', look.width); setTxt('lookWidthVal', look.width + '%');
+  sync('lookRadius', look.radius); setTxt('lookRadiusVal', look.radius + 'px');
+}
+
+function readGlassFromPanel() {
+  const val = (id, def) => { const el = $(id); return el ? Number(el.value) : def; };
+  return {
+    opacity: val('timerOpacity', GLASS_DEFAULT.opacity),
+    veil: val('timerVeil', GLASS_DEFAULT.veil),
+    blur: val('timerBlur', GLASS_DEFAULT.blur),
+    font: val('lookFont', GLASS_DEFAULT.font),
+    width: val('lookWidth', GLASS_DEFAULT.width),
+    radius: val('lookRadius', GLASS_DEFAULT.radius)
+  };
+}
+
+function saveGlassLook(look) {
+  applyGlassLook(look);
+  try { localStorage.setItem(GLASS_KEY, JSON.stringify(look)); } catch (e) { /* 忽略 */ }
+}
+
+/* 外观与背景共用一个面板：顶栏缩略图 / 计时页缩略图都从这个面板进入 */
+function bindAppearance() {
+  applyGlassLook(readGlassLook());
+  ['timerOpacity', 'timerVeil', 'timerBlur', 'lookFont', 'lookWidth', 'lookRadius'].forEach((id) => {
+    const el = $(id);
+    if (el) el.addEventListener('input', () => saveGlassLook(readGlassFromPanel()));
+  });
+  const reset = $('btnLookReset');
+  if (reset) reset.addEventListener('click', () => {
+    saveGlassLook(Object.assign({}, GLASS_DEFAULT));
+    toast('已恢复默认外观');
+  });
+
+  const togglePanel = () => {
+    const panel = $('timerBgPanel');
+    if (!panel) return;
+    panel.hidden = !panel.hidden;
+  };
+  const topBgBtn = $('btnClsBg');
+  if (topBgBtn) topBgBtn.addEventListener('click', togglePanel);
+  const timerBgBtn = $('btnTimerBg');
+  if (timerBgBtn) timerBgBtn.addEventListener('click', togglePanel);
+  $('btnTimerBgClose').addEventListener('click', () => { $('timerBgPanel').hidden = true; });
+  $('btnTimerBgPick').addEventListener('click', pickTimerBackground);
+  document.querySelectorAll('.timer-bg-opt').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setTimerBgMode(btn.dataset.bgMode);
+      if (btn.dataset.bgMode !== 'custom') toast('背景已切换为' + btn.textContent.trim());
+    });
+  });
+  $('timerBgImg').addEventListener('error', handleTimerBgError);
+  $('timerBgVideo').addEventListener('error', handleTimerBgError);
+  applyTimerBackground();
+  document.addEventListener('click', (e) => {
+    const panel = $('timerBgPanel');
+    if (!panel || panel.hidden) return;
+    // 点击列表项会立即重建按钮，用事件路径判断，避免元素被移除后误判为点击空白
+    const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+    if (path.includes(panel) || path.includes($('btnTimerBg')) || path.includes($('btnClsBg'))) return;
+    if (e.target.closest && e.target.closest('#btnTimerBg, #btnClsBg, #btnExitFull')) return;
+    panel.hidden = true;
+  });
 }
 
 function readTimerBg() {
@@ -1086,7 +1183,9 @@ function readTimerBgList() {
   if (!Array.isArray(list)) list = [];
   list = list.filter((x) => x && x.url).slice(0, 12);
   const current = readTimerBg();
-  if (current && current.url && !list.some((x) => x.url === current.url)) {
+  // 内置动画不进「已导入背景」列表，避免出现无法删除的条目
+  const isBuiltin = (u) => /[\\/]assets[\\/]bg[\\/]/i.test(String(u || ''));
+  if (current && current.url && !isBuiltin(current.url) && !list.some((x) => x.url === current.url)) {
     list.unshift(current);
     saveTimerBgList(list);
   }
@@ -1126,8 +1225,81 @@ function renderTimerBgList() {
       e.stopPropagation();
       deleteTimerBg(cfg);
     });
+    const thumb = document.createElement('img');
+    thumb.className = 'timer-bg-chip__thumb';
+    thumb.alt = '';
+    if (/\.(mp4|webm)(\?|$)/i.test(cfg.url)) {
+      videoThumb(cfg.url).then((pic) => { if (pic && thumb.isConnected) thumb.src = pic; });
+    } else {
+      thumb.src = cfg.url;
+    }
+    chip.appendChild(thumb);
     chip.appendChild(nameBtn);
     chip.appendChild(delBtn);
+    box.appendChild(chip);
+  });
+}
+
+/* ---------------- 内置动画背景（随安装包一起分发，默认静音循环） ---------------- */
+const BUILTIN_BGS = [
+  { id: 'builtin-1', name: '内置动画 1', file: 'builtin-1.mp4' },
+  { id: 'builtin-2', name: '内置动画 2', file: 'builtin-2.mp4' }
+];
+
+let builtinUrlMap = null;
+
+function builtinBgUrlFallback(file) {
+  try { return new URL('../assets/bg/' + file, location.href).href; } catch (e) { return '../assets/bg/' + file; }
+}
+
+function builtinBgUrl(file) {
+  return (builtinUrlMap && builtinUrlMap[file]) || builtinBgUrlFallback(file);
+}
+
+// 打包后视频在 app.asar.unpacked 里，主进程给出真实 file:// 地址；源码运行时回退相对路径
+async function ensureBuiltinUrls() {
+  if (builtinUrlMap) return builtinUrlMap;
+  const map = {};
+  try {
+    if (bridge.classroomBuiltinBgs) {
+      const res = await bridge.classroomBuiltinBgs();
+      if (res && res.ok && res.urls) Object.keys(res.urls).forEach((k) => { map[k] = res.urls[k]; });
+    }
+  } catch (e) { /* 回退相对路径 */ }
+  BUILTIN_BGS.forEach((item) => { if (!map[item.file]) map[item.file] = builtinBgUrlFallback(item.file); });
+  builtinUrlMap = map;
+  return map;
+}
+
+function renderBuiltinBgs() {
+  const box = $('timerBgBuiltin');
+  if (!box) return;
+  if (!builtinUrlMap) {
+    ensureBuiltinUrls().then(() => renderBuiltinBgs()).catch(() => {});
+    return;
+  }
+  const mode = readTimerBgMode();
+  const current = readTimerBg();
+  box.innerHTML = '';
+  BUILTIN_BGS.forEach((item) => {
+    const url = builtinBgUrl(item.file);
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'timer-bg-chip bg-builtin-chip' + (mode === 'custom' && current && current.url === url ? ' on' : '');
+    chip.title = item.name + '（静音循环）';
+    const thumb = document.createElement('img');
+    thumb.className = 'timer-bg-chip__thumb';
+    thumb.alt = '';
+    videoThumb(url).then((pic) => { if (pic && thumb.isConnected) thumb.src = pic; });
+    const label = document.createElement('span');
+    label.className = 'bg-builtin-chip__name';
+    label.textContent = item.name;
+    chip.appendChild(thumb);
+    chip.appendChild(label);
+    chip.addEventListener('click', () => {
+      setTimerBackground({ url: url, name: item.name, ext: '.mp4', builtin: true });
+      toast('已切换到' + item.name);
+    });
     box.appendChild(chip);
   });
 }
@@ -1166,7 +1338,9 @@ function handleTimerBgError() {
 function readTimerBgMode() {
   let mode = '';
   try { mode = localStorage.getItem(TIMER_BG_MODE_KEY) || ''; } catch (e) { /* 忽略 */ }
-  if (!['theme', 'black', 'white', 'custom'].includes(mode)) {
+  // 纯黑 / 纯白背景已下线：历史数据统一回落到主题背景
+  if (mode === 'black' || mode === 'white') mode = 'theme';
+  if (!['theme', 'custom'].includes(mode)) {
     mode = readTimerBg() ? 'custom' : 'theme';
   }
   if (mode === 'custom' && !readTimerBg()) mode = 'theme';
@@ -1178,13 +1352,140 @@ function updateTimerBgUi(mode, media) {
   if (panel) panel.setAttribute('data-bg', mode);
   const name = $('timerBgName');
   if (name) {
-    if (mode === 'black') name.textContent = '当前：纯黑背景';
-    else if (mode === 'white') name.textContent = '当前：纯白背景';
-    else if (mode === 'custom' && media) name.textContent = '当前：' + (media.name || '自定义背景');
+    if (mode === 'custom' && media) name.textContent = '当前：' + (media.name || '自定义背景');
     else name.textContent = '当前：主题默认背景';
   }
   document.querySelectorAll('.timer-bg-opt').forEach((btn) => {
     btn.classList.toggle('on', btn.dataset.bgMode === mode);
+  });
+}
+
+/* 点名 / 分组页复用课堂计时的背景：自定义图片或视频整窗铺满 */
+function applyClassroomBackground(mode, media) {
+  const img = $('clsBgImg');
+  const video = $('clsBgVideo');
+  if (!img || !video) return;
+  document.body.setAttribute('data-cls-bg', mode);
+  if (mode === 'custom' && media) {
+    const isVideo = /\.(mp4|webm)(\?|$)/i.test(media.url);
+    if (isVideo) {
+      img.hidden = true;
+      img.removeAttribute('src');
+      video.hidden = false;
+      video.src = media.url;
+      video.muted = true;
+      video.loop = true;
+      const p = video.play();
+      if (p && p.catch) p.catch(() => { /* 等用户交互 */ });
+    } else {
+      video.pause();
+      video.hidden = true;
+      video.removeAttribute('src');
+      img.hidden = false;
+      img.src = media.url;
+    }
+  } else {
+    img.hidden = true;
+    img.removeAttribute('src');
+    video.pause();
+    video.hidden = true;
+    video.removeAttribute('src');
+  }
+}
+
+/* 视频背景：抽一帧当缩略图（多时间点取最亮的一帧，结果缓存） */
+const videoThumbCache = new Map();
+function videoThumb(url) {
+  if (!url) return Promise.resolve('');
+  if (videoThumbCache.has(url)) return Promise.resolve(videoThumbCache.get(url));
+  const pending = new Promise((resolve) => {
+    const v = document.createElement('video');
+    const canvas = document.createElement('canvas');
+    canvas.width = 184;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    let done = false;
+    let best = '';
+    let bestScore = -1;
+    let idx = 0;
+    let times = [0.6, 1.2, 2, 3];
+    const finish = (val) => {
+      if (done) return;
+      done = true;
+      clearTimeout(guard);
+      v.removeAttribute('src');
+      try { v.load(); } catch (err) { /* 忽略 */ }
+      videoThumbCache.set(url, val);
+      resolve(val);
+    };
+    const probe = () => {
+      if (idx >= times.length) { finish(best); return; }
+      try { v.currentTime = times[idx]; } catch (err) { finish(best); }
+    };
+    const guard = setTimeout(() => finish(best), 6000);
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = 'auto';
+    v.addEventListener('error', () => finish(''), { once: true });
+    v.addEventListener('loadedmetadata', () => {
+      const d = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 4;
+      times = [d * 0.08, d * 0.3, d * 0.55, d * 0.8].map((x) => Math.max(0.1, x));
+      probe();
+    }, { once: true });
+    v.addEventListener('seeked', () => {
+      try {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+        const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        let sum = 0;
+        for (let i = 0; i < data.length; i += 4 * 97) {
+          sum += data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+        }
+        const score = sum / Math.ceil(data.length / (4 * 97));
+        if (score > bestScore) {
+          bestScore = score;
+          best = canvas.toDataURL('image/png');
+        }
+        // 已经够亮就直接用，省掉后面的取帧
+        if (score > 92 || idx >= times.length - 1) { finish(best); return; }
+      } catch (err) { finish(best); return; }
+      idx += 1;
+      probe();
+    });
+    v.src = url;
+    try { v.load(); } catch (err) { finish(''); }
+  });
+  videoThumbCache.set(url, pending);
+  return pending;
+}
+
+/* 更换背景按钮的图画预览：图片缩略图 / 主题渐变 / 纯黑纯白色块 / 视频首帧 */
+function syncBgPics(mode, media) {
+  const isVideo = mode === 'custom' && media && /\.(mp4|webm)(\?|$)/i.test(media.url);
+  const state = mode === 'custom' && media ? (isVideo ? 'video' : 'custom') : mode;
+  const label = mode === 'custom' && media ? (media.name || '自定义背景')
+    : mode === 'black' ? '纯黑背景'
+      : mode === 'white' ? '纯白背景' : '主题背景';
+  document.querySelectorAll('.bg-picbtn').forEach((btn) => {
+    btn.dataset.bgmode = state;
+    btn.title = label + ' · 点击更换背景';
+    btn.setAttribute('aria-label', '更换背景（当前：' + label + '）');
+    const img = btn.querySelector('.bg-picbtn__img');
+    if (!img) return;
+    if (state === 'custom') {
+      img.hidden = false;
+      img.src = media.url;
+    } else if (state === 'video') {
+      img.hidden = false;
+      const src = media.url;
+      videoThumb(src).then((pic) => {
+        if (!pic || btn.dataset.bgmode !== 'video' || btn.querySelector('.bg-picbtn__img') !== img) return;
+        img.src = pic;
+      });
+    } else {
+      img.hidden = true;
+      img.removeAttribute('src');
+    }
   });
 }
 
@@ -1222,11 +1523,14 @@ function applyTimerBackground() {
     video.removeAttribute('src');
   }
   updateTimerBgUi(mode, media);
+  applyClassroomBackground(mode, media);
+  syncBgPics(mode, media);
   renderTimerBgList();
+  renderBuiltinBgs();
 }
 
 function setTimerBgMode(mode) {
-  const next = ['theme', 'black', 'white', 'custom'].includes(mode) ? mode : 'theme';
+  const next = ['theme', 'custom'].includes(mode) ? mode : 'theme';
   try { localStorage.setItem(TIMER_BG_MODE_KEY, next); } catch (e) { /* 忽略 */ }
   applyTimerBackground();
 }
@@ -1261,45 +1565,7 @@ async function pickTimerBackground() {
   }
 }
 
-function bindTimerLook() {
-  const look = readTimerLook();
-  applyTimerLook(look);
-  const save = () => {
-    const next = {
-      opacity: Number($('timerOpacity').value),
-      veil: Number($('timerVeil').value),
-      blur: Number($('timerBlur').value)
-    };
-    applyTimerLook(next);
-    try { localStorage.setItem(TIMER_LOOK_KEY, JSON.stringify(next)); } catch (e) { /* 忽略 */ }
-  };
-  ['timerOpacity', 'timerVeil', 'timerBlur'].forEach((id) => {
-    $(id).addEventListener('input', save);
-  });
-  $('btnTimerBg').addEventListener('click', () => {
-    $('timerBgPanel').hidden = !$('timerBgPanel').hidden;
-  });
-  $('btnTimerBgClose').addEventListener('click', () => { $('timerBgPanel').hidden = true; });
-  $('btnTimerBgPick').addEventListener('click', pickTimerBackground);
-  document.querySelectorAll('.timer-bg-opt').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      setTimerBgMode(btn.dataset.bgMode);
-      if (btn.dataset.bgMode !== 'custom') toast('背景已切换为' + btn.textContent.trim());
-    });
-  });
-  $('timerBgImg').addEventListener('error', handleTimerBgError);
-  $('timerBgVideo').addEventListener('error', handleTimerBgError);
-  applyTimerBackground();
-  document.addEventListener('click', (e) => {
-    const panel = $('timerBgPanel');
-    if (!panel || panel.hidden) return;
-    // 点击列表项会立即重建按钮，用事件路径判断，避免元素被移除后误判为点击空白
-    const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
-    if (path.includes(panel) || path.includes($('btnTimerBg'))) return;
-    if (e.target.closest && e.target.closest('#btnTimerBg')) return;
-    panel.hidden = true;
-  });
-}
+
 
 /* 课堂内的标签切换：计时页占满整个窗口 */
 function activateTab(name) {
@@ -1312,6 +1578,7 @@ function activateTab(name) {
     cancelTimerFullscreen();
     $('timerBgPanel').hidden = true;
   }
+  $('timerBgPanel').hidden = true;
   const bgVideo = $('timerBgVideo');
   if (bgVideo && !bgVideo.hidden) {
     if (name === 'timer') {
@@ -1399,8 +1666,9 @@ function bindStaticEvents() {
     }
   });
 
-  // 投影 / 分组 / 计时
-  $('btnProjection').addEventListener('click', () => setProjection(!state.projection));
+  // 全屏 / 分组 / 计时
+  $('btnFull').addEventListener('click', () => setClassFullscreen(true));
+  $('btnExitFull').addEventListener('click', () => setClassFullscreen(false));
   $('btnGroupGenerate').addEventListener('click', generateGroups);
   $('btnGroupMinus').addEventListener('click', () => changeGroupValue(-1));
   $('btnGroupPlus').addEventListener('click', () => changeGroupValue(1));
@@ -1433,7 +1701,7 @@ function bindStaticEvents() {
     exitTimerFullscreen();
   });
   renderTimer();
-  bindTimerLook();
+  bindAppearance();
 
   document.querySelectorAll('.cls-tab').forEach((tab) => {
     tab.addEventListener('click', () => activateTab(tab.dataset.tab));
@@ -1501,7 +1769,11 @@ function bindStaticEvents() {
       return;
     }
     if (!$('adminModal').hidden) return closeAdmin();
-    if (state.projection) return setProjection(false);
+    if (state.classFull) {
+      e.preventDefault();
+      setClassFullscreen(false);
+      return;
+    }
     bridge.closeClassroom();
   });
 }

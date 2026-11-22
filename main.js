@@ -75,6 +75,8 @@ let eggFullscreen = false;
 let eggBounds = null;
 let timerFullscreen = false;
 let timerBounds = null;
+let classFullscreen = false;
+let classBounds = null;
 let firstTodayLaunch = false;
 let petScale = 1;
 let panelBounds = null;
@@ -1355,6 +1357,7 @@ function createWindow() {
     transparent: true,
     hasShadow: false,
     resizable: false,
+    minimizable: false,
     show: false,
     skipTaskbar: false,
     backgroundColor: '#00000000',
@@ -1370,6 +1373,13 @@ function createWindow() {
   });
 
   win.setMenuBarVisibility(false);
+  // 主界面取消最小化：任何路径触发的最小化都立刻还原，只保留「收进宠物 / 隐藏到托盘」
+  try { win.setMinimizable(false); } catch { /* 旧版本 API 缺失时忽略 */ }
+  win.on('minimize', () => {
+    if (!win || win.isDestroyed() || quitting) return;
+    appendLog('MINIMIZE_BLOCKED', {});
+    try { win.restore(); } catch { /* 忽略 */ }
+  });
   try { win.setBackgroundMaterial('none'); } catch { /* 旧系统忽略 */ }
   win.loadFile(
     path.join(__dirname, 'renderer', 'index.html'),
@@ -1449,6 +1459,7 @@ function applyPetMode(on) {
     }
     mode = 'pet';
     win.setResizable(false);
+    try { win.setMinimizable(false); } catch { /* 忽略 */ }
     win.setMinimumSize(200, 180);
     win.setSkipTaskbar(true);
     win.setAlwaysOnTop(false);
@@ -1463,6 +1474,7 @@ function applyPetMode(on) {
     win.setFocusable(true);
     win.setSkipTaskbar(false);
     win.setResizable(false);
+    try { win.setMinimizable(false); } catch { /* 忽略 */ }
     win.setMinimumSize(980, 640);
     const area = screen.getPrimaryDisplay().workArea;
     const b = panelBounds || { x: area.x + 40, y: area.y + 40, width: Math.min(1160, area.width - 48), height: Math.min(740, area.height - 48) };
@@ -1565,6 +1577,10 @@ function navigateToView(view, extraQuery) {
 function goHomeView() {
   if (!win || win.isDestroyed()) return;
   if (win.isFullScreen()) win.setFullScreen(false);
+  classFullscreen = false;
+  classBounds = null;
+  timerFullscreen = false;
+  timerBounds = null;
   currentView = 'home';
   classroomUnlocked = false;
   win.setResizable(false);
@@ -2128,6 +2144,27 @@ function wireIpc() {
     return { ok: true };
   });
 
+  /* 课堂全屏模式：铺满当前显示器，退出时精确恢复原来的窗口位置 */
+  ipcMain.handle('window:set-class-fullscreen', (_e, on) => {
+    if (!win || win.isDestroyed()) return { ok: false };
+    if (on) {
+      if (classFullscreen) return { ok: true };
+      const bounds = win.getBounds();
+      const display = screen.getDisplayMatching(bounds);
+      classBounds = bounds;
+      classFullscreen = true;
+      win.setBounds(display.bounds);
+      win.show();
+    } else if (classFullscreen) {
+      classFullscreen = false;
+      const b = classBounds || store.panelBounds;
+      classBounds = null;
+      if (b) win.setBounds(b);
+      win.show();
+    }
+    return { ok: true };
+  });
+
   /* 课堂计时全屏：手动保存/恢复窗口尺寸，避免系统全屏切换残留大窗口 */
   ipcMain.handle('window:set-timer-fullscreen', (_e, on) => {
     if (!win || win.isDestroyed()) return { ok: false };
@@ -2605,6 +2642,24 @@ function wireIpc() {
     return { ok: true };
   });
   ipcMain.on('timetable:close', () => goHomeView());
+
+  // 内置动画背景：视频用 asarUnpack 解包，file:// 必须指向 app.asar.unpacked 里的真实文件
+  ipcMain.handle('classroom:builtin-bgs', () => {
+    try {
+      const baseDir = path.join(__dirname, 'assets', 'bg')
+        .replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
+      const urls = {};
+      ['builtin-1.mp4', 'builtin-2.mp4'].forEach((name) => {
+        const full = path.join(baseDir, name);
+        try {
+          if (fs.existsSync(full)) urls[name] = pathToFileURL(full).href;
+        } catch (e) { /* 单个文件缺失时跳过 */ }
+      });
+      return { ok: true, dir: baseDir, urls };
+    } catch (e) {
+      return { ok: false, urls: {} };
+    }
+  });
 
   ipcMain.handle('classroom:get', () => classroomPublicData());
 

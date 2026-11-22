@@ -3069,8 +3069,7 @@ function bindEvents() {
     toast('今天也可以在主页点「现在就抽取」');
   });
 
-  // 窗口按钮
-  $('btnHide').addEventListener('click', () => bridge.hideToTray());
+  // 窗口按钮（最小化已移除：主界面只有宠物模式 / 设置 / 收进桌面宠物）
   // 点 × 关闭主界面时收进桌面宠物，而不是退出
   $('btnClose').addEventListener('click', async () => {
     $('settings').hidden = true;
@@ -3549,7 +3548,6 @@ function createMockBridge() {
       window.open('knowledge.html', '_blank', 'width=920,height=680');
     },
     closeKnowledge: () => {},
-    hideToTray: () => {},
     quit: () => {},
     onModeChanged: () => {},
     onSkinChanged: () => {},

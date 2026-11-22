@@ -20,7 +20,43 @@ body { background: transparent; }
   box-shadow: var(--shadow);
 }
 
-/* ---------------- 顶栏 ---------------- */
+/* ---------------- 顶栏（与课堂计时同款液态玻璃） ---------------- */
+/* 全局背景层：点名 / 分组 / 计时共用同一套 blob + shine + veil */
+.cls { background: var(--bg); isolation: isolate; }
+.cls-liquid {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.cls-top { position: relative; z-index: 2; }
+.cls-main { position: relative; z-index: 1; }
+
+/* 最上方拖动条：覆盖卡片外 10px 透明留白，让窗口最上方整条边都能拖 */
+.cls-dragbar {
+  display: block;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 10px;
+  z-index: 30;
+  -webkit-app-region: drag;
+}
+/* 计时页隐藏了顶栏，把「返回」按钮右侧的整条顶部空档也变成拖动区 */
+/* 计时页也显示顶栏后，拖动带与其它页面统一为顶部 14px */
+body.timer-page .cls-dragbar { left: 0; right: 0; height: 14px; }
+/* 全屏计时让位给「点击空白处退出全屏」；课堂全屏模式同样不需要拖动带 */
+body.timer-page.timer-full .cls-dragbar,
+body.cls-fullscreen .cls-dragbar { display: none; }
+/* 计时页控件即使落进拖动带也保持可点 */
+.timer-stage .timer-glass,
+.timer-mode,
+.timer-fixed,
+.timer-clock,
+.timer-bottom { -webkit-app-region: no-drag; }
+
 .cls-top {
   flex: 0 0 68px;
   display: flex;
@@ -28,10 +64,10 @@ body { background: transparent; }
   gap: 24px;
   padding: 0 20px;
   border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, rgba(255, 255, 255, .04), transparent);
+  background: transparent;
   -webkit-app-region: drag;
 }
-.cls-brand { display: flex; align-items: center; gap: 12px; min-width: 220px; }
+.cls-brand { display: flex; align-items: center; gap: 12px; min-width: 220px; margin-right: auto; }
 .cls-back {
   padding: 8px 16px;
   border-radius: 999px;
@@ -94,19 +130,31 @@ body { background: transparent; }
 .cls-roll { gap: 0; }
 
 .roster-pane {
-  flex: 0 0 264px;
+  flex: 0 0 268px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 18px 14px 16px;
-  border-right: 1px solid var(--line);
-  background: linear-gradient(180deg, rgba(0, 0, 0, .12), transparent 60%);
+  margin: 14px 10px 14px 14px;
+  padding: 16px 14px 14px;
   min-height: 0;
-  transition: background .2s, box-shadow .2s;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 18px;
+  background: rgba(20, 28, 26, var(--timer-opacity));
+  backdrop-filter: blur(var(--timer-blur));
+  -webkit-backdrop-filter: blur(var(--timer-blur));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 12px 30px rgba(0, 0, 0, .18);
+  transition: background .2s, box-shadow .2s, border-color .2s;
+}
+body[data-skin="warm"] .roster-pane,
+body[data-skin="bamboo"] .roster-pane {
+  background: rgba(255, 255, 255, var(--timer-opacity));
+  border-color: rgba(70, 60, 40, .16);
+  box-shadow: inset 0 0 1px rgba(255, 255, 255, .6), 0 12px 30px rgba(70, 60, 40, .14);
 }
 .roster-pane.drag {
-  background: var(--gold-soft);
-  box-shadow: inset 0 0 0 2px rgba(217, 182, 74, .5);
+  background: rgba(217, 182, 74, .22);
+  border-color: rgba(217, 182, 74, .55);
+  box-shadow: inset 0 0 0 2px rgba(217, 182, 74, .5), 0 12px 30px rgba(0, 0, 0, .18);
 }
 .roster-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; }
 .roster-head > span { font-size: 12px; letter-spacing: .22em; color: var(--faint); }
@@ -358,8 +406,8 @@ body { background: transparent; }
   letter-spacing: .06em;
 }
 
-/* ---------------- 投影按钮 / 全屏投影 ---------------- */
-.cls-project {
+/* ---------------- 全屏模式（原投影已移除） ---------------- */
+.cls-full {
   margin-left: auto;
   padding: 7px 16px;
   border-radius: 999px;
@@ -370,44 +418,82 @@ body { background: transparent; }
   transition: .2s;
   -webkit-app-region: no-drag;
 }
-.cls-project:hover { color: var(--gold); border-color: rgba(217, 182, 74, .5); background: var(--gold-soft); }
+.cls-full:hover { color: var(--gold); border-color: rgba(217, 182, 74, .5); background: var(--gold-soft); }
 
-body.projection .cls-top,
-body.projection .roster-pane { display: none; }
-body.projection .roll-stage { padding: 2vh 3vw; }
-body.projection .roll-roster { font-size: 22px; letter-spacing: .28em; }
-body.projection .roll-name { font-size: clamp(96px, 12vw, 220px); }
-body.projection .roll-name.multiple {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  font-size: clamp(40px, 5.4vw, 96px);
-  gap: 4px 26px;
-}
-body.projection .roll-sub { font-size: 18px; }
-body.projection .roll-count,
-body.projection .roll-toggles { transform: scale(1.25); transform-origin: center; }
-body.projection .roll-btn { font-size: 22px; padding: 20px 64px; }
-body.projection::after {
-  content: "按 Esc 退出投影";
+/* 全屏模式：隐藏顶栏，右上角浮出「退出全屏」 */
+.cls-exitfull {
   position: fixed;
-  right: 22px;
-  bottom: 18px;
-  font-size: 12px;
-  letter-spacing: .14em;
-  color: rgba(242, 239, 233, .42);
-  pointer-events: none;
+  top: 16px;
+  right: 20px;
+  z-index: 90;
+  display: none;
+  padding: 9px 18px;
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 13px;
+  letter-spacing: .08em;
+  -webkit-app-region: no-drag;
+  transition: .2s;
+}
+.cls-exitfull:hover { color: var(--gold); border-color: rgba(217, 182, 74, .5); }
+body.cls-fullscreen .cls-exitfull { display: inline-flex; }
+body.cls-fullscreen .cls-top,
+body.cls-fullscreen.timer-page .cls-top { display: none; }
+body.cls-fullscreen.timer-page .cls-timer { padding: 0; }
+body.cls-fullscreen .cls-dragbar { display: none; }
+body.cls-fullscreen .timer-settings.bg-panel,
+body.cls-fullscreen .timer-bg-btn { display: none; }
+.cls-exitfull[hidden] { display: none !important; }
+
+/* 全屏：整窗铺满，去掉外框 10px 留白、边框与圆角 */
+body.cls-fullscreen .cls {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+body.cls-fullscreen .roster-pane {
+  margin: 0;
+  border-radius: 0;
+  border-top: 0;
+  border-bottom: 0;
+  border-left: 0;
+}
+body.cls-fullscreen .roll-stage { padding: 26px 44px 36px; }
+body.cls-fullscreen .cls-group { padding: 60px 22px 22px; }
+body.cls-fullscreen .timer-card {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  margin: 0;
+  padding: 6vh 5vw;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 /* ---------------- 随机分组 ---------------- */
 .cls-group, .cls-timer { padding: 20px 24px; }
-.group-panel, .timer-panel {
+.group-panel {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, .025);
   padding: 18px 20px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 18px;
+  background: rgba(20, 28, 26, var(--timer-opacity));
+  backdrop-filter: blur(var(--timer-blur));
+  -webkit-backdrop-filter: blur(var(--timer-blur));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 12px 30px rgba(0, 0, 0, .18);
+}
+body[data-skin="warm"] .group-panel,
+body[data-skin="bamboo"] .group-panel {
+  background: rgba(255, 255, 255, var(--timer-opacity));
+  border-color: rgba(70, 60, 40, .16);
+  box-shadow: inset 0 0 1px rgba(255, 255, 255, .6), 0 12px 30px rgba(70, 60, 40, .14);
 }
 .group-controls {
   display: flex;
@@ -499,8 +585,14 @@ body.projection::after {
   overflow: hidden;
 }
 body.timer-page .cls { width: 100%; height: 100%; margin: 0; border: none; border-radius: 0; }
-body.timer-page .cls-top { display: none; }
-body.timer-page .cls-timer { position: fixed; inset: 0; z-index: 20; display: flex; }
+/* 计时页与点名 / 分组保持一致：顶部导航栏保留，背景仍整窗铺满 */
+body.timer-page .cls-top { display: flex; position: relative; z-index: 40; }
+body.timer-page .cls-timer { position: fixed; inset: 0; z-index: 20; display: flex; padding: 84px 0 18px; }
+body.timer-page .timer-card { height: 100%; }
+body.timer-page .timer-back,
+body.timer-page .timer-bg-btn { display: none; }
+body.timer-page.timer-full .cls-timer { padding-top: 0; }
+body.timer-page.timer-full .timer-back { display: inline-flex; }
 .timer-bg { position: absolute; inset: 0; overflow: hidden; background: var(--bg); }
 .timer-bg__liquid { position: absolute; inset: 0; }
 .timer-blob {
@@ -812,53 +904,7 @@ body[data-skin="bamboo"] .timer-full-btn.is-primary { color: #fff; }
 .timer-settings__range { display: grid; grid-template-columns: 80px 1fr 42px; align-items: center; gap: 8px; font-size: 11.5px; color: var(--dim); }
 .timer-settings__range input { width: 100%; accent-color: var(--gold); }
 .timer-settings__range em { font-style: normal; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
-/* 纯黑 / 纯白默认背景：同时切换文字与玻璃对比度 */
-.cls-timer[data-bg="black"] .timer-bg { background: #000; }
-.cls-timer[data-bg="white"] .timer-bg { background: #fff; }
-.cls-timer[data-bg="black"] .timer-bg__liquid,
-.cls-timer[data-bg="white"] .timer-bg__liquid,
-.cls-timer[data-bg="black"] .timer-bg__veil,
-.cls-timer[data-bg="white"] .timer-bg__veil { display: none; }
-.cls-timer[data-bg="black"] {
-  --text: #f5f3ee;
-  --dim: rgba(245, 243, 238, .7);
-  --faint: rgba(245, 243, 238, .46);
-  --line: rgba(255, 255, 255, .12);
-  --line-strong: rgba(255, 255, 255, .2);
-  --gold: #e6c96c;
-  --gold-soft: rgba(230, 201, 108, .16);
-}
-.cls-timer[data-bg="white"] {
-  --text: #242424;
-  --dim: rgba(36, 36, 36, .7);
-  --faint: rgba(36, 36, 36, .46);
-  --line: rgba(0, 0, 0, .1);
-  --line-strong: rgba(0, 0, 0, .18);
-  --gold: #b07d2b;
-  --gold-soft: rgba(176, 125, 43, .14);
-}
-.cls-timer[data-bg="black"] .timer-glass {
-  background: rgba(22, 24, 22, var(--timer-opacity));
-  border-color: rgba(255, 255, 255, .16);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 12px 30px rgba(0, 0, 0, .28);
-}
-.cls-timer[data-bg="white"] .timer-glass {
-  background: rgba(244, 244, 244, var(--timer-opacity));
-  border-color: rgba(0, 0, 0, .1);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 12px 30px rgba(0, 0, 0, .1);
-}
-.cls-timer[data-bg="black"] .timer-mode button.on,
-.cls-timer[data-bg="black"] .timer-full-btn.is-primary { color: #1d241f; }
-.cls-timer[data-bg="white"] .timer-mode button.on,
-.cls-timer[data-bg="white"] .timer-full-btn.is-primary { color: #fff; }
-.cls-timer[data-bg="black"] .timer-play::before { border-left-color: #1d241f; }
-.cls-timer[data-bg="white"] .timer-play::before { border-left-color: #fff; }
-body.timer-running .cls-timer[data-bg="black"] .timer-play::before {
-  background: linear-gradient(90deg, #1d241f 0 7px, transparent 7px 17px, #1d241f 17px 24px);
-}
-body.timer-running .cls-timer[data-bg="white"] .timer-play::before {
-  background: linear-gradient(90deg, #fff 0 7px, transparent 7px 17px, #fff 17px 24px);
-}
+
 .timer-settings__btn.on { color: var(--gold); border-color: var(--gold); background: var(--gold-soft); }
 body.timer-stopwatch .timer-fixed { display: none; }
 body.timer-stopwatch .timer-digit-col button { visibility: hidden; }
@@ -1164,8 +1210,381 @@ body.timer-flash .cls-main { animation: timer-flash 0.5s ease-in-out 3; }
 }
 .cls-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+/* ==========================================================
+   课堂助手 · 与课堂计时统一的液态玻璃外观（放在末尾统一覆盖）
+   ========================================================== */
+/* 玻璃变量与计时页共用；计时页三个滑杆会同时改写这两处，见 applyTimerLook */
+body { --timer-opacity: .55; --timer-veil: .25; --timer-blur: 18px; }
+
+/* 遮罩 .timer-bg__veil 直接复用课堂计时的规则（四套皮肤自动切换） */
+
+/* 顶栏与主区透明浮在背景层之上（.cls-top / .cls-main 已在前面声明 transparent） */
+.cls-page { background: transparent; }
+
+/* 名单 / 分组玻璃面板里的小控件 */
+.roster-drop { background: rgba(217, 182, 74, .08); }
+.roster-empty, .roster-item { background: rgba(0, 0, 0, .18); }
+body[data-skin="warm"] .roster-empty,
+body[data-skin="bamboo"] .roster-empty,
+body[data-skin="warm"] .roster-item,
+body[data-skin="bamboo"] .roster-item { background: rgba(255, 255, 255, .5); }
+.group-select { background: rgba(0, 0, 0, .18); }
+body[data-skin="warm"] .group-select,
+body[data-skin="bamboo"] .group-select { background: rgba(255, 255, 255, .55); }
+
+/* 顶栏控件统一为计时页玻璃胶囊规格 */
+.cls-back, .cls-full { border-radius: 999px; font-size: 12.5px; }
+.cls-tabs { gap: 4px; padding: 4px; border-radius: 999px; }
+.cls-tab { padding: 7px 20px; border-radius: 999px; }
+.cls-tab.on { background: var(--gold); color: #1d241f; box-shadow: 0 3px 10px rgba(0, 0, 0, .18); }
+body[data-skin="warm"] .cls-tab.on,
+body[data-skin="bamboo"] .cls-tab.on { color: #fff; }
+
+/* 弹窗 / Toast 同步玻璃质感 */
+.cls-modal__box { backdrop-filter: blur(var(--timer-blur)); -webkit-backdrop-filter: blur(var(--timer-blur)); }
+.cls-toast { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+
+/* 计时页使用整窗背景，隐藏全局玻璃层避免两层动画叠加 */
+body.timer-page .cls-liquid { display: none; }
+body.timer-page .cls-main { background: transparent; }
+
+/* ==========================================================
+   点名 / 分组页：与课堂计时完全一致
+   整窗铺满（去掉卡片外边距 / 圆角 / 边框 / 阴影）、同一套背景与玻璃、顶栏浮起可拖动
+   ========================================================== */
+.cls-liquid { background: var(--bg); }
+.cls-liquid > .timer-bg__media { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cls-liquid > .timer-bg__liquid { position: absolute; inset: 0; }
+.cls-liquid > .timer-bg__veil { position: absolute; inset: 0; }
+
+body:not(.timer-page) .cls {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+body:not(.timer-page) .cls-top {
+  flex: 0 0 64px;
+  padding: 0 22px;
+  border-bottom: 0;
+  background: transparent;
+}
+body:not(.timer-page) .cls-main { background: transparent; }
+/* 导航靠右、品牌靠左，中间整片空档留给拖动窗口（margin-right 已在 .cls-brand 基类，切换页面不位移） */
+body:not(.timer-page) .cls-tabs { margin-left: 0; }
+/* 窗口最上沿留一条稳定的拖动带（顶栏本身同样是 drag） */
+body:not(.timer-page) .cls-dragbar { height: 14px; }
+
+/* 分组页：去掉整块白玻璃面板，改成与课堂计时同款「背景 + 浮动玻璃控件」 */
+body:not(.timer-page) .group-panel {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+body:not(.timer-page) .group-controls {
+  padding: 12px 18px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 999px;
+  background: rgba(20, 28, 26, var(--timer-opacity));
+  backdrop-filter: blur(var(--timer-blur));
+  -webkit-backdrop-filter: blur(var(--timer-blur));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 12px 30px rgba(0, 0, 0, .18);
+}
+body:not(.timer-page) .group-card {
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 14px;
+  background: rgba(20, 28, 26, var(--timer-opacity));
+  backdrop-filter: blur(var(--timer-blur));
+  -webkit-backdrop-filter: blur(var(--timer-blur));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 10px 24px rgba(0, 0, 0, .16);
+}
+body[data-skin="warm"]:not(.timer-page) .group-controls,
+body[data-skin="bamboo"]:not(.timer-page) .group-controls {
+  background: rgba(255, 255, 255, var(--timer-opacity));
+  border-color: rgba(70, 60, 40, .16);
+  box-shadow: inset 0 0 1px rgba(255, 255, 255, .6), 0 12px 30px rgba(70, 60, 40, .14);
+}
+body[data-skin="warm"]:not(.timer-page) .group-card,
+body[data-skin="bamboo"]:not(.timer-page) .group-card {
+  background: rgba(255, 255, 255, calc(var(--timer-opacity) + .22));
+  border-color: rgba(70, 60, 40, .14);
+  box-shadow: inset 0 0 1px rgba(255, 255, 255, .6), 0 10px 24px rgba(70, 60, 40, .12);
+}
+/* 浅色主题背景没有照片衬托：给玻璃卡片补一点轮廓，避免白上白 */
+body[data-skin="warm"][data-cls-bg="theme"]:not(.timer-page) .group-card,
+body[data-skin="bamboo"][data-cls-bg="theme"]:not(.timer-page) .group-card {
+  background: rgba(255, 255, 255, .84);
+  border-color: rgba(70, 60, 40, .22);
+  box-shadow: 0 1px 2px rgba(70, 60, 40, .1), 0 12px 26px rgba(70, 60, 40, .18);
+}
+body[data-skin="warm"][data-cls-bg="theme"]:not(.timer-page) .group-controls,
+body[data-skin="bamboo"][data-cls-bg="theme"]:not(.timer-page) .group-controls {
+  background: rgba(255, 255, 255, .9);
+  border-color: rgba(70, 60, 40, .2);
+  box-shadow: 0 1px 2px rgba(70, 60, 40, .1), 0 12px 28px rgba(70, 60, 40, .16);
+}
+body[data-skin="warm"][data-cls-bg="theme"]:not(.timer-page) .group-card__names span,
+body[data-skin="bamboo"][data-cls-bg="theme"]:not(.timer-page) .group-card__names span {
+  background: rgba(255, 255, 255, .92);
+}
+body:not(.timer-page) .group-card__names span {
+  background: rgba(255, 255, 255, .12);
+}
+body[data-skin="warm"]:not(.timer-page) .group-card__names span,
+body[data-skin="bamboo"]:not(.timer-page) .group-card__names span {
+  background: rgba(255, 255, 255, .62);
+  border-color: rgba(70, 60, 40, .16);
+}
+/* 分组页工具条同样让出顶部拖动区 */
+body:not(.timer-page) .group-controls { margin-top: 2px; }
+
+/* 整窗背景后，点名页大标题与提示在任意背景图上保持清晰 */
+body:not(.timer-page) .roll-name {
+  text-shadow: 0 0 46px rgba(255, 255, 255, .6), 0 0 20px rgba(255, 255, 255, .42), 0 1px 2px rgba(0, 0, 0, .06);
+}
+body:not(.timer-page) .roll-sub,
+body:not(.timer-page) .roll-stage > .roll-hint {
+  text-shadow: 0 1px 8px rgba(255, 255, 255, .5);
+}
+
+/* 有背景图时，点名页次要文字提高一点对比度 */
+body:not(.timer-page)[data-cls-bg="custom"] .roll-sub { color: rgba(35, 53, 43, .62); }
+body:not(.timer-page)[data-cls-bg="custom"] .roll-roster { color: rgba(35, 53, 43, .8); }
+body:not(.timer-page)[data-cls-bg="custom"] .cls-brand__text i { color: rgba(35, 53, 43, .6); }
+
 /* 滚动条适配 */
 .roster-list::-webkit-scrollbar-thumb,
 .cls-admin-body::-webkit-scrollbar-thumb,
 .admin-table-wrap::-webkit-scrollbar-thumb,
 .tt-scroll::-webkit-scrollbar-thumb { background: var(--line-strong); }
+
+/* ==========================================================
+   背景入口：图片缩略图按钮 + 全局背景设置面板（点名/分组/计时共用）
+   ========================================================== */
+.bg-picbtn {
+  position: relative;
+  flex: 0 0 auto;
+  width: 46px;
+  height: 32px;
+  padding: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .26);
+  background: transparent;
+  -webkit-app-region: no-drag;
+  transition: transform .18s, box-shadow .18s, border-color .18s;
+}
+body[data-skin="warm"] .bg-picbtn,
+body[data-skin="bamboo"] .bg-picbtn { border-color: rgba(70, 60, 40, .28); }
+.bg-picbtn:hover { transform: translateY(-1px); border-color: var(--gold); box-shadow: 0 8px 18px rgba(0, 0, 0, .26); }
+.bg-picbtn:active { transform: translateY(0) scale(.96); }
+.bg-picbtn__img { position: absolute; inset: 0; z-index: 3; display: block; width: 100%; height: 100%; object-fit: cover; }
+.bg-picbtn__theme {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    radial-gradient(circle at 76% 8%, var(--gold-soft), transparent 60%),
+    radial-gradient(circle at 6% 96%, rgba(112, 196, 176, .45), transparent 62%),
+    linear-gradient(150deg, var(--bg), rgba(0, 0, 0, .55));
+}
+.bg-picbtn[data-bgmode="black"] .bg-picbtn__theme { background: #000; }
+.bg-picbtn[data-bgmode="white"] .bg-picbtn__theme { background: #fff; }
+.bg-picbtn[data-bgmode="video"] .bg-picbtn__theme { background: linear-gradient(150deg, rgba(0, 0, 0, .74), rgba(30, 43, 38, .88)); }
+.bg-picbtn__mark {
+  position: absolute;
+  z-index: 4;
+  right: 3px;
+  bottom: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: rgba(12, 16, 14, .58);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .22);
+  color: #fff;
+  font-size: 8px;
+  line-height: 13px;
+  text-align: center;
+  font-style: normal;
+}
+.bg-picbtn__mark::after { content: "✎"; }
+.bg-picbtn[data-bgmode="video"] .bg-picbtn__mark::after { content: "▶"; }
+.bg-picbtn[data-bgmode="white"] .bg-picbtn__mark { background: rgba(30, 30, 30, .55); }
+
+/* 顶栏入口：紧跟「投影」按钮，缩小间距 */
+.cls-bgpic { margin-left: -10px; }
+/* 计时页入口：仍在右下角，但改成缩略图块 */
+.timer-bg-btn { width: 46px; height: 32px; padding: 0; border-radius: 10px; }
+
+/* 面板提升到 body 级，任意页面都能呼出 */
+.timer-settings.bg-panel {
+  position: fixed;
+  right: 22px;
+  bottom: 64px;
+  top: auto;
+  z-index: 60;
+  -webkit-app-region: no-drag;
+}
+body:not(.timer-page) .timer-settings.bg-panel { top: 74px; bottom: auto; }
+body.timer-full .timer-settings.bg-panel,
+body.cls-fullscreen .timer-settings.bg-panel { display: none; }
+
+.timer-settings__btn { display: flex; align-items: center; justify-content: center; }
+.bg-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, .38);
+  background:
+    radial-gradient(circle at 72% 12%, var(--gold-soft), transparent 62%),
+    linear-gradient(150deg, rgba(112, 196, 176, .8), rgba(20, 30, 27, .9));
+}
+
+/* 已导入背景：胶囊前面加一张小图 */
+.timer-bg-chip { padding-left: 4px; }
+.timer-bg-chip__thumb {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 18px;
+  border-radius: 5px;
+  object-fit: cover;
+  background: rgba(0, 0, 0, .3);
+  pointer-events: none;
+}
+.timer-bg-chip__thumb--video {
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  color: rgba(255, 255, 255, .85);
+  background: rgba(0, 0, 0, .48);
+}
+
+/* 计时页：把背景缩略图按钮固定到右上角，避免压在开始按钮下方的提示文案处 */
+body.timer-page .timer-bg-btn {
+  position: fixed;
+  top: 18px;
+  right: 22px;
+  z-index: 30;
+  -webkit-app-region: no-drag;
+}
+body.timer-full .timer-bg-btn,
+body.cls-fullscreen .timer-bg-btn {
+  display: none;
+}
+
+/* ================= 计时页卡片：与点名 / 分组同一套玻璃卡片 ================= */
+.timer-card {
+  flex: 0 1 auto;
+  width: min(920px, calc(92vw * var(--ui-glass-w, 1)));
+  max-width: calc(100% - 8px);
+  margin: 0 auto;
+  height: calc(100% - 12px);
+  padding: 22px 30px;
+  border-radius: var(--glass-radius, 20px);
+  background: rgba(20, 28, 26, calc(var(--timer-opacity) * .72));
+  border: 1px solid rgba(255, 255, 255, .16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 22px 50px rgba(0, 0, 0, .2);
+  backdrop-filter: blur(var(--ui-glass-blur, var(--timer-blur)));
+  -webkit-backdrop-filter: blur(var(--ui-glass-blur, var(--timer-blur)));
+}
+body[data-skin="warm"] .timer-card,
+body[data-skin="bamboo"] .timer-card {
+  background: rgba(255, 255, 255, calc(var(--timer-opacity) * .72));
+  border-color: rgba(70, 60, 40, .16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 22px 50px rgba(70, 60, 40, .16);
+}
+body.timer-full .cls-top,
+body.timer-page.timer-full .cls-top { display: none; }
+
+/* 整条顶栏都能拖窗口：只把可交互控件排除出拖动区 */
+.cls-top { -webkit-app-region: drag; }
+.cls-top .cls-back,
+.cls-top .cls-tabs,
+.cls-top .cls-tab,
+.cls-top .cls-full,
+.cls-top .cls-bgpic,
+.cls-top .cls-full *,
+.cls-top .cls-bgpic * { -webkit-app-region: no-drag; }
+body.timer-full .timer-card {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  padding: 5vh 4vw;
+  background: none;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* ================= 外观面板已合并进「外观与背景」面板（#timerBgPanel） ================= */
+.timer-settings {
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+  overscroll-behavior: contain;
+} }
+
+/* ================= 内置动画背景 ================= */
+.bg-builtin-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.bg-builtin-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, .2);
+  background: rgba(255, 255, 255, .06);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: transform .16s, border-color .16s, background .16s;
+}
+.bg-builtin-chip:hover { transform: translateY(-1px); border-color: var(--gold); background: rgba(255, 255, 255, .12); }
+.bg-builtin-chip.on { border-color: var(--gold); box-shadow: inset 0 0 0 1px rgba(217, 182, 74, .4); }
+.bg-builtin-chip .timer-bg-chip__thumb {
+  width: 100%;
+  height: 62px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: rgba(0, 0, 0, .3);
+}
+.bg-builtin-chip__name { font-size: 11.5px; letter-spacing: .04em; color: var(--text); }
+
+/* ================= 外观变量：字号 / 宽度 / 圆角 / 文字色 ================= */
+.cls-tab { font-size: calc(13px * var(--ui-text-scale, 1)); }
+.roster-item b { font-size: calc(13.5px * var(--ui-text-scale, 1)); }
+.roster-item span { font-size: calc(11px * var(--ui-text-scale, 1)); }
+.roll-name { font-size: calc(clamp(64px, 9vw, 104px) * var(--ui-text-scale, 1)); }
+.roll-sub { font-size: calc(13px * var(--ui-text-scale, 1)); }
+.timer-digit-col b { font-size: calc(clamp(90px, 13vw, 190px) * var(--ui-text-scale, 1)); }
+.timer-colon { font-size: calc(clamp(60px, 8vw, 120px) * var(--ui-text-scale, 1)); }
+.group-card__names span { font-size: calc(12.5px * var(--ui-text-scale, 1)); }
+.timer-settings__range { font-size: calc(11.5px * var(--ui-text-scale, 1)); }
+
+.roster-pane { flex: 0 0 calc(268px * var(--ui-glass-w, 1)); }
+.roster-pane,
+.group-panel,
+.timer-settings,
+.roster-drop,
+.group-card {
+  border-radius: var(--glass-radius, 18px);
+}
+.roster-pane,
+.group-panel,
+.timer-settings {
+  backdrop-filter: blur(var(--ui-glass-blur, var(--timer-blur)));
+  -webkit-backdrop-filter: blur(var(--ui-glass-blur, var(--timer-blur)));
+}

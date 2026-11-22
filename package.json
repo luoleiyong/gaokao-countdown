@@ -1,6 +1,6 @@
 {
   "name": "gaokao-countdown",
-  "version": "2.2.8",
+  "version": "2.3.0",
   "description": "高考倒计时",
   "main": "main.js",
   "author": {
@@ -22,11 +22,29 @@
     "appId": "com.trae.gaokao.countdown",
     "productName": "高考倒计时",
     "compression": "maximum",
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
     "files": [
       "main.js",
       "preload.js",
       "renderer/**/*",
-      "build/icon.png"
+      "assets/**/*",
+      "build/icon.png",
+      "!node_modules/**/{test,tests,__tests__,example,examples,doc,docs,types,typings,man}/**",
+      "!node_modules/**/*.{md,map,ts,flow,png,jpg,gif,svg}",
+      "!node_modules/**/*.min.js",
+      "!node_modules/codepage/bits/**",
+      "!node_modules/codepage/dist/**",
+      "!node_modules/xlsx/dist/xlsx.*",
+      "!node_modules/xlsx/dist/cpexcel.full.*",
+      "!node_modules/xlsx/xlsx.mjs",
+      "!node_modules/xlsx/xlsxworker.js",
+      "!node_modules/cfb/dist/**"
+    ],
+    "asarUnpack": [
+      "assets/bg/**"
     ],
     "win": {
       "target": [

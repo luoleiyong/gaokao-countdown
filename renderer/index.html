@@ -537,6 +537,19 @@
             </div>
             <button class="switch" id="switchBackup" aria-pressed="true"><i></i></button>
           </div>
+          <div class="backup-path">
+            <div class="backup-path__head">
+              <b>备份位置</b>
+              <span class="backup-path__tag" id="backupPathTag">默认</span>
+            </div>
+            <p class="backup-path__value" id="backupPathLabel" title="">正在读取…</p>
+            <div class="backup-path__actions">
+              <button class="btn-ghost" id="btnBackupDirPick">选择文件夹</button>
+              <button class="btn-ghost" id="btnBackupDirOpen">打开</button>
+              <button class="btn-ghost" id="btnBackupDirReset">恢复默认</button>
+            </div>
+            <p class="backup-path__hint" id="backupPathHint">安装时可以预先指定，随时可在这里更改；未指定则使用默认位置。</p>
+          </div>
           <button class="btn-ghost btn-wide setting-action" id="btnExportData">导出数据</button>
           <button class="btn-ghost btn-wide setting-action" id="btnImportData">导入数据</button>
           <p class="hint">导出为 JSON 文件，可用于换机迁移；导入会覆盖当前名单、签运簿、课程表与设置。</p>

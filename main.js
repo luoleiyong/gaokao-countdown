@@ -60,6 +60,7 @@ const STORE_DEFAULTS = {
   events: [],
   backupAuto: true,
   lastBackupDate: '',
+  backupDir: '',
   classroom: null
 };
 
@@ -512,8 +513,66 @@ function normalizeEvents(input) {
     return { id: typeof e.id === 'string' && e.id ? e.id : uid('e'), name, date };
   }).filter(Boolean).slice(0, 30);
 }
-function backupDir() {
+const BACKUP_HINT_FILE = path.join(USER_DIR, 'install-backup-path.txt');
+function defaultBackupDir() {
   return path.join(USER_DIR, 'backups');
+}
+/* 校验备份目录：绝对路径、可创建、可写入（写一次探针文件再删掉） */
+function checkBackupDir(input) {
+  const dir = String(input == null ? '' : input).trim().replace(/[\\/]+$/, '');
+  if (!dir) return { ok: false, error: '路径为空' };
+  if (dir.length > 200) return { ok: false, error: '路径过长' };
+  if (!path.isAbsolute(dir)) return { ok: false, error: '请选择完整的文件夹路径' };
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    if (!fs.statSync(dir).isDirectory()) return { ok: false, error: '该路径不是文件夹' };
+    const probe = path.join(dir, '.gk-write-test');
+    fs.writeFileSync(probe, 'ok');
+    fs.unlinkSync(probe);
+    return { ok: true, dir };
+  } catch (e) {
+    if (e && (e.code === 'EACCES' || e.code === 'EPERM')) return { ok: false, error: '没有写入权限' };
+    if (e && e.code === 'ENOENT') return { ok: false, error: '文件夹不可用' };
+    return { ok: false, error: (e && e.message) || '文件夹不可用' };
+  }
+}
+/* 实际使用的备份目录：自定义优先，不可用时自动退回默认位置，保证备份不中断 */
+function backupDirInfo() {
+  const custom = typeof store.backupDir === 'string' ? store.backupDir.trim() : '';
+  if (custom) {
+    const res = checkBackupDir(custom);
+    if (res.ok) return { dir: res.dir, custom: true, fallback: false, defaultDir: defaultBackupDir() };
+    return { dir: defaultBackupDir(), custom: true, fallback: true, error: res.error, defaultDir: defaultBackupDir() };
+  }
+  return { dir: defaultBackupDir(), custom: false, fallback: false, defaultDir: defaultBackupDir() };
+}
+function backupDir() {
+  return backupDirInfo().dir;
+}
+/* 安装向导写的提示文件可能来自不同 NSIS 编码：UTF-16（含/不含 BOM）或本地 ANSI（GBK），逐个兼容 */
+function decodeHintBuffer(buf) {
+  if (!buf || !buf.length) return '';
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) return buf.subarray(2).toString('utf16le').replace(/^\uFEFF/, '').trim();
+  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) return Buffer.from(buf.subarray(2)).swap16().toString('utf16le').trim();
+  if (buf.length >= 2 && buf[0] !== 0 && buf[1] === 0) return buf.toString('utf16le').replace(/\u0000+$/, '').trim();
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf).replace(/^\uFEFF/, '').trim();
+  } catch {
+    try { return new TextDecoder('gbk').decode(buf).trim(); } catch { return buf.toString('utf8').trim(); }
+  }
+}
+/* 安装向导选择的备份位置：仅当用户从未设置时采用一次，读完即删 */
+function consumeInstallBackupHint() {
+  try {
+    if (!fs.existsSync(BACKUP_HINT_FILE)) return '';
+    const raw = decodeHintBuffer(fs.readFileSync(BACKUP_HINT_FILE));
+    try { fs.unlinkSync(BACKUP_HINT_FILE); } catch { /* 忽略 */ }
+    if (!raw) return '';
+    const res = checkBackupDir(raw);
+    return res.ok ? res.dir : '';
+  } catch {
+    return '';
+  }
 }
 /* 每天首次启动自动备份 store.json，保留最近 7 份 */
 function runAutoBackup(force) {
@@ -524,18 +583,26 @@ function runAutoBackup(force) {
     // 备份的是磁盘上的 store.json，先把挂起的写入落盘，避免备份到旧数据
     flushStore();
     if (!fs.existsSync(STORE_FILE)) return null;
-    fs.mkdirSync(backupDir(), { recursive: true });
-    const file = path.join(backupDir(), `store-${today}.json`);
+    const info = backupDirInfo();
+    let dir = info.dir;
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch {
+      // 自定义目录突然不可用（U 盘拔出、网络盘断线）时退回默认位置，备份不能断
+      dir = defaultBackupDir();
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const file = path.join(dir, `store-${today}.json`);
     fs.copyFileSync(STORE_FILE, file);
-    const files = fs.readdirSync(backupDir())
+    const files = fs.readdirSync(dir)
       .filter((f) => /^store-\d{4}-\d{2}-\d{2}\.json$/.test(f))
       .sort();
     while (files.length > 7) {
-      try { fs.unlinkSync(path.join(backupDir(), files.shift())); } catch { /* 忽略 */ }
+      try { fs.unlinkSync(path.join(dir, files.shift())); } catch { /* 忽略 */ }
     }
     store.lastBackupDate = today;
     saveStore();
-    appendLog('BACKUP_AUTO', { file, count: files.length });
+    appendLog('BACKUP_AUTO', { file, count: files.length, dir, custom: info.custom, fallback: dir !== info.dir });
     return file;
   } catch (e) {
     appendLog('BACKUP_ERR', { message: e.message });
@@ -552,6 +619,19 @@ function latestBackupInfo() {
   } catch {
     return { count: 0, latest: '' };
   }
+}
+/* 备份位置状态：初始化与设置页共用一份结构 */
+function backupPayload() {
+  const info = backupDirInfo();
+  return {
+    ok: true,
+    backupDir: store.backupDir || '',
+    backupPath: info.dir,
+    backupCustom: info.custom,
+    backupFallback: info.fallback,
+    backupDefaultPath: info.defaultDir,
+    backupInfo: latestBackupInfo()
+  };
 }
 function hashPassword(password, salt) {
   return crypto.createHash('sha256').update(salt + '|' + String(password)).digest('hex');
@@ -585,6 +665,9 @@ function loadStore() {
     merged.events = normalizeEvents(data.events);
     merged.backupAuto = merged.backupAuto !== false;
     merged.lastBackupDate = typeof data.lastBackupDate === 'string' ? data.lastBackupDate : '';
+    merged.backupDir = typeof data.backupDir === 'string' ? data.backupDir.trim().slice(0, 200) : '';
+    // 安装向导里选过备份位置时，首次启动采用（用户之后可在设置里改）
+    if (!merged.backupDir) merged.backupDir = consumeInstallBackupHint();
     // 更新源固定为项目仓库，避免旧配置残留
     merged.updateUrl = DEFAULT_UPDATE_URL;
     return merged;
@@ -1959,7 +2042,9 @@ function updateTrayMenu() {
 
 /* ---------------- IPC ---------------- */
 function wireIpc() {
-  ipcMain.handle('app:get-init', () => ({
+  ipcMain.handle('app:get-init', () => {
+    const bdir = backupDirInfo();
+    return {
     store: {
       targetDate: store.targetDate,
       skin: store.skin,
@@ -1979,7 +2064,12 @@ function wireIpc() {
       timetable: store.classroom.timetable,
       backupAuto: store.backupAuto !== false,
       lastBackupDate: store.lastBackupDate || '',
-      backupInfo: latestBackupInfo()
+      backupInfo: latestBackupInfo(),
+      backupDir: store.backupDir || '',
+      backupPath: bdir.dir,
+      backupCustom: bdir.custom,
+      backupFallback: bdir.fallback,
+      backupDefaultPath: bdir.defaultDir
     },
     isFirstToday: firstTodayLaunch,
     today: dateKey(),
@@ -1989,7 +2079,8 @@ function wireIpc() {
     testMode: isTestBuildApp(),
     platform: process.platform,
     startedAt: new Date().toISOString()
-  }));
+    };
+  });
 
   ipcMain.handle('app:save-settings', (_e, patch) => {
     if (!patch || typeof patch !== 'object') return { ok: false };
@@ -2016,6 +2107,16 @@ function wireIpc() {
     if (typeof patch.updateAutoCheck === 'boolean') store.updateAutoCheck = patch.updateAutoCheck;
     if (typeof patch.updateAutoDownload === 'boolean') store.updateAutoDownload = patch.updateAutoDownload;
     if (typeof patch.backupAuto === 'boolean') store.backupAuto = patch.backupAuto;
+    if (typeof patch.backupDir === 'string') {
+      const raw = patch.backupDir.trim();
+      if (!raw) {
+        store.backupDir = '';
+      } else {
+        const check = checkBackupDir(raw);
+        if (!check.ok) return { ok: false, error: check.error };
+        store.backupDir = check.dir;
+      }
+    }
     saveStore();
     appendLog('SETTINGS', { targetDate: store.targetDate, petScale });
     return {
@@ -2110,6 +2211,44 @@ function wireIpc() {
     } catch (e) {
       return { ok: false, error: e.message };
     }
+  });
+
+  /* 数据备份位置：选择 / 恢复默认 / 打开所在文件夹 */
+  ipcMain.handle('app:pick-backup-dir', async () => {
+    try {
+      const info = backupDirInfo();
+      const res = await dialog.showOpenDialog(win, {
+        title: '选择数据备份文件夹',
+        defaultPath: fs.existsSync(info.dir) ? info.dir : info.defaultDir,
+        buttonLabel: '用这个文件夹',
+        properties: ['openDirectory', 'createDirectory']
+      });
+      if (res.canceled || !res.filePaths.length) return { ok: false, canceled: true };
+      const check = checkBackupDir(res.filePaths[0]);
+      if (!check.ok) return { ok: false, error: check.error };
+      store.backupDir = check.dir;
+      saveStore();
+      appendLog('BACKUP_DIR', { dir: check.dir });
+      runAutoBackup(true);
+      return backupPayload();
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('app:reset-backup-dir', () => {
+    store.backupDir = '';
+    saveStore();
+    appendLog('BACKUP_DIR', { dir: defaultBackupDir(), reset: true });
+    runAutoBackup(true);
+    return backupPayload();
+  });
+
+  ipcMain.handle('app:open-backup-dir', async () => {
+    const info = backupDirInfo();
+    try { fs.mkdirSync(info.dir, { recursive: true }); } catch { /* 忽略 */ }
+    const error = await shell.openPath(info.dir);
+    return { ok: !error, path: info.dir, error: error || '' };
   });
 
   ipcMain.handle('window:set-fullscreen', (_e, on) => {

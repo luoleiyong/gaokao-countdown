@@ -74,6 +74,10 @@ const state = {
   backupAuto: true,
   lastBackupDate: '',
   backupInfo: { count: 0, latest: '' },
+  backupPath: '',
+  backupCustom: false,
+  backupFallback: false,
+  backupDefaultPath: '',
   lastCourseKey: '',
   lastHomeCourseKey: ''
 };
@@ -198,6 +202,10 @@ async function boot() {
   state.backupAuto = s.backupAuto !== false;
   state.lastBackupDate = s.lastBackupDate || '';
   state.backupInfo = s.backupInfo || { count: 0, latest: '' };
+  state.backupPath = s.backupPath || '';
+  state.backupCustom = !!s.backupCustom;
+  state.backupFallback = !!s.backupFallback;
+  state.backupDefaultPath = s.backupDefaultPath || '';
   state.debug = !!s.debugMode;
   state.onboarded = !!s.onboarded;
   state.onboardAutoLaunch = state.autoLaunch;
@@ -3386,10 +3394,52 @@ function bindEvents() {
     try { await bridge.saveSettings({ backupAuto: state.backupAuto }); } catch (e) { /* 忽略 */ }
     toast(state.backupAuto ? '已开启每日自动备份' : '已关闭自动备份');
   });
-  const backupText = state.backupInfo && state.backupInfo.latest
-    ? `最近备份：${state.backupInfo.latest}（共 ${state.backupInfo.count} 份）`
-    : '每天启动时自动备份，保留最近 7 天';
-  $('backupStatus').textContent = backupText;
+  const renderBackup = () => {
+    const info = state.backupInfo || { count: 0, latest: '' };
+    $('backupStatus').textContent = info.latest
+      ? `最近备份：${info.latest}（共 ${info.count} 份）`
+      : '每天启动时自动备份，保留最近 7 天';
+    const pathText = state.backupPath || state.backupDefaultPath || '默认位置';
+    $('backupPathLabel').textContent = pathText;
+    $('backupPathLabel').title = pathText;
+    const tag = $('backupPathTag');
+    const fallback = !!(state.backupCustom && state.backupFallback);
+    tag.classList.toggle('is-fallback', fallback);
+    tag.classList.toggle('is-custom', !!(state.backupCustom && !fallback));
+    tag.textContent = state.backupCustom ? (fallback ? '已回退默认' : '自定义') : '默认';
+    $('backupPathHint').textContent = fallback
+      ? '自定义文件夹当前不可用，备份会先写到默认位置，恢复后自动写回。'
+      : (state.backupCustom
+        ? '备份文件会写进这个文件夹，换机或重装前直接复制走即可。'
+        : '安装时可以预先指定，之后也能在这里更改；未指定就用默认位置。');
+  };
+  const applyBackup = (res) => {
+    if (!res || !res.ok) return false;
+    if (res.backupPath) state.backupPath = res.backupPath;
+    if (res.backupDefaultPath) state.backupDefaultPath = res.backupDefaultPath;
+    if (res.backupInfo) state.backupInfo = res.backupInfo;
+    state.backupCustom = !!res.backupCustom;
+    state.backupFallback = !!res.backupFallback;
+    renderBackup();
+    return true;
+  };
+  renderBackup();
+  $('btnBackupDirPick').addEventListener('click', async () => {
+    const res = await bridge.pickBackupDir();
+    if (res && res.canceled) return;
+    if (applyBackup(res)) toast('备份位置已更新');
+    else toast((res && res.error) || '选择备份文件夹失败');
+  });
+  $('btnBackupDirReset').addEventListener('click', async () => {
+    const res = await bridge.resetBackupDir();
+    if (applyBackup(res)) toast('已恢复默认备份位置');
+    else toast((res && res.error) || '操作失败');
+  });
+  $('btnBackupDirOpen').addEventListener('click', async () => {
+    const res = await bridge.openBackupDir();
+    if (res && res.ok) return;
+    toast((res && res.error) || '打不开备份文件夹');
+  });
   $('btnExportData').addEventListener('click', async () => {
     const res = await bridge.exportData();
     if (res && res.ok) toast('数据已导出');
@@ -3471,6 +3521,9 @@ function createMockBridge() {
     },
     exportData: async () => ({ ok: false, error: '浏览器预览不支持导出' }),
     importData: async () => ({ ok: false, error: '浏览器预览不支持导入' }),
+    pickBackupDir: async () => ({ ok: false, canceled: true }),
+    resetBackupDir: async () => ({ ok: false, error: '浏览器预览不支持修改备份位置' }),
+    openBackupDir: async () => ({ ok: false, error: '浏览器预览不支持打开文件夹' }),
     setFullScreen: async () => ({ ok: false }),
     openTimetable: () => {
       window.open('timetable.html', '_blank', 'width=1180,height=780');

@@ -1,6 +1,6 @@
 {
   "name": "gaokao-countdown",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "高考倒计时",
   "main": "main.js",
   "author": {
@@ -62,6 +62,7 @@
       "createDesktopShortcut": true,
       "shortcutName": "高考倒计时",
       "license": "build/license.txt",
+      "include": "build/installer.nsh",
       "artifactName": "GaokaoCountdown-Setup-${version}.${ext}",
       "runAfterFinish": true
     }

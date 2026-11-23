@@ -11,6 +11,8 @@ const state = {
   data: null,
   adminData: null,
   adminRosterId: '',
+  rosterDraft: { name: '', step: 'name' },
+  trashPicked: [],
   drawing: false,
   ttRows: null,
   ttFile: null,
@@ -106,6 +108,8 @@ function renderRosterList() {
   const box = $('rosterList');
   const empty = $('rosterEmpty');
   const rosters = (state.data && state.data.rosters) || [];
+  const delBtn = $('btnDeleteRoster');
+  if (delBtn) delBtn.disabled = rosters.length === 0;
   box.innerHTML = '';
   if (!rosters.length) {
     box.hidden = true;
@@ -118,6 +122,7 @@ function renderRosterList() {
     const btn = document.createElement('button');
     btn.className = 'roster-item' + (r.id === state.data.activeRosterId ? ' on' : '');
     btn.innerHTML = `<b>${esc(r.name)}</b><span>${r.names.length} 人</span>`;
+    btn.title = '名单内容已锁定，需在管理员模式中修改';
     btn.addEventListener('click', () => selectRoster(r.id));
     box.appendChild(btn);
   });
@@ -258,6 +263,281 @@ async function importPaths(paths) {
 
 function filesToPaths(files) {
   return Array.from(files || []).map((f) => bridge.getFilePath(f)).filter(Boolean);
+}
+
+/* ---------------- 新建名单：命名 → 添加学生 ---------------- */
+const NAME_HEADER_RE = /^(姓名|名字|学生姓名|学生|name|序号|编号|学号|班级|性别)$/i;
+
+/* 行首序号（"3. 张三" / "3 张三"）只在后面还有内容时去掉，纯编号行原样保留 */
+function stripDraftIndex(line) {
+  const s = String(line == null ? '' : line).trim();
+  if (!s) return '';
+  const byPunct = s.replace(/^(\d{1,3})\s*[.、)．:：]\s*(?=\S)/, '').trim();
+  if (byPunct !== s) return byPunct;
+  const bySpace = s.replace(/^(\d{1,3})\s+(?=\S)/, '').trim();
+  if (bySpace !== s) return bySpace;
+  return s;
+}
+
+function parseDraftNames(text) {
+  const raw = String(text || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  const out = [];
+  raw.split('\n').forEach((line) => {
+    stripDraftIndex(line).split(/[\s,，;；、\t]+/).forEach((token) => {
+      let t = String(token == null ? '' : token).trim();
+      t = t.replace(/^["'\s]+|["'\s]+$/g, '');
+      if (!t || t.length > 30) return;
+      if (NAME_HEADER_RE.test(t)) return;
+      out.push(t);
+    });
+  });
+  return Array.from(new Set(out));
+}
+
+function openRosterDialog() {
+  state.rosterDraft = { name: '', step: 'name' };
+  $('rosterNameInput').value = '';
+  $('rosterNamesInput').value = '';
+  const fillInput = $('rosterFillCount');
+  if (fillInput) fillInput.value = '10';
+  resetFillButton();
+  $('rosterNameError').textContent = '';
+  $('rosterNamesError').textContent = '';
+  $('rosterModal').hidden = false;
+  setRosterStep('name');
+  setTimeout(() => { const el = $('rosterNameInput'); if (el) el.focus(); }, 60);
+}
+
+function closeRosterDialog() {
+  $('rosterModal').hidden = true;
+}
+
+function setRosterStep(step) {
+  state.rosterDraft.step = step;
+  const naming = step === 'name';
+  $('rosterStepName').hidden = !naming;
+  $('rosterStepNames').hidden = naming;
+  $('rosterTitle').textContent = naming ? '新建名单' : '添加学生';
+  $('rosterDraftName').textContent = state.rosterDraft.name || '';
+  if (!naming) {
+    updateRosterDraftCount();
+    setTimeout(() => { const el = $('rosterNamesInput'); if (el) el.focus(); }, 60);
+  }
+}
+
+function submitRosterName() {
+  const err = $('rosterNameError');
+  const name = $('rosterNameInput').value.trim().slice(0, 40);
+  if (!name) {
+    err.textContent = '请先输入名单名称';
+    $('rosterNameInput').focus();
+    return;
+  }
+  const rosters = (state.data && state.data.rosters) || [];
+  if (rosters.some((r) => r.name === name)) {
+    err.textContent = '已有同名名单，请换一个名称';
+    $('rosterNameInput').select();
+    return;
+  }
+  err.textContent = '';
+  state.rosterDraft.name = name;
+  setRosterStep('names');
+}
+
+function updateRosterDraftCount() {
+  const names = parseDraftNames($('rosterNamesInput').value);
+  $('rosterNameCount').textContent = names.length
+    ? `已识别 ${names.length} 人${names.length > 200 ? '（人数较多）' : ''}`
+    : '还没有输入姓名';
+  $('btnRosterSave').disabled = names.length === 0;
+  return names;
+}
+
+async function saveRosterDraft() {
+  const err = $('rosterNamesError');
+  const names = parseDraftNames($('rosterNamesInput').value);
+  if (!names.length) {
+    err.textContent = '请至少输入一个学生姓名';
+    $('rosterNamesInput').focus();
+    return;
+  }
+  const btn = $('btnRosterSave');
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '保存中…';
+  let res = null;
+  try {
+    res = await bridge.classroomCreateRoster(state.rosterDraft.name, names.join('\n'));
+  } catch (e) {
+    res = null;
+  }
+  btn.textContent = label;
+  btn.disabled = false;
+  if (!res || !res.ok) {
+    err.textContent = (res && res.error) || '保存失败，请重试';
+    return;
+  }
+  state.data = res.data;
+  state.data.activeRosterId = res.rosterId;
+  try { await bridge.classroomSetActive(res.rosterId); } catch (e) { /* 已由主进程设为当前名单 */ }
+  renderRosterList();
+  resetStage();
+  const total = typeof res.count === 'number' ? res.count : names.length;
+  closeRosterDialog();
+  toast(`已创建「${state.rosterDraft.name}」，共 ${total} 人`);
+}
+
+/* ---------------- 数字快捷填充 ---------------- */
+const FILL_MAX = 500;
+let fillConfirmUntil = 0;
+
+function resetFillButton() {
+  const btn = $('btnRosterFill');
+  if (!btn) return;
+  fillConfirmUntil = 0;
+  btn.textContent = '生成编号';
+}
+
+function applyRosterFill() {
+  const btn = $('btnRosterFill');
+  const input = $('rosterFillCount');
+  const area = $('rosterNamesInput');
+  if (!btn || !input || !area) return;
+  const n = Math.max(1, Math.min(FILL_MAX, Math.floor(Number(input.value) || 0)));
+  input.value = String(n);
+  if (area.value.trim() && Date.now() > fillConfirmUntil) {
+    fillConfirmUntil = Date.now() + 4000;
+    btn.textContent = '再点一次替换';
+    toast('输入框里已有内容，再点一次会替换成编号');
+    return;
+  }
+  fillConfirmUntil = 0;
+  btn.textContent = '生成编号';
+  const lines = [];
+  for (let i = 1; i <= n; i++) lines.push(String(i));
+  area.value = lines.join('\n');
+  area.dispatchEvent(new Event('input', { bubbles: true }));
+  area.focus();
+  area.scrollTop = area.scrollHeight;
+  toast(`已填充 1 到 ${n}`);
+}
+
+/* ---------------- 删除名单 / 最近删除 ---------------- */
+function openDeleteRosterDialog() {
+  state.trashPicked = [];
+  $('rosterDeleteModal').hidden = false;
+  renderTrashDialog();
+}
+
+function closeDeleteRosterDialog() {
+  $('rosterDeleteModal').hidden = true;
+}
+
+function updateTrashConfirm() {
+  const btn = $('btnTrashConfirm');
+  if (!btn) return;
+  const n = state.trashPicked.length;
+  btn.disabled = n === 0;
+  btn.textContent = n ? `删除所选（${n}）` : '删除所选';
+}
+
+function renderTrashDialog() {
+  const d = state.data || {};
+  const rosters = d.rosters || [];
+  const trash = d.trash || [];
+  const picked = new Set(state.trashPicked);
+  const pick = $('trashPickList');
+  pick.innerHTML = '';
+  rosters.forEach((r) => {
+    const row = document.createElement('label');
+    row.className = 'trash-row';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = picked.has(r.id);
+    cb.addEventListener('change', () => {
+      const set = new Set(state.trashPicked);
+      if (cb.checked) set.add(r.id);
+      else set.delete(r.id);
+      state.trashPicked = Array.from(set);
+      updateTrashConfirm();
+    });
+    const name = document.createElement('span');
+    name.className = 'trash-row__name';
+    name.textContent = r.name;
+    const count = document.createElement('span');
+    count.className = 'trash-row__count';
+    count.textContent = `${r.names.length} 人`;
+    row.append(cb, name, count);
+    pick.appendChild(row);
+  });
+  $('trashPickEmpty').hidden = rosters.length > 0;
+  updateTrashConfirm();
+
+  const list = $('trashRecentList');
+  list.innerHTML = '';
+  const now = Date.now();
+  trash.forEach((t) => {
+    const item = document.createElement('div');
+    item.className = 'trash-item';
+    const name = document.createElement('span');
+    name.className = 'trash-item__name';
+    name.textContent = t.name;
+    const meta = document.createElement('span');
+    meta.className = 'trash-item__meta';
+    const days = Math.max(1, Math.ceil(((Number(t.expiresAt) || now) - now) / 86400000));
+    meta.textContent = `${t.count} 人 · 还剩 ${days} 天`;
+    const btn = document.createElement('button');
+    btn.className = 'cls-ghost trash-restore';
+    btn.textContent = '恢复';
+    btn.addEventListener('click', () => restoreRosters([t.id]));
+    item.append(name, meta, btn);
+    list.appendChild(item);
+  });
+  $('trashRecentEmpty').hidden = trash.length > 0;
+  $('trashRecentCount').textContent = `${trash.length} 个`;
+}
+
+async function confirmDeleteRosters() {
+  const ids = state.trashPicked.slice();
+  if (!ids.length) return;
+  const btn = $('btnTrashConfirm');
+  btn.disabled = true;
+  btn.textContent = '删除中…';
+  let res = null;
+  try {
+    res = await bridge.classroomDeleteRosters(ids);
+  } catch (e) {
+    res = null;
+  }
+  if (!res || !res.ok) {
+    toast((res && res.error) || '删除失败，请重试');
+    renderTrashDialog();
+    return;
+  }
+  state.data = res.data;
+  state.trashPicked = [];
+  renderRosterList();
+  resetStage();
+  renderTrashDialog();
+  toast(`已删除 ${res.deleted} 个名单，可在「最近删除」里恢复`);
+}
+
+async function restoreRosters(ids) {
+  let res = null;
+  try {
+    res = await bridge.classroomRestoreRosters(ids);
+  } catch (e) {
+    res = null;
+  }
+  if (!res || !res.ok) {
+    toast((res && res.error) || '恢复失败，请重试');
+    return;
+  }
+  state.data = res.data;
+  renderRosterList();
+  resetStage();
+  renderTrashDialog();
+  toast(`已恢复 ${res.restored} 个名单`);
 }
 
 /* ---------------- 管理员 ---------------- */
@@ -1243,7 +1523,8 @@ function renderTimerBgList() {
 /* ---------------- 内置动画背景（随安装包一起分发，默认静音循环） ---------------- */
 const BUILTIN_BGS = [
   { id: 'builtin-1', name: '内置动画 1', file: 'builtin-1.mp4' },
-  { id: 'builtin-2', name: '内置动画 2', file: 'builtin-2.mp4' }
+  { id: 'builtin-2', name: '内置动画 2', file: 'builtin-2.mp4' },
+  { id: 'builtin-3', name: '内置动画 3', file: 'builtin-3.mp4' }
 ];
 
 let builtinUrlMap = null;
@@ -1717,21 +1998,28 @@ function bindStaticEvents() {
     e.target.value = '';
     await importPaths(paths);
   });
-  $('btnNewRoster').addEventListener('click', async () => {
-    let res;
-    try {
-      res = await bridge.classroomCreateRoster('新名单');
-    } catch (err) {
-      return toast('新建失败');
-    }
-    if (!res || !res.ok) return toast('新建失败');
-    state.data = res.data;
-    state.data.activeRosterId = res.rosterId;
-    await bridge.classroomSetActive(res.rosterId);
-    renderRosterList();
-    resetStage();
-    toast('已新建空名单，可在管理员模式中添加学生');
+  $('btnNewRoster').addEventListener('click', openRosterDialog);
+  $('btnDeleteRoster').addEventListener('click', openDeleteRosterDialog);
+  document.querySelectorAll('[data-close="roster"]').forEach((el) => el.addEventListener('click', closeRosterDialog));
+  document.querySelectorAll('[data-close="rosterDelete"]').forEach((el) => el.addEventListener('click', closeDeleteRosterDialog));
+  $('btnTrashConfirm').addEventListener('click', confirmDeleteRosters);
+  $('btnRosterFill').addEventListener('click', applyRosterFill);
+  $('rosterFillCount').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); applyRosterFill(); }
   });
+  $('btnRosterNext').addEventListener('click', submitRosterName);
+  $('rosterNameInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submitRosterName(); }
+  });
+  $('rosterNamesInput').addEventListener('input', () => {
+    resetFillButton();
+    updateRosterDraftCount();
+  });
+  $('rosterNamesInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveRosterDraft(); }
+  });
+  $('btnRosterBack').addEventListener('click', () => setRosterStep('name'));
+  $('btnRosterSave').addEventListener('click', saveRosterDraft);
 
   const pane = $('rosterPane');
   pane.addEventListener('dragenter', (e) => {
@@ -1768,6 +2056,8 @@ function bindStaticEvents() {
       exitTimerFullscreen();
       return;
     }
+    if (!$('rosterDeleteModal').hidden) return closeDeleteRosterDialog();
+    if (!$('rosterModal').hidden) return closeRosterDialog();
     if (!$('adminModal').hidden) return closeAdmin();
     if (state.classFull) {
       e.preventDefault();
@@ -1799,6 +2089,7 @@ function createMockBridge() {
       rosters: [
         { id: 'r1', name: '示例班级', createdAt: Date.now(), lastPickId: '', names: ['张三', '李四', '王五', '赵六'].map((n, i) => ({ id: 'n' + i, name: n, weight: 1, count: 0, pickedAt: 0 })) }
       ],
+      trash: [],
       timetable: defaultTt
     };
   }
@@ -1806,6 +2097,13 @@ function createMockBridge() {
   const pub = () => ({
     activeRosterId: store.activeRosterId,
     rosters: store.rosters.map((r) => ({ id: r.id, name: r.name, names: r.names.map((n) => ({ id: n.id, name: n.name })) })),
+    trash: (store.trash || []).map((t) => ({
+      id: t.roster.id,
+      name: t.roster.name,
+      count: t.roster.names.length,
+      deletedAt: t.deletedAt,
+      expiresAt: t.deletedAt + 3 * 86400000
+    })),
     timetable: store.timetable,
     hasPassword: !!store.passwordHash,
     unlocked: false,
@@ -1825,11 +2123,50 @@ function createMockBridge() {
     classroomAdminLock: async () => ({ ok: true }),
     classroomChangePassword: async () => ({ ok: true }),
     classroomImportRosters: async () => ({ ok: false, created: [], errors: ['浏览器预览不支持导入文件'] }),
-    classroomCreateRoster: async (name) => {
-      const r = { id: 'r' + Date.now(), name: name || '新名单', createdAt: Date.now(), lastPickId: '', names: [] };
+    classroomCreateRoster: async (name, text) => {
+      const rosterName = String(name || '').trim() || '新名单';
+      if (store.rosters.some((x) => x.name === rosterName)) return { ok: false, error: '已有同名名单，请换一个名称' };
+      const names = parseDraftNames(text);
+      const r = {
+        id: 'r' + Date.now(),
+        name: rosterName,
+        createdAt: Date.now(),
+        lastPickId: '',
+        names: names.map((n, i) => ({ id: 'n' + Date.now() + i, name: n, weight: 1, count: 0, pickedAt: 0 }))
+      };
       store.rosters.push(r);
+      store.activeRosterId = r.id;
       save();
-      return { ok: true, rosterId: r.id, data: pub() };
+      return { ok: true, rosterId: r.id, count: r.names.length, data: pub() };
+    },
+    classroomDeleteRosters: async (ids) => {
+      const list = Array.isArray(ids) ? ids : [];
+      if (!store.trash) store.trash = [];
+      const now = Date.now();
+      const removed = store.rosters.filter((x) => list.includes(x.id));
+      store.rosters = store.rosters.filter((x) => !list.includes(x.id));
+      removed.forEach((roster) => store.trash.unshift({ roster, deletedAt: now }));
+      if (!store.rosters.some((x) => x.id === store.activeRosterId)) {
+        store.activeRosterId = store.rosters.length ? store.rosters[0].id : '';
+      }
+      save();
+      return { ok: true, deleted: removed.length, data: pub() };
+    },
+    classroomRestoreRosters: async (ids) => {
+      const list = Array.isArray(ids) ? ids : [];
+      if (!store.trash) store.trash = [];
+      const restored = [];
+      store.trash = store.trash.filter((t) => {
+        if (!list.includes(t.roster.id)) return true;
+        store.rosters.push(t.roster);
+        restored.push(t.roster);
+        return false;
+      });
+      if (!store.rosters.some((x) => x.id === store.activeRosterId)) {
+        store.activeRosterId = store.rosters.length ? store.rosters[0].id : '';
+      }
+      save();
+      return { ok: true, restored: restored.length, data: pub() };
     },
     classroomSetActive: async (id) => { store.activeRosterId = id; save(); return { ok: true }; },
     classroomRenameRoster: async () => ({ ok: false, error: '浏览器预览不可用' }),

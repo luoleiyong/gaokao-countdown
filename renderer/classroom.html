@@ -63,7 +63,11 @@
           <b>拖拽名单文件到这里</b>
           <span>.txt / .csv / .xlsx / .xls，可一次拖入多个</span>
         </div>
-        <button class="cls-ghost roster-new" id="btnNewRoster">＋ 新建空名单</button>
+        <div class="roster-actions">
+          <button class="cls-ghost roster-new" id="btnNewRoster">＋ 新建名单</button>
+          <button class="cls-ghost roster-del" id="btnDeleteRoster" title="删除名单，可恢复，3 天后自动清除">删除</button>
+        </div>
+        <p class="roster-lock-hint">名单保存后学生不可删除，需在管理员模式调整</p>
       </aside>
 
       <section class="roll-stage" id="rollStage">
@@ -255,6 +259,76 @@
 </div>
 
 <input type="file" id="fileRoster" accept=".txt,.csv,.xlsx,.xls" multiple hidden />
+
+<!-- 新建名单：第 1 步命名，第 2 步添加学生 -->
+<div class="cls-modal" id="rosterModal" hidden>
+  <div class="cls-modal__backdrop" data-close="roster"></div>
+  <div class="cls-modal__box cls-roster-box">
+    <header class="cls-modal__head">
+      <h3 id="rosterTitle">新建名单</h3>
+      <button class="win-btn" data-close="roster" title="关闭">×</button>
+    </header>
+    <div class="roster-form" id="rosterStepName">
+      <div class="roster-step">第 1 步 / 共 2 步</div>
+      <p class="admin-intro">先给这个名单起个名字，例如「高一（3）班」或「语文课代表」。</p>
+      <input class="cls-input" id="rosterNameInput" maxlength="40" placeholder="名单名称" autocomplete="off" />
+      <div class="admin-error" id="rosterNameError"></div>
+      <div class="roster-form__foot">
+        <button class="cls-ghost" data-close="roster">取消</button>
+        <button class="cls-primary" id="btnRosterNext">下一步：添加学生</button>
+      </div>
+    </div>
+    <div class="roster-form" id="rosterStepNames" hidden>
+      <div class="roster-step">第 2 步 / 共 2 步 · <b id="rosterDraftName"></b></div>
+      <p class="admin-intro">把姓名或编号粘贴到下面，每行一个；也可以用逗号、顿号分隔。中文、字母、纯数字都可以。</p>
+      <div class="roster-fill">
+        <span class="roster-fill__label">数字填充</span>
+        <input class="cls-input roster-fill__count" id="rosterFillCount" type="number" min="1" max="500" step="1" value="10" inputmode="numeric" />
+        <button class="cls-ghost roster-fill__btn" id="btnRosterFill">生成编号</button>
+        <span class="roster-fill__hint">填 10 会从 1 填到 10</span>
+      </div>
+      <textarea class="cls-textarea" id="rosterNamesInput" placeholder="张三&#10;李四&#10;王五&#10;或 1&#10;2&#10;3"></textarea>
+      <div class="roster-form__meta">
+        <span id="rosterNameCount">还没有输入姓名</span>
+        <span class="roster-lock">保存后不可删除，需在管理员模式调整</span>
+      </div>
+      <div class="admin-error" id="rosterNamesError"></div>
+      <div class="roster-form__foot">
+        <button class="cls-ghost" id="btnRosterBack">上一步</button>
+        <button class="cls-primary" id="btnRosterSave">保存名单</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 删除名单：勾选删除 + 最近删除可恢复 -->
+<div class="cls-modal" id="rosterDeleteModal" hidden>
+  <div class="cls-modal__backdrop" data-close="rosterDelete"></div>
+  <div class="cls-modal__box cls-roster-box cls-trash-box">
+    <header class="cls-modal__head">
+      <h3>删除名单</h3>
+      <button class="win-btn" data-close="rosterDelete" title="关闭">×</button>
+    </header>
+    <div class="trash-body">
+      <p class="admin-intro">勾选要删除的名单。删除后会放进下面的「最近删除」，可以随时恢复；3 天后自动清除。</p>
+      <div class="trash-pick" id="trashPickList"></div>
+      <p class="trash-empty" id="trashPickEmpty" hidden>没有可删除的名单</p>
+      <div class="trash-foot">
+        <button class="cls-ghost" data-close="rosterDelete">取消</button>
+        <button class="cls-primary" id="btnTrashConfirm" disabled>删除所选</button>
+      </div>
+      <div class="trash-recent">
+        <div class="trash-recent__head">
+          <b>最近删除</b>
+          <span id="trashRecentCount">0 个</span>
+        </div>
+        <div class="trash-recent__list" id="trashRecentList"></div>
+        <p class="trash-empty" id="trashRecentEmpty">暂无最近删除的名单</p>
+        <p class="trash-recent__hint">删除的名单保存在本机，3 天后自动清除。</p>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- 管理员模式 -->
 <div class="cls-modal" id="adminModal" hidden>

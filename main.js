@@ -354,6 +354,8 @@ function normalizeSubjects(input) {
 
 /* ---------------- 课堂助手：名单 / 课程表 ---------------- */
 const TIMETABLE_DAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+/* 删除的名单在本机保留 3 天，过期自动清除 */
+const ROSTER_TRASH_TTL = 3 * 24 * 60 * 60 * 1000;
 
 function uid(prefix) {
   return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -489,7 +491,7 @@ function normalizeRoster(input) {
   };
 }
 function defaultClassroom() {
-  return { passwordHash: '', passwordSalt: '', activeRosterId: '', rosters: [], timetable: defaultTimetable() };
+  return { passwordHash: '', passwordSalt: '', activeRosterId: '', rosters: [], trash: [], timetable: defaultTimetable() };
 }
 function normalizeClassroom(input) {
   const c = input && typeof input === 'object' ? input : {};
@@ -502,6 +504,19 @@ function normalizeClassroom(input) {
     out.activeRosterId = out.rosters.length ? out.rosters[0].id : '';
   }
   out.timetable = normalizeTimetable(c.timetable);
+  out.trash = Array.isArray(c.trash)
+    ? c.trash
+      .map((t) => {
+        if (!t || typeof t !== 'object') return null;
+        const roster = normalizeRoster(t.roster);
+        const deletedAt = Number(t.deletedAt);
+        if (!roster || !deletedAt) return null;
+        if (Date.now() - deletedAt >= ROSTER_TRASH_TTL) return null;
+        return { roster, deletedAt };
+      })
+      .filter(Boolean)
+      .slice(0, 100)
+    : [];
   return out;
 }
 function normalizeEvents(input) {
@@ -1719,15 +1734,25 @@ function openTimetableView() {
 }
 
 const NAME_HEADER_RE = /^(姓名|名字|学生姓名|学生|name|序号|编号|学号|班级|性别)$/i;
+/* 姓名允许中文、字母、数字，纯数字（学号/座位号）也算有效姓名 */
 function cleanNameToken(token) {
   let t = String(token == null ? '' : token).replace(/^\uFEFF/, '').trim();
   t = t.replace(/^["'\s]+|["'\s]+$/g, '');
-  t = t.replace(/^\d+\s*[.、)．:：]?\s*/, '');
+  t = t.replace(/^(\d{1,3})\s*[.、)．:：]\s*(?=\S)/, '');
   t = t.trim();
   if (!t || t.length > 30) return '';
   if (NAME_HEADER_RE.test(t)) return '';
-  if (/^\d+$/.test(t)) return '';
   return t;
+}
+/* 行首序号（"3. 张三" / "3 张三"）只在后面还有内容时去掉，纯编号行原样保留 */
+function stripNameLineIndex(line) {
+  const s = String(line == null ? '' : line).trim();
+  if (!s) return '';
+  const byPunct = s.replace(/^(\d{1,3})\s*[.、)．:：]\s*(?=\S)/, '').trim();
+  if (byPunct !== s) return byPunct;
+  const bySpace = s.replace(/^(\d{1,3})\s+(?=\S)/, '').trim();
+  if (bySpace !== s) return bySpace;
+  return s;
 }
 function parseNameText(text) {
   const raw = String(text || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
@@ -1749,7 +1774,7 @@ function parseNameText(text) {
       const v = cleanNameToken(cells[col]);
       if (v) out.push(v);
     } else {
-      line.split(/[\s,，;；、\t]+/).forEach((tok) => {
+      stripNameLineIndex(line).split(/[\s,，;；、\t]+/).forEach((tok) => {
         const v = cleanNameToken(tok);
         if (v) out.push(v);
       });
@@ -1849,8 +1874,30 @@ function importRosterFiles(filePaths) {
   appendLog('ROSTER_IMPORT', { created, errors });
   return { ok: created.length > 0, created, errors };
 }
+function pruneRosterTrash() {
+  const c = store.classroom;
+  if (!c || !Array.isArray(c.trash) || !c.trash.length) return;
+  const now = Date.now();
+  c.trash = c.trash.filter((t) => t && t.roster && Number(t.deletedAt) && now - Number(t.deletedAt) < ROSTER_TRASH_TTL);
+}
+function rosterTrashList() {
+  const c = store.classroom;
+  if (!Array.isArray(c.trash)) return [];
+  return c.trash
+    .filter((t) => t && t.roster)
+    .slice()
+    .sort((a, b) => Number(b.deletedAt) - Number(a.deletedAt))
+    .map((t) => ({
+      id: t.roster.id,
+      name: t.roster.name,
+      count: Array.isArray(t.roster.names) ? t.roster.names.length : 0,
+      deletedAt: Number(t.deletedAt),
+      expiresAt: Number(t.deletedAt) + ROSTER_TRASH_TTL
+    }));
+}
 function classroomPublicData() {
   const c = store.classroom;
+  pruneRosterTrash();
   return {
     activeRosterId: c.activeRosterId,
     rosters: c.rosters.map((r) => ({
@@ -1858,6 +1905,7 @@ function classroomPublicData() {
       name: r.name,
       names: r.names.map((n) => ({ id: n.id, name: n.name }))
     })),
+    trash: rosterTrashList(),
     timetable: c.timetable,
     hasPassword: adminHasPassword(),
     unlocked: classroomUnlocked,
@@ -2788,7 +2836,7 @@ function wireIpc() {
       const baseDir = path.join(__dirname, 'assets', 'bg')
         .replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
       const urls = {};
-      ['builtin-1.mp4', 'builtin-2.mp4'].forEach((name) => {
+      ['builtin-1.mp4', 'builtin-2.mp4', 'builtin-3.mp4'].forEach((name) => {
         const full = path.join(baseDir, name);
         try {
           if (fs.existsSync(full)) urls[name] = pathToFileURL(full).href;
@@ -2859,18 +2907,82 @@ function wireIpc() {
     return res;
   });
 
-  ipcMain.handle('classroom:create-roster', (_e, name) => {
+  ipcMain.handle('classroom:create-roster', (_e, name, text) => {
+    const rosterName = String(name || '').trim().slice(0, 40);
+    if (!rosterName) return { ok: false, error: '请输入名单名称' };
+    if (store.classroom.rosters.some((r) => r.name === rosterName)) {
+      return { ok: false, error: '已有同名名单，请换一个名称' };
+    }
+    const names = parseNameText(text);
     const roster = {
       id: uid('r'),
-      name: String(name || '新名单').slice(0, 40),
+      name: rosterName,
       createdAt: Date.now(),
-      names: [],
+      names: names.map((n) => ({ id: uid('n'), name: n, weight: 1, count: 0, pickedAt: 0 })),
       lastPickId: ''
     };
     store.classroom.rosters.push(roster);
-    if (!store.classroom.activeRosterId) store.classroom.activeRosterId = roster.id;
+    store.classroom.activeRosterId = roster.id;
     saveStore();
-    return { ok: true, rosterId: roster.id, data: classroomPublicData() };
+    appendLog('ROSTER_CREATE', { id: roster.id, name: rosterName, count: roster.names.length });
+    return { ok: true, rosterId: roster.id, count: roster.names.length, data: classroomPublicData() };
+  });
+
+  /* 删除名单（不必进管理员）：先进「最近删除」，可恢复，3 天后自动清除 */
+  ipcMain.handle('classroom:delete-rosters', (_e, ids) => {
+    const list = Array.isArray(ids) ? ids.filter((id) => typeof id === 'string' && id) : [];
+    if (!list.length) return { ok: false, error: '请先选择要删除的名单' };
+    const c = store.classroom;
+    const removed = [];
+    c.rosters = c.rosters.filter((r) => {
+      if (!list.includes(r.id)) return true;
+      removed.push(r);
+      return false;
+    });
+    if (!removed.length) return { ok: false, error: '名单不存在' };
+    if (!Array.isArray(c.trash)) c.trash = [];
+    const now = Date.now();
+    removed.forEach((roster) => {
+      c.trash = c.trash.filter((t) => !t || !t.roster || t.roster.id !== roster.id);
+      c.trash.unshift({ roster, deletedAt: now });
+    });
+    pruneRosterTrash();
+    if (!c.rosters.some((r) => r.id === c.activeRosterId)) {
+      c.activeRosterId = c.rosters.length ? c.rosters[0].id : '';
+    }
+    saveStore();
+    appendLog('ROSTER_TRASH', { names: removed.map((r) => r.name), count: removed.length });
+    return { ok: true, deleted: removed.length, data: classroomPublicData() };
+  });
+
+  ipcMain.handle('classroom:restore-rosters', (_e, ids) => {
+    const list = Array.isArray(ids) ? ids.filter((id) => typeof id === 'string' && id) : [];
+    if (!list.length) return { ok: false, error: '请先选择要恢复的名单' };
+    const c = store.classroom;
+    if (!Array.isArray(c.trash)) c.trash = [];
+    const restored = [];
+    c.trash = c.trash.filter((t) => {
+      if (!t || !t.roster || !list.includes(t.roster.id)) return true;
+      const roster = t.roster;
+      const taken = new Set(c.rosters.map((r) => r.name));
+      let name = roster.name;
+      if (taken.has(name)) {
+        for (let i = 1; i < 100; i++) {
+          const candidate = `${roster.name}（恢复${i > 1 ? i : ''}）`.slice(0, 40);
+          if (!taken.has(candidate)) { name = candidate; break; }
+        }
+      }
+      roster.name = name;
+      if (c.rosters.some((r) => r.id === roster.id)) roster.id = uid('r');
+      c.rosters.push(roster);
+      restored.push(roster);
+      return false;
+    });
+    if (!restored.length) return { ok: false, error: '没有找到要恢复的名单' };
+    if (!c.rosters.some((r) => r.id === c.activeRosterId)) c.activeRosterId = c.rosters[0].id;
+    saveStore();
+    appendLog('ROSTER_RESTORE', { names: restored.map((r) => r.name), count: restored.length });
+    return { ok: true, restored: restored.length, data: classroomPublicData() };
   });
 
   ipcMain.handle('classroom:set-active', (_e, id) => {
@@ -3171,7 +3283,10 @@ if (!gotLock) {
     appendLog('APP_START', { firstToday: firstTodayLaunch, version: app.getVersion() });
     runAutoBackup(false);
 
-    app.setAppUserModelId('com.trae.gaokao.countdown');
+    // 注意：这里不能无条件调用 app.setAppUserModelId()。Windows 任务栏会拿 AUMID 去开始菜单里
+    // 找同名快捷方式取图标；便携版 / win-unpacked 直接运行时没有这个快捷方式，任务栏就会退化成
+    // 空白的默认图标（用户看到的「白色图标」）。不设置 AUMID 时任务栏直接用窗口图标，四套主题下都正常。
+    // 通知功能没有使用 Electron Notification，所以去掉 AUMID 不影响任何现有功能。
     createWindow();
     createTray();
     wireIpc();

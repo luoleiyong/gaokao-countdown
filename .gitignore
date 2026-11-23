@@ -6,3 +6,8 @@ dist*/
 .DS_Store
 Thumbs.db
 .trae-html-share-packages/
+
+# 本地 AI 协作规则与内部文档：只在本地生效，不进公开仓库
+/AGENTS.md
+/docs/
+/.tmp*

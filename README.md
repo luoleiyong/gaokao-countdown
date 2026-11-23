@@ -191,7 +191,7 @@ npm start
 
 实现方式：角色素材为 `renderer/assets/feiyu-body.png` 全身立绘、`renderer/assets/feiyu-run.webm` 跑步动画（VP9 带 alpha 通道，24fps，174×200，2 秒无缝循环）、写作业逐帧动画（`renderer/assets/hw/` 下 169 张无损 WebP，24fps，270×262，由 canvas 播放）、写作业互动动作（`renderer/assets/hwact/` 下 11 组、每组 121 张无损 WebP，270×262，20fps 播放），以及待机用的 `feiyu-idle.webm`、`feiyu-stretch.webm`、`feiyu-yawn.webm`、`feiyu-eat.webm`（24fps，177×200）；`renderer/fish.js` 保存台词，`renderer/app.js` 的 `renderFish()` 每秒根据 `coursePlan()` 计算当前状态与课堂进度，切换视频、更新鱼的位置与气泡；写作业用逐帧 canvas 避免视频 alpha 边缘的绿色闪烁，台词命中动作时在 canvas 上播放对应片段，上课和课间按参考项目的节奏播放完整待机动画片段，不依赖外部网络或运行时插件。
 
-动作素材的来源、抠像参数、逐帧方案、台词绑定与完整研究过程见 **[docs/character-actions.md](docs/character-actions.md)**。
+动作素材的抠像参数、逐帧方案与台词绑定逻辑都写在渲染层代码的注释里。
 
 > 大肥鱼形象参考并使用 [TreapGoGo/deepseek-whale-girl](https://github.com/TreapGoGo/deepseek-whale-girl)（MIT License）中的鲸鱼娘全身立绘素材；待机呼吸、伸懒腰、打哈欠、吃 Token 的动画素材来自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)（MIT License），经 [QCYTSN/dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu) 整理；跑步与写作业动画通过 AI 视频生成后抠像压缩，气泡与交互为本项目实现。
 
@@ -253,7 +253,6 @@ npm start
 
 ```text
 gaokao-countdown/
-├── AGENTS.md               代码修改审计规则、UI 文案与主题规范（改代码前先读）
 ├── main.js                 主进程：窗口、托盘、存储、天气、更新、课堂数据
 ├── preload.js              安全桥接（contextBridge）
 ├── renderer/
@@ -283,11 +282,6 @@ gaokao-countdown/
 │   ├── solar-terms.js      二十四节气
 │   └── sound.js            抽签与点名音效
 ├── update/version.json     版本清单（CDN 兜底更新源）
-├── docs/
-│   ├── character-actions.md  桌宠动作素材与研究过程
-│   ├── development-workflow.md  开发与版本发布流程
-│   ├── audit-log.md  每次代码改动的审计记录
-│   └── test-build.md  测试版与测试面板说明
 ├── build/
 │   ├── icon.png            应用图标
 │   ├── license.txt         安装包用户协议
@@ -306,20 +300,16 @@ npm install
 # 本地运行
 npm start
 
-# 打包便携版 + 安装包
-npx electron-builder --win portable nsis
+# 打包便携版 + 安装包（会临时移出测试面板，产物在 distNNN/）
+node scripts/build-official.js distNNN portable,nsis
 ```
 
-构建产物位于 `dist/`：
+构建产物位于 `distNNN/`：
 
 - `GaokaoCountdown-*-portable.exe`：便携版
 - `GaokaoCountdown-Setup-*.exe`：NSIS 安装包
 
-改代码前先读 **[AGENTS.md](AGENTS.md)**：里面是代码修改审计规则（每次改动要记录文件、原因、验证与回滚）、界面文案规范、主题配色约束和已知环境坑，每次改动都会追加到 **[docs/audit-log.md](docs/audit-log.md)**。
-
-完整的版本发布流程（版本号、更新公告、构建、Release、安装包上传、CDN 刷新与校验）见 **[docs/development-workflow.md](docs/development-workflow.md)**。
-
-本地测试版（独立置顶的测试面板，可一键触发全部功能与彩蛋）的构建与使用见 **[docs/test-build.md](docs/test-build.md)**。
+发布新版本时同步改三处版本号（`package.json`、`package-lock.json` 两处）、更新 `update/version.json` 的版本与更新说明，然后提交代码、创建 GitHub Release（上传便携版、安装包与 `latest.yml`），最后刷新 jsDelivr 上的 `update/version.json`。
 
 ## 常见问题
 

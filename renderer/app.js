@@ -79,7 +79,32 @@ const state = {
   backupFallback: false,
   backupDefaultPath: '',
   lastCourseKey: '',
-  lastHomeCourseKey: ''
+  lastHomeCourseKey: '',
+  aiEnabled: false,
+  aiProvider: 'kilo',
+  aiProviderName: 'Kilo 免费池',
+  aiBaseUrl: '',
+  aiModel: '',
+  aiModelUsed: '',
+  aiTopic: '每日热点',
+  aiHasKey: false,
+  aiNoKey: false,
+  aiAutoModel: true,
+  aiCustomModels: [],
+  aiModels: [],
+  aiLoginUrl: '',
+  aiKeyUrl: '',
+  aiAuthUrl: '',
+  aiReady: true,
+  aiReadyError: '',
+  aiProviders: [],
+  aiModelList: [],
+  aiCustomDraft: null,
+  aiKeyDraft: '',
+  aiTesting: false,
+  /* AI 助手抽屉的两个开关：初值 true，打开抽屉时按 aiConfig() 校准 */
+  aiThink: true,
+  aiWeb: true
 };
 
 const bridge = window.gaokao || createMockBridge();
@@ -206,6 +231,18 @@ async function boot() {
   state.backupCustom = !!s.backupCustom;
   state.backupFallback = !!s.backupFallback;
   state.backupDefaultPath = s.backupDefaultPath || '';
+  state.aiEnabled = s.aiEnabled !== false;
+  state.aiProvider = s.aiProvider || 'zhipu';
+  state.aiProviderName = s.aiProviderName || '智谱 GLM';
+  state.aiBaseUrl = s.aiBaseUrl || '';
+  state.aiModel = s.aiModel || '';
+  state.aiTopic = s.aiTopic || '每日热点';
+  state.aiHasKey = !!s.aiHasKey;
+  state.aiLoginUrl = s.aiLoginUrl || '';
+  state.aiKeyUrl = s.aiKeyUrl || '';
+  state.aiAuthUrl = s.aiAuthUrl || '';
+  state.aiReady = s.aiReady !== false;
+  state.aiReadyError = s.aiReadyError || '';
   state.debug = !!s.debugMode;
   state.onboarded = !!s.onboarded;
   state.onboardAutoLaunch = state.autoLaunch;
@@ -2543,6 +2580,8 @@ function openSettings() {
   $('scaleLabel').textContent = Math.round(state.petScale * 100) + '%';
   renderSkinGrid();
   renderSubjectGrid();
+  renderAiPanel();
+  loadAiConfig();
   $('settings').hidden = false;
 }
 
@@ -2619,6 +2658,442 @@ function renderSubjectChips(grid, countEl) {
 function renderSubjectGrid() {
   renderSubjectChips($('subjectGrid'), $('subjectCount'));
 }
+/* ---------------- AI 知识助手（设置页状态行 + 配置弹窗） ---------------- */
+const AI_FALLBACK_PROVIDER = { id: 'kilo', name: 'Kilo 免费池', model: 'kilo-auto/free', presets: [], noKey: true };
+
+function aiProviderMeta(id) {
+  const list = (state.aiProviders && state.aiProviders.length)
+    ? state.aiProviders
+    : [AI_FALLBACK_PROVIDER];
+  return list.find((p) => p.id === id) || list[0];
+}
+
+/* Kilo 免费池的短名：去掉厂商前缀与 :free 后缀，kilo-auto 这类路由名保留原样 */
+function aiModelLabel(id) { return String(id || '').replace(/:free$/, ''); }
+function aiModelShort(id) {
+  const full = String(id || '');
+  if (!full) return '';
+  if (/^kilo-auto\b/.test(full)) return full;
+  const seg = aiModelLabel(full).split('/');
+  return seg[seg.length - 1] || full;
+}
+
+function aiIsNoKey() {
+  const meta = aiProviderMeta(state.aiProvider);
+  return !!state.aiNoKey || meta.noKey === true;
+}
+
+/* 设置页只渲染一行：金点=可用，红点=缺密钥或未就绪，灰点=未配置 */
+function renderAiPanel() {
+  const meta = aiProviderMeta(state.aiProvider);
+  const modelName = state.aiModel || meta.model || '';
+  const noKey = !!state.aiNoKey || meta.noKey === true;
+  const configured = noKey || !!state.aiHasKey;
+  const ready = configured && state.aiReady !== false;
+  const dot = $('aiRowDot');
+  if (dot) dot.setAttribute('data-state', ready ? 'on' : (configured ? 'warn' : 'off'));
+  if ($('aiStatusLabel')) $('aiStatusLabel').textContent = ready ? '已启用' : (configured ? '待测试' : '未配置');
+
+  const title = $('aiRowTitle');
+  if (title) {
+    title.textContent = configured
+      ? (meta.name || 'AI') + '　·　' + (modelName || '未选模型')
+      : '未配置模型';
+  }
+  const sub = $('aiRowSub');
+  if (sub) {
+    const bits = [];
+    if (noKey && configured) bits.push('免密钥');
+    if (!configured) bits.push('点击选择供应商，Kilo 免费池开箱可用');
+    else if (state.aiReady === false) bits.push(state.aiReadyError || '配置还没填完整');
+    else bits.push('AI 检索已可用');
+    if (state.aiModelUsed && state.aiModelUsed !== modelName) {
+      bits.push('实际使用：' + aiModelShort(state.aiModelUsed));
+    }
+    sub.textContent = bits.join('　·　');
+    sub.title = sub.textContent;
+  }
+  const act = document.querySelector('.ai-row__act');
+  if (act) act.textContent = configured ? '修改' : '配置';
+}
+
+async function loadAiConfig() {
+  if (!bridge.aiConfig) return;
+  try {
+    const res = await bridge.aiConfig();
+    if (!res || !res.ok) return;
+    state.aiEnabled = res.enabled !== false;
+    state.aiProvider = res.provider || 'kilo';
+    state.aiProviderName = res.providerName || 'Kilo 免费池';
+    state.aiBaseUrl = res.baseUrl || '';
+    state.aiModel = res.model || '';
+    state.aiModelUsed = res.modelUsed || '';
+    state.aiTopic = res.topic || '每日热点';
+    state.aiHasKey = !!res.hasKey;
+    state.aiNoKey = !!res.noKey;
+    state.aiAutoModel = res.autoModel !== false;
+    state.aiThink = res.think !== false;
+    state.aiWeb = res.web !== false;
+    state.aiCustomModels = Array.isArray(res.customModels) ? res.customModels : [];
+    state.aiModels = Array.isArray(res.models) ? res.models : [];
+    state.aiLoginUrl = res.loginUrl || '';
+    state.aiKeyUrl = res.keyUrl || '';
+    state.aiAuthUrl = res.authUrl || '';
+    state.aiReady = res.ready !== false;
+    state.aiReadyError = res.readyError || '';
+    state.aiProviders = (Array.isArray(res.providers) && res.providers.length) ? res.providers : state.aiProviders;
+    renderAiPanel();
+  } catch (e) { /* 读取失败时保持默认展示 */ }
+}
+
+/* 错误就地显示在地址框下方，不再只丢 toast */
+function aiSaveError(text) {
+  const box = $('aiBaseErr');
+  if (!box) return;
+  box.textContent = text ? String(text) : '';
+  box.hidden = !text;
+}
+
+function aiSetupTip(text, isErr) {
+  const box = $('aiSetupTip');
+  if (!box) return;
+  box.textContent = text || '';
+  box.hidden = !text;
+  box.classList.toggle('is-err', !!isErr);
+}
+
+/* 测试结果：成功金色，失败红色；title 里放全文 */
+function aiTestLine(shortText, isErr, fullText) {
+  const box = $('aiTestResult');
+  if (!box) return;
+  box.textContent = shortText || '';
+  box.hidden = !shortText;
+  box.setAttribute('data-state', isErr ? 'err' : 'ok');
+  box.title = fullText || shortText || '';
+}
+
+function aiFormValues() {
+  const keyEl = $('aiInputKey');
+  if (keyEl) state.aiKeyDraft = keyEl.value;
+  return {
+    base: $('aiInputBase') ? $('aiInputBase').value.trim() : '',
+    model: $('aiInputModel') ? $('aiInputModel').value.trim() : '',
+    key: keyEl ? keyEl.value.trim() : ''
+  };
+}
+
+/* 地址与模型都填了才允许保存；缺哪个就在输入框下面说清楚 */
+function refreshAiSaveState() {
+  const { base, model } = aiFormValues();
+  const isCustom = state.aiProvider === 'custom';
+  const missing = [];
+  if (isCustom && !base) missing.push('接口地址');
+  if (!model) missing.push('模型名');
+  const btn = $('btnAi2Save');
+  if (btn) btn.disabled = missing.length > 0;
+  const hint = $('aiFormHint');
+  if (hint) {
+    hint.hidden = !missing.length;
+    hint.textContent = missing.length ? '还需要填写：' + missing.join('、') + '；填完才能保存。' : '';
+  }
+  return missing;
+}
+
+/* 供应商卡片：Kilo 免费池带「免密钥」角标与「了解 Kilo」外链 */
+function renderAiProviderCards() {
+  const box = $('aiProviderList');
+  if (!box) return;
+  box.innerHTML = '';
+  (state.aiProviders || []).forEach((p) => {
+    const on = p.id === state.aiProvider;
+    const isKilo = p.id === 'kilo' && p.noKey === true;
+    const card = document.createElement('div');
+    card.className = 'ai-provider' + (on ? ' is-on' : '');
+    card.setAttribute('role', 'radio');
+    card.setAttribute('aria-checked', String(on));
+    card.setAttribute('tabindex', '0');
+    card.dataset.provider = p.id;
+
+    const name = document.createElement('span');
+    name.className = 'ai-provider__name';
+    name.textContent = isKilo ? 'Kilo 免费池' : (p.name || p.id);
+    if (p.noKey) {
+      const tag = document.createElement('i');
+      tag.className = 'ai-provider__tag';
+      tag.textContent = '免密钥';
+      name.appendChild(tag);
+    }
+    const sub = document.createElement('span');
+    sub.className = 'ai-provider__sub';
+    sub.textContent = isKilo
+      ? '无需密钥，直连免费模型；高峰期自动换模型'
+      : (p.hint || (p.model ? '默认模型 ' + p.model : '填写接口地址与模型名'));
+    card.appendChild(name);
+    card.appendChild(sub);
+
+    if (isKilo && p.keyUrl) {
+      const link = document.createElement('span');
+      link.className = 'ai-provider__link';
+      link.textContent = '了解 Kilo';
+      link.title = p.keyUrl;
+      link.addEventListener('click', (e) => {
+        e.stopPropagation();
+        bridge.openExternal(p.keyUrl);
+      });
+      card.appendChild(link);
+    }
+
+    card.addEventListener('click', () => selectAiProvider(p.id));
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectAiProvider(p.id); }
+    });
+    box.appendChild(card);
+  });
+}
+
+/* 切换供应商：先切主进程再回读，才能拿到这家供应商自己那一桶密钥的状态 */
+async function selectAiProvider(id) {
+  if (!id || id === state.aiProvider) return;
+  const prevIsCustom = state.aiProvider === 'custom';
+  if (prevIsCustom) {
+    state.aiCustomDraft = {
+      baseUrl: $('aiInputBase') ? $('aiInputBase').value.trim() : state.aiBaseUrl,
+      model: $('aiInputModel') ? $('aiInputModel').value.trim() : state.aiModel
+    };
+  }
+
+  state.aiProvider = id;
+  state.aiModelList = [];
+  state.aiKeyDraft = '';
+  aiSaveError('');
+  aiTestLine('');
+  aiSetupTip('');
+
+  if (id === 'custom' && state.aiCustomDraft) {
+    state.aiBaseUrl = state.aiCustomDraft.baseUrl || '';
+    state.aiModel = state.aiCustomDraft.model || '';
+  } else {
+    const p = aiProviderMeta(id);
+    state.aiBaseUrl = p.baseUrl || state.aiBaseUrl || '';
+    state.aiModel = p.model || '';
+  }
+  renderAiSetup();
+
+  try {
+    const res = await bridge.aiSaveConfig({ provider: id });
+    if (res && res.ok === false) {
+      aiSaveError(res.error || '切换供应商失败');
+      return;
+    }
+    /* 自定义供应商的草稿要回写 store，aiConfig 才会把用户填的值还回来 */
+    if (id === 'custom' && state.aiCustomDraft) {
+      const patch = { provider: 'custom' };
+      if (state.aiCustomDraft.baseUrl) patch.baseUrl = state.aiCustomDraft.baseUrl;
+      if (state.aiCustomDraft.model) patch.model = state.aiCustomDraft.model;
+      await bridge.aiSaveConfig(patch);
+    }
+    await loadAiConfig();
+    renderAiSetup();
+    const meta = aiProviderMeta(id);
+    if (meta.noKey) aiSetupTip('「' + (meta.name || 'AI') + '」免密钥，直接点「测试连通性」就能用。');
+    else if (!state.aiHasKey) aiSetupTip('「' + (meta.name || 'AI') + '」还没有密钥；各供应商的密钥分别保存，填一次即可。');
+    else aiSetupTip('已切换到「' + (meta.name || 'AI') + '」，本机已保存过它的密钥。');
+  } catch (e) {
+    aiSaveError('切换供应商失败：' + e.message);
+  }
+}
+
+/* 点选模型：写进输入框、记住到「已保存的模型」，并立刻持久化 */
+async function pickAiModel(id) {
+  const name = String(id || '').trim();
+  if (!name) return;
+  state.aiModel = name;
+  if ($('aiInputModel')) $('aiInputModel').value = name;
+  aiSaveError('');
+  renderAiSetup();
+  try {
+    const res = await bridge.aiSaveConfig({ model: name, rememberModel: name });
+    if (!res || !res.ok) {
+      aiSaveError((res && res.error) || '模型没保存成功，请重试');
+      return;
+    }
+    state.aiCustomModels = Array.isArray(res.customModels) ? res.customModels : state.aiCustomModels;
+    if (res.model) state.aiModel = res.model;
+    renderAiSetup();
+    aiSetupTip('已选中并记住「' + aiModelShort(name) + '」，保存后生效。');
+  } catch (e) {
+    aiSaveError('模型没保存成功：' + e.message);
+  }
+}
+
+/* 删除已保存的模型：只动 customModels，不动当前选中项（主进程会在同一模型时置空） */
+async function forgetAiModel(name) {
+  try {
+    const res = await bridge.aiSaveConfig({ forgetModel: name });
+    if (!res || !res.ok) {
+      aiSaveError((res && res.error) || '删除失败，请重试');
+      return;
+    }
+    state.aiCustomModels = Array.isArray(res.customModels) ? res.customModels : state.aiCustomModels.filter((m) => m !== name);
+    if (typeof res.model === 'string') state.aiModel = res.model;
+    if ($('aiInputModel')) $('aiInputModel').value = state.aiModel || '';
+    renderAiSetup();
+    aiSetupTip('已删除「' + aiModelLabel(name) + '」。');
+  } catch (e) {
+    aiSaveError('删除失败：' + e.message);
+  }
+}
+
+function renderAiModelChips(meta) {
+  const chips = $('aiModelChips');
+  const empty = $('aiCatalogEmpty');
+  const source = (Array.isArray(state.aiModelList) && state.aiModelList.length)
+    ? state.aiModelList
+    : ((Array.isArray(meta.models) && meta.models.length)
+      ? meta.models
+      : (Array.isArray(meta.presets) ? meta.presets.map((id) => ({ id, name: id })) : []));
+
+  if (chips) {
+    chips.innerHTML = '';
+    source.forEach((m) => {
+      const id = String((m && m.id) || m || '');
+      if (!id) return;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ai-chip' + (state.aiModel === id ? ' is-on' : '');
+      btn.textContent = aiModelShort(id);
+      btn.title = ((m && m.name) ? m.name + '　·　' : '') + id + ((m && m.ctx) ? '　·　上下文 ' + m.ctx : '');
+      btn.addEventListener('click', () => pickAiModel(id));
+      chips.appendChild(btn);
+    });
+    chips.hidden = !chips.childElementCount;
+    if (empty) empty.hidden = !!chips.childElementCount;
+  }
+
+  const box = $('aiCustomModelsBox');
+  const saved = $('aiCustomModelChips');
+  const names = Array.isArray(state.aiCustomModels) ? state.aiCustomModels : [];
+  if (saved) {
+    saved.innerHTML = '';
+    names.forEach((name) => {
+      const wrap = document.createElement('span');
+      wrap.className = 'ai-chip ai-chip--saved' + (state.aiModel === name ? ' is-on' : '');
+      const pick = document.createElement('button');
+      pick.type = 'button';
+      pick.className = 'ai-chip__pick';
+      pick.textContent = aiModelLabel(name);
+      pick.title = name;
+      pick.addEventListener('click', () => pickAiModel(name));
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'ai-chip__del';
+      del.textContent = '×';
+      del.title = '删除已保存的模型：' + name;
+      del.setAttribute('aria-label', '删除已保存的模型 ' + name);
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
+        forgetAiModel(name);
+      });
+      wrap.appendChild(pick);
+      wrap.appendChild(del);
+      saved.appendChild(wrap);
+    });
+  }
+  if (box) box.hidden = !names.length;
+}
+
+function renderAiSetup() {
+  const meta = aiProviderMeta(state.aiProvider);
+  const isCustom = state.aiProvider === 'custom';
+  const noKey = !!state.aiNoKey || meta.noKey === true;
+
+  renderAiProviderCards();
+  if ($('aiProviderHint')) $('aiProviderHint').textContent = meta.hint || '';
+
+  if ($('aiFieldBase')) $('aiFieldBase').hidden = !isCustom;
+  if ($('aiInputBase')) $('aiInputBase').value = state.aiBaseUrl || '';
+  if ($('aiInputModel')) {
+    $('aiInputModel').value = state.aiModel || '';
+    $('aiInputModel').placeholder = meta.model ? '例如 ' + meta.model : '填写该服务支持的模型 ID';
+  }
+
+  /* 自动模型选择：开启时把 Kilo 免费池的尝试顺序摆出来 */
+  const autoBtn = $('switchAiAutoModel');
+  if (autoBtn) {
+    autoBtn.classList.toggle('on', !!state.aiAutoModel);
+    autoBtn.setAttribute('aria-pressed', String(!!state.aiAutoModel));
+  }
+  const orderBox = $('aiAutoOrder');
+  if (orderBox) {
+    const kilo = (state.aiProviders || []).find((p) => p.id === 'kilo');
+    let pool = [];
+    if (kilo && Array.isArray(kilo.models) && kilo.models.length) {
+      pool = kilo.models.map((m) => aiModelShort((m && m.id) || m));
+    } else if (kilo && Array.isArray(kilo.presets)) {
+      pool = kilo.presets.map(aiModelShort);
+    }
+    const head = pool.slice(0, 3);
+    if (state.aiAutoModel && head.length) {
+      orderBox.hidden = false;
+      orderBox.textContent = '按顺序尝试：' + head.join(' → ') + ' → …';
+    } else {
+      orderBox.hidden = true;
+      orderBox.textContent = '';
+    }
+  }
+
+  /* 密钥区：免密钥供应商整块隐藏 */
+  if ($('aiFieldKey')) $('aiFieldKey').hidden = noKey;
+  const keyState = $('aiKeyState');
+  if (keyState) {
+    keyState.textContent = state.aiHasKey ? '已保存' : '未填写';
+    keyState.setAttribute('data-state', state.aiHasKey ? 'on' : 'off');
+  }
+  const keyInput = $('aiInputKey');
+  if (keyInput) {
+    /* 值来自草稿，重画时不会把刚敲进去的密钥擦掉 */
+    keyInput.value = state.aiKeyDraft || '';
+    keyInput.placeholder = state.aiHasKey ? '已保存，留空则不修改' : '输入 API 密钥';
+  }
+  const hint = $('aiKeyHint');
+  if (hint) {
+    hint.hidden = !!state.aiHasKey;
+    hint.textContent = state.aiHasKey ? '' : '尚未填入密钥。密钥加密保存在本机，不会上传到任何服务器。';
+  }
+  if ($('aiKeyNote')) $('aiKeyNote').hidden = noKey;
+  if ($('btnAi2Clear')) $('btnAi2Clear').hidden = noKey || !state.aiHasKey;
+  if ($('btnAi2GetKey')) $('btnAi2GetKey').hidden = noKey || !meta.keyUrl;
+
+  renderAiModelChips(meta);
+  refreshAiSaveState();
+  /* 免密钥供应商也能拉模型，不按密钥有无禁用 */
+  const fetchBtn = $('btnAiFetchModels');
+  if (fetchBtn) fetchBtn.disabled = false;
+}
+
+function openAiSetup() {
+  state.aiModelList = [];
+  state.aiCustomDraft = null;
+  state.aiKeyDraft = '';
+  aiSaveError('');
+  aiSetupTip('');
+  aiTestLine('');
+  $('aiModal2').hidden = false;
+  renderAiSetup();
+  loadAiConfig().then(() => renderAiSetup()).catch(() => {});
+}
+
+function closeAiSetup() {
+  $('aiModal2').hidden = true;
+  aiTestLine('');
+  /* 未保存就关闭：丢掉弹窗里的临时改动，按 store 真实配置重画 */
+  loadAiConfig().then(() => {
+    if (!isAiAssistOpen()) return;
+    renderAiAssistModel();
+    renderAiAssistToggles();
+  }).catch(() => {});
+}
+
 
 function renderOnboardSubjects() {
   renderSubjectChips($('onboardSubjects'), $('onboardSubjectCount'));
@@ -2946,6 +3421,992 @@ function closeAgreementModal() {
   $('agreementModal').hidden = true;
 }
 
+/* ---------------- AI 助手抽屉（主界面） ---------------- */
+/* 会话与消息全部交给 renderer/ai-store.js（window.AIStore）落盘，
+   这里只负责抽屉的渲染与请求编排；不改 main.js / preload.js / knowledge.js */
+const AI_ASSIST_EXAMPLES = [
+  { q: '用表格对比「动量守恒」和「能量守恒」的适用条件', tip: '物理' },
+  { q: '圆锥曲线里二面角总找错，有没有通用步骤？', tip: '数学' },
+  { q: '帮我把这周的错题整理成一份复习清单', tip: '复习' },
+  { q: '最近有什么适合写作文的科技热点？', tip: '作文' }
+];
+const AI_ASSIST_REASON_SHOW = 4000;
+const AI_ASSIST_SRC_MAX = 8;
+
+const aiAssist = {
+  doc: null,
+  messages: [],
+  busy: false,
+  stopping: false,
+  req: null,
+  startedAt: 0,
+  typingModel: '',
+  editing: -1,
+  mute: false,
+  switched: false,
+  actualModel: ''
+};
+
+function aiAssistApi() { return window.AIStore || null; }
+function isAiAssistOpen() { const el = $('aiAssistant'); return !!el && !el.hidden; }
+
+function aiAssistEl(tag, cls, text) {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+
+function aiAssistThinkOn() { return state.aiThink !== false; }
+function aiAssistWebOn() { return state.aiWeb !== false; }
+
+function aiAssistErrorText(raw) {
+  const s = String(raw === undefined || raw === null ? '' : raw).trim();
+  if (!s) return '模型没有返回内容，请重试。';
+  if (/已停止生成/.test(s)) return '已停止生成';
+  return s;
+}
+
+function aiAssistEnsureDoc() {
+  const api = aiAssistApi();
+  if (!api) return null;
+  if (!aiAssist.doc) aiAssist.doc = api.load();
+  return aiAssist.doc;
+}
+function aiAssistSession() {
+  const api = aiAssistApi();
+  if (!api || !aiAssist.doc) return null;
+  return api.current(aiAssist.doc);
+}
+function syncAiAssistMessages() {
+  const s = aiAssistSession();
+  aiAssist.messages = s && Array.isArray(s.messages) ? s.messages : [];
+}
+function aiAssistStore(fn) {
+  const api = aiAssistApi();
+  if (!api) return null;
+  const doc = aiAssistEnsureDoc();
+  if (!doc) return null;
+  let out = null;
+  aiAssist.mute = true;
+  try { out = fn(api, doc); } catch (e) { out = null; }
+  aiAssist.mute = false;
+  syncAiAssistMessages();
+  return out;
+}
+
+function aiAssistHistoryBefore(anchor) {
+  const msgs = aiAssist.messages || [];
+  const end = typeof anchor === 'number' && anchor >= 0 ? Math.min(anchor, msgs.length) : msgs.length;
+  const out = [];
+  for (let i = 0; i < end; i++) {
+    const m = msgs[i];
+    if (!m || !m.text || m.error || m.stopped) continue;
+    out.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.text).slice(0, 2000) });
+  }
+  return out.slice(-6);
+}
+
+function aiAssistCopy(text, btn, back) {
+  const s = String(text === undefined || text === null ? '' : text);
+  const label = back || '复制';
+  const done = (ok) => {
+    if (!btn) { toast(ok ? '已复制' : '复制失败'); return; }
+    btn.textContent = ok ? '已复制' : '复制失败';
+    setTimeout(() => { if (btn.isConnected) btn.textContent = label; }, 1500);
+  };
+  try {
+    if (bridge.copyText) {
+      Promise.resolve(bridge.copyText(s)).then((r) => done(!(r && r.ok === false))).catch(() => done(false));
+      return;
+    }
+  } catch (e) { /* 退回浏览器剪贴板 */ }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(s).then(() => done(true)).catch(() => done(false));
+    return;
+  }
+  done(false);
+}
+
+/* 轻量 Markdown：思路照 renderer/knowledge.js 的 renderMarkdown，先转义再套标签，
+   代码块与行内代码用占位符保护，用户文本无法注入 HTML */
+function aiAssistMarkdown(src) {
+  let text = String(src === undefined || src === null ? '' : src)
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
+    .trim();
+  if (!text) return '';
+
+  const blocks = [];
+  const hold = (html) => {
+    blocks.push(html);
+    return '\u0001B' + (blocks.length - 1) + '\u0002';
+  };
+
+  function inline(s) {
+    let t = escapeHtml(s);
+    const codes = [];
+    t = t.replace(/\x60([^\x60]+)\x60/g, (_m, code) => {
+      codes.push('<code>' + code + '</code>');
+      return '\u0001C' + (codes.length - 1) + '\u0002';
+    });
+    t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+    t = t.replace(/==([^=]+)==/g, '<em>$1</em>');
+    t = t.replace(/\u0001C(\d+)\u0002/g, (_m, i) => codes[Number(i)] || '');
+    return t;
+  }
+
+  text = text.replace(/\x60\x60\x60([\w+#.-]*)[ \t]*\n?([\s\S]*?)(?:\x60\x60\x60|$)/g, (_m, lang, code) => {
+    const body = escapeHtml(String(code).replace(/\n+$/, ''));
+    const tag = lang ? escapeHtml(lang) : '代码';
+    return hold(
+      '<div class="ai-code">' +
+        '<div class="ai-code__bar"><span class="ai-code__lang">' + tag + '</span>' +
+        '<button class="ai-code__copy" type="button" data-ai-copy="code">复制代码</button></div>' +
+        '<pre><code>' + body + '</code></pre>' +
+      '</div>'
+    );
+  });
+
+  text = text.replace(/(^\|.+\|[ \t]*\n\|[-: |]+\|[ \t]*\n(?:\|.*\|[ \t]*(?:\n|$))+)/gm, (m) => {
+    const rows = m.trim().split('\n').filter(Boolean);
+    if (rows.length < 2) return m;
+    const split = (r) => r.replace(/^\||\|$/g, '').split('|').map((x) => x.trim());
+    const head = split(rows[0]);
+    const body = rows.slice(2).map(split);
+    let html = '<table><thead><tr>' + head.map((h) => '<th>' + inline(h) + '</th>').join('') + '</tr></thead><tbody>';
+    body.forEach((r) => {
+      html += '<tr>' + head.map((_h, i) => '<td>' + inline(r[i] || '') + '</td>').join('') + '</tr>';
+    });
+    html += '</tbody></table>';
+    return hold(html);
+  });
+
+  const out = [];
+  let listType = null;
+  let buf = [];
+  const flushList = () => {
+    if (!listType) return;
+    out.push('<' + listType + '>' + buf.map((li) => '<li>' + inline(li) + '</li>').join('') + '</' + listType + '>');
+    listType = null;
+    buf = [];
+  };
+
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].replace(/\s+$/, '');
+    if (!line.trim()) { flushList(); continue; }
+    if (/^\u0001B\d+\u0002$/.test(line.trim())) { flushList(); out.push(line.trim()); continue; }
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) { flushList(); out.push('<hr>'); continue; }
+    const h = line.match(/^(#{1,4})\s+(.*)$/);
+    if (h) {
+      flushList();
+      const lv = Math.min(3, h[1].length);
+      out.push('<h' + lv + '>' + inline(h[2]) + '</h' + lv + '>');
+      continue;
+    }
+    if (/^>\s?/.test(line)) {
+      flushList();
+      out.push('<blockquote>' + inline(line.replace(/^>\s?/, '')) + '</blockquote>');
+      continue;
+    }
+    const ol = line.match(/^\s*(\d+)[.)、]\s+(.*)$/);
+    if (ol) {
+      if (listType !== 'ol') { flushList(); listType = 'ol'; }
+      buf.push(ol[2]);
+      continue;
+    }
+    const ul = line.match(/^\s*[-*+·•]\s+(.*)$/);
+    if (ul) {
+      if (listType !== 'ul') { flushList(); listType = 'ul'; }
+      buf.push(ul[1]);
+      continue;
+    }
+    flushList();
+    out.push('<p>' + inline(line.trim()) + '</p>');
+  }
+  flushList();
+
+  let html = out.join('');
+  html = html.replace(/\u0001B(\d+)\u0002/g, (_m, i) => blocks[Number(i)] || '');
+  return html;
+}
+
+/* ---- 抽屉渲染：思考过程 / 来源 / meta / 消息 ---- */
+function aiAssistHost(url) {
+  try { return String(new URL(url).hostname || '').replace(/^www\./, ''); } catch (e) { return ''; }
+}
+function aiAssistSafeUrl(raw) {
+  const s = String(raw === undefined || raw === null ? '' : raw).trim();
+  if (!s || s.length > 2000) return '';
+  return /^https?:\/\//i.test(s) ? s : '';
+}
+function aiAssistBtn(label, onClick, cls) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'ai-msg__act' + (cls ? ' ' + cls : '');
+  b.textContent = label;
+  b.addEventListener('click', onClick);
+  return b;
+}
+function aiAssistMsLabel(ms) {
+  const n = Number(ms);
+  if (!isFinite(n) || n <= 0) return '';
+  if (n < 1000) return '不到 1 秒';
+  const s = n / 1000;
+  if (s < 10) return s.toFixed(1) + ' 秒';
+  if (s < 60) return Math.round(s) + ' 秒';
+  const min = Math.floor(s / 60);
+  const rest = Math.round(s - min * 60);
+  return min + ' 分' + (rest ? ' ' + rest + ' 秒' : '');
+}
+function aiAssistAuditLabel(audit) {
+  if (!audit) return '';
+  const issues = Array.isArray(audit.issues) ? audit.issues : [];
+  if (issues.length) return '有 ' + issues.length + ' 处待核对';
+  if (audit.note && /已按审核意见修正|已改写/.test(audit.note)) return '已改写';
+  if (audit.note && /未完成|无法解析/.test(audit.note)) return '审核未完成';
+  return '审核通过';
+}
+function buildAiAssistMeta(m) {
+  const meta = aiAssistEl('div', 'ai-msg__meta');
+  const parts = [];
+  const model = m.modelName || m.model;
+  if (model) parts.push({ t: aiModelShort(model) });
+  if (m.providerName) parts.push({ t: m.providerName });
+  const cost = aiAssistMsLabel(m.ms);
+  if (cost) parts.push({ t: cost });
+  const auditLabel = aiAssistAuditLabel(m.audit);
+  if (auditLabel) parts.push({ t: auditLabel, warn: !!(m.audit && m.audit.issues && m.audit.issues.length) });
+  parts.forEach((p, i) => {
+    if (i) meta.appendChild(aiAssistEl('span', 'ai-msg__sep', '·'));
+    meta.appendChild(aiAssistEl('span', p.warn ? 'is-warn' : null, p.t));
+  });
+  if (m.search && m.search.ok === false) {
+    const miss = aiAssistEl('span', 'ai-msg__netmiss', '联网检索未命中');
+    if (m.search.query) miss.title = '检索词：' + m.search.query;
+    meta.appendChild(miss);
+  }
+  return meta;
+}
+function buildAiAssistAuditBox(m) {
+  const audit = m && m.audit;
+  if (!audit) return null;
+  const issues = Array.isArray(audit.issues) ? audit.issues : [];
+  if (!issues.length && !/未完成|无法解析/.test(audit.note || '')) return null;
+  const box = aiAssistEl('div', 'ai-msg__audit' + (issues.length ? ' is-warn' : ''));
+  box.textContent = issues.length
+    ? '待核对：' + issues.join('；') + (audit.note ? '（' + audit.note + '）' : '')
+    : '审核未完成：' + (audit.note || '请人工核对内容。');
+  return box;
+}
+function buildAiAssistReason(m) {
+  const raw = String((m && m.reasoning) || '');
+  if (!raw.trim()) return null;
+  const shown = raw.length > AI_ASSIST_REASON_SHOW ? raw.slice(0, AI_ASSIST_REASON_SHOW) + '…' : raw;
+  const det = aiAssistEl('details', 'ai-reason');
+  const sum = aiAssistEl('summary', 'ai-reason__sum', '思考过程 · ' + raw.length + ' 字');
+  sum.title = '点击展开模型思考过程';
+  det.appendChild(sum);
+  det.appendChild(aiAssistEl('div', 'ai-reason__body', shown));
+  return det;
+}
+/* 来源列表：默认收起，只显示「域名 · 标题」，不展示完整长链接 */
+function buildAiAssistSearch(m, idx) {
+  const search = m && m.search;
+  if (!search || typeof search !== 'object' || search.ok === false) return null;
+  const items = [];
+  (Array.isArray(search.items) ? search.items : []).forEach((it) => {
+    if (!it || typeof it !== 'object') return;
+    const url = aiAssistSafeUrl(it.url);
+    if (!url) return;
+    items.push({
+      url: url,
+      title: String(it.title || '').slice(0, 160) || url,
+      date: String(it.date || '').slice(0, 40)
+    });
+  });
+  if (!items.length) return null;
+  const list = items.slice(0, AI_ASSIST_SRC_MAX);
+  const box = aiAssistEl('div', 'ai-src');
+  const listId = 'aiAssistSrc' + idx;
+  const head = aiAssistEl('button', 'ai-src__head');
+  head.type = 'button';
+  head.setAttribute('aria-expanded', 'false');
+  head.setAttribute('aria-controls', listId);
+  head.appendChild(aiAssistEl('span', 'ai-src__title', '已联网检索 ' + list.length + ' 条'));
+  const caret = aiAssistEl('span', 'ai-src__caret', '展开');
+  head.appendChild(caret);
+  if (search.query) head.title = '检索词：' + search.query;
+  const panel = aiAssistEl('div', 'ai-src__list');
+  panel.id = listId;
+  panel.hidden = true;
+  list.forEach((it) => {
+    const host = aiAssistHost(it.url);
+    const a = aiAssistEl('a', 'ai-src__item');
+    a.href = it.url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.title = it.title;
+    const row = aiAssistEl('span', 'ai-src__row');
+    row.appendChild(aiAssistEl('span', 'ai-src__host', host || '来源'));
+    if (it.title) {
+      row.appendChild(aiAssistEl('span', 'ai-src__dot', '·'));
+      row.appendChild(aiAssistEl('span', 'ai-src__name', it.title));
+    }
+    a.appendChild(row);
+    if (it.date) a.appendChild(aiAssistEl('span', 'ai-src__date', it.date));
+    panel.appendChild(a);
+  });
+  head.addEventListener('click', () => {
+    const open = panel.hidden;
+    panel.hidden = !open;
+    head.setAttribute('aria-expanded', String(open));
+    caret.textContent = open ? '收起' : '展开';
+  });
+  box.appendChild(head);
+  box.appendChild(panel);
+  return box;
+}
+function buildAiAssistTyping() {
+  const wrap = aiAssistEl('div', 'ai-msg ai-msg--ai is-typing');
+  const bubble = aiAssistEl('div', 'ai-msg__bubble');
+  const dots = aiAssistEl('span', 'ai-typing');
+  dots.appendChild(document.createElement('i'));
+  dots.appendChild(document.createElement('i'));
+  dots.appendChild(document.createElement('i'));
+  bubble.appendChild(dots);
+  bubble.appendChild(aiAssistEl('span', 'ai-typing__text', (aiAssist.typingModel || '模型') + ' 正在思考…'));
+  wrap.appendChild(bubble);
+  return wrap;
+}
+function buildAiAssistEditor(m, idx) {
+  const box = aiAssistEl('div', 'ai-edit');
+  const area = document.createElement('textarea');
+  area.className = 'ai-edit__area';
+  area.rows = 3;
+  area.value = String(m.text || (m.request && (m.request.query || m.request.topic)) || '');
+  const acts = aiAssistEl('div', 'ai-edit__acts');
+  acts.appendChild(aiAssistBtn('取消', () => { aiAssist.editing = -1; renderAiAssist(); }));
+  acts.appendChild(aiAssistBtn('保存重发', () => resendAiAssist(idx, area.value), 'is-primary'));
+  area.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      resendAiAssist(idx, area.value);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      aiAssist.editing = -1;
+      renderAiAssist();
+    }
+  });
+  box.appendChild(area);
+  box.appendChild(acts);
+  return box;
+}
+function buildAiAssistMessage(m, idx) {
+  const isUser = m.role === 'user';
+  const wrap = aiAssistEl('div', 'ai-msg ' + (isUser ? 'ai-msg--user' : 'ai-msg--ai') +
+    (m.error ? ' is-error' : '') + (m.stopped ? ' is-stopped' : ''));
+
+  if (isUser) {
+    if (aiAssist.editing === idx) {
+      wrap.appendChild(buildAiAssistEditor(m, idx));
+      return wrap;
+    }
+    wrap.appendChild(aiAssistEl('div', 'ai-msg__bubble', m.text || ''));
+    const acts = aiAssistEl('div', 'ai-msg__acts');
+    const copyBtn = aiAssistBtn('复制', () => aiAssistCopy(m.text, copyBtn));
+    acts.appendChild(copyBtn);
+    acts.appendChild(aiAssistBtn('编辑重发', () => { aiAssist.editing = idx; renderAiAssist(); }));
+    acts.appendChild(aiAssistBtn('分支', () => branchAiAssist(idx)));
+    wrap.appendChild(acts);
+    return wrap;
+  }
+
+  const reason = buildAiAssistReason(m);
+  if (reason) wrap.appendChild(reason);
+
+  const bubble = aiAssistEl('div', 'ai-msg__bubble');
+  if (m.error) {
+    bubble.appendChild(aiAssistEl('b', 'ai-msg__err-title', '生成失败'));
+    bubble.appendChild(aiAssistEl('p', 'ai-msg__err-text', m.text || '模型没有返回内容'));
+    const row = aiAssistEl('div', 'ai-msg__err-acts');
+    row.appendChild(aiAssistBtn('重试', () => retryAiAssist(idx), 'is-primary'));
+    const rawText = String(m.error === true ? '' : m.error || '');
+    if (rawText && rawText !== m.text) {
+      const det = aiAssistEl('details', 'ai-msg__err-raw');
+      det.appendChild(aiAssistEl('summary', null, '查看错误原文'));
+      det.appendChild(aiAssistEl('code', null, rawText));
+      row.appendChild(det);
+    }
+    bubble.appendChild(row);
+  } else if (m.stopped) {
+    bubble.appendChild(aiAssistEl('b', 'ai-msg__err-title', '已停止生成'));
+    bubble.appendChild(aiAssistEl('p', 'ai-msg__err-text', '这次没有生成内容，可以点「重新生成」再来一次。'));
+  } else {
+    const md = aiAssistEl('div', 'ai-md');
+    md.innerHTML = aiAssistMarkdown(m.text);
+    bubble.appendChild(md);
+  }
+  wrap.appendChild(bubble);
+
+  const meta = buildAiAssistMeta(m);
+  if (meta && meta.childNodes.length) wrap.appendChild(meta);
+  const audit = buildAiAssistAuditBox(m);
+  if (audit) wrap.appendChild(audit);
+  const src = buildAiAssistSearch(m, idx);
+  if (src) wrap.appendChild(src);
+
+  const acts = aiAssistEl('div', 'ai-msg__acts');
+  const copyBtn = aiAssistBtn('复制', () => aiAssistCopy(m.text || (m.error ? String(m.error) : ''), copyBtn));
+  acts.appendChild(copyBtn);
+  if (m.request && m.request.query) acts.appendChild(aiAssistBtn('重新生成', () => retryAiAssist(idx)));
+  acts.appendChild(aiAssistBtn('分支', () => branchAiAssist(idx)));
+  wrap.appendChild(acts);
+  return wrap;
+}
+function buildAiAssistEmpty() {
+  const box = aiAssistEl('div', 'ai-empty');
+  box.appendChild(aiAssistEl('div', 'ai-empty__head', 'AI 助手'));
+  box.appendChild(aiAssistEl('p', 'ai-empty__hint', '问知识点、问思路、问最近的新闻都行，下面四张卡片可以直接点。'));
+  const grid = aiAssistEl('div', 'ai-examples');
+  AI_ASSIST_EXAMPLES.forEach((it) => {
+    const card = aiAssistEl('button', 'ai-example');
+    card.type = 'button';
+    card.appendChild(aiAssistEl('em', null, it.tip));
+    card.appendChild(aiAssistEl('span', 'ai-example__text', it.q));
+    card.addEventListener('click', () => {
+      const ta = $('aiAssistInput');
+      if (!ta) return;
+      ta.value = it.q;
+      autoGrowAiInput();
+      ta.focus();
+    });
+    grid.appendChild(card);
+  });
+  box.appendChild(grid);
+  return box;
+}
+function renderAiAssist() {
+  const body = $('aiAssistBody');
+  if (!body) return;
+  body.innerHTML = '';
+  const msgs = aiAssist.messages || [];
+  if (!msgs.length) body.appendChild(buildAiAssistEmpty());
+  else for (let i = 0; i < msgs.length; i++) body.appendChild(buildAiAssistMessage(msgs[i], i));
+  if (aiAssist.busy) body.appendChild(buildAiAssistTyping());
+  /* 打开抽屉时首帧高度还没算准，滚到底要等一帧 */
+  const toBottom = () => { body.scrollTop = body.scrollHeight; };
+  toBottom();
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(toBottom);
+}
+
+/* ---- 抽屉：模型徽标 / 开关 / 会话列表 ---- */
+function aiAssistModelLabel() {
+  const meta = aiProviderMeta(state.aiProvider) || {};
+  const cfg = state.aiModel || meta.model || '';
+  const id = aiAssist.actualModel || state.aiModelUsed || cfg;
+  return aiModelShort(id) || '未配置模型';
+}
+function renderAiAssistModel() {
+  const name = $('aiAssistModelName');
+  if (name) name.textContent = aiAssistModelLabel();
+  const flag = $('aiAssistModelSwitch');
+  const switched = !!aiAssist.switched || (!!state.aiModelUsed && !!state.aiModel && state.aiModelUsed !== state.aiModel);
+  if (flag) flag.hidden = !switched;
+  const btn = $('btnAiAssistModel');
+  if (btn) {
+    const model = aiAssist.actualModel || state.aiModelUsed || state.aiModel || '';
+    btn.title = (state.aiProviderName || '模型') + (model ? ' · ' + model : '') + '（点击配置）';
+  }
+}
+function renderAiAssistToggles() {
+  const think = $('btnAiAssistThink');
+  if (think) {
+    think.classList.toggle('on', aiAssistThinkOn());
+    think.setAttribute('aria-pressed', String(aiAssistThinkOn()));
+  }
+  const web = $('btnAiAssistWeb');
+  if (web) {
+    web.classList.toggle('on', aiAssistWebOn());
+    web.setAttribute('aria-pressed', String(aiAssistWebOn()));
+  }
+}
+function renderAiAssistSend() {
+  const btn = $('btnAiAssistSend');
+  if (!btn) return;
+  btn.disabled = false;
+  const label = aiAssist.stopping ? '停止中…' : (aiAssist.busy ? '停止' : '发送');
+  btn.textContent = label;
+  btn.classList.toggle('is-stop', aiAssist.busy && !aiAssist.stopping);
+  btn.title = aiAssist.busy ? '停止生成' : '发送';
+  btn.setAttribute('aria-label', btn.title);
+}
+function aiAssistRelTime(ts) {
+  const n = Number(ts) || 0;
+  if (!n) return '';
+  const diff = Date.now() - n;
+  if (diff < 0) return '';
+  if (diff < 60000) return '刚刚';
+  if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
+  if (diff < 7 * 86400000) return Math.floor(diff / 86400000) + ' 天前';
+  const d = new Date(n);
+  return (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日';
+}
+function aiAssistSessBtn(label, onClick, cls) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'ai-sess__act' + (cls ? ' ' + cls : '');
+  b.textContent = label;
+  b.addEventListener('click', onClick);
+  return b;
+}
+function renderAiAssistSessions() {
+  const box = $('aiAssistSessList');
+  if (!box) return;
+  box.innerHTML = '';
+  const api = aiAssistApi();
+  if (!api || !aiAssist.doc) {
+    box.appendChild(aiAssistEl('p', 'ai-sess__empty', '会话存储还没加载'));
+    return;
+  }
+  const items = api.summary(aiAssist.doc);
+  items.forEach((it) => {
+    const row = aiAssistEl('div', 'ai-sess__row' + (it.current ? ' is-on' : ''));
+    const main = aiAssistEl('button', 'ai-sess__main');
+    main.type = 'button';
+    const title = aiAssistEl('span', 'ai-sess__title', it.title || '新对话');
+    title.title = it.title || '';
+    main.appendChild(title);
+    main.appendChild(aiAssistEl('span', 'ai-sess__meta', (it.count || 0) + ' 条 · ' + aiAssistRelTime(it.updatedAt)));
+    main.addEventListener('click', () => { if (!it.current) switchAiAssistSession(it.id); });
+    main.addEventListener('dblclick', () => startRenameAiAssist(it.id, row));
+    row.appendChild(main);
+    const acts = aiAssistEl('div', 'ai-sess__acts');
+    acts.appendChild(aiAssistSessBtn('重命名', () => startRenameAiAssist(it.id, row)));
+    acts.appendChild(aiAssistSessBtn('删除', (e) => deleteAiAssistSession(it.id, e.currentTarget), 'is-danger'));
+    row.appendChild(acts);
+    box.appendChild(row);
+  });
+}
+function startRenameAiAssist(id, row) {
+  if (!row || row.querySelector('.ai-sess__input')) return;
+  const main = row.querySelector('.ai-sess__main');
+  if (!main) return;
+  const titleEl = row.querySelector('.ai-sess__title');
+  const input = document.createElement('input');
+  input.className = 'ai-sess__input';
+  input.maxLength = 40;
+  input.value = titleEl ? titleEl.textContent : '';
+  main.hidden = true;
+  row.insertBefore(input, row.firstChild);
+  input.focus();
+  input.select();
+  const finish = (commit) => {
+    if (!input.isConnected) return;
+    const v = input.value.trim();
+    input.remove();
+    main.hidden = false;
+    if (commit && v) {
+      aiAssistStore((api, doc) => { api.rename(doc, id, v); return true; });
+      renderAiAssistSessions();
+      toast('会话已重命名');
+    }
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+function switchAiAssistSession(id) {
+  if (!id || !aiAssist.doc) return;
+  if (aiAssist.busy) { toast('正在生成，先停一下再切换'); return; }
+  /* 切会话前重新读一次库：别的工作台窗口或上次请求可能刚写过 */
+  const api = aiAssistApi();
+  if (!api) return;
+  aiAssist.mute = true;
+  try {
+    aiAssist.doc = api.load();
+    aiAssist.doc.currentId = id;
+    api.save(aiAssist.doc);
+  } catch (e) { /* 读失败就保持原样 */ }
+  aiAssist.mute = false;
+  syncAiAssistMessages();
+  aiAssist.editing = -1;
+  renderAiAssistSessions();
+  renderAiAssist();
+}
+function newAiAssistSession() {
+  if (aiAssist.busy) { toast('正在生成，先停一下再新建'); return; }
+  aiAssistStore((api, doc) => { api.create(doc, {}); return true; });
+  aiAssist.editing = -1;
+  renderAiAssistSessions();
+  renderAiAssist();
+  const ta = $('aiAssistInput');
+  if (ta) ta.focus();
+}
+function deleteAiAssistSession(id, btn) {
+  if (!id) return;
+  if (aiAssist.busy) { toast('正在生成，先停一下再删除'); return; }
+  if (btn && btn.getAttribute('data-confirm') !== '1') {
+    btn.setAttribute('data-confirm', '1');
+    btn.textContent = '确认删除';
+    btn.classList.add('is-confirm');
+    clearTimeout(btn._confirmTimer);
+    btn._confirmTimer = setTimeout(() => {
+      if (!btn.isConnected) return;
+      btn.removeAttribute('data-confirm');
+      btn.classList.remove('is-confirm');
+      btn.textContent = '删除';
+    }, 4000);
+    return;
+  }
+  if (btn) clearTimeout(btn._confirmTimer);
+  aiAssistStore((api, doc) => { api.remove(doc, id); return true; });
+  if (aiAssist.editing >= 0) aiAssist.editing = -1;
+  renderAiAssistSessions();
+  renderAiAssist();
+  toast('已删除会话');
+}
+
+/* ---- 抽屉：发送 / 停止 / 重试 / 编辑重发 / 分支 ---- */
+async function askAiAssist(req, opts) {
+  const o = opts || {};
+  if (aiAssist.busy) return;
+  if (!bridge.aiAsk) { toast('当前环境不支持 AI 调用'); return; }
+  const query = String((req && req.query) || '').trim();
+  if (!query) { toast('先写一句想问的'); return; }
+  const payload = {
+    mode: 'custom',
+    query: query,
+    history: aiAssistHistoryBefore(o.anchor),
+    think: req.think !== false,
+    web: req.web !== false
+  };
+  if (state.aiModel) payload.model = state.aiModel;
+  aiAssist.busy = true;
+  aiAssist.stopping = false;
+  aiAssist.req = { mode: 'custom', query: query, think: payload.think, web: payload.web };
+  aiAssist.startedAt = Date.now();
+  aiAssist.typingModel = aiModelShort(state.aiModelUsed || state.aiModel) || '模型';
+  renderAiAssist();
+  renderAiAssistSend();
+
+  let res = null;
+  let failure = '';
+  try {
+    res = await bridge.aiAsk(payload);
+  } catch (e) {
+    failure = (e && e.message) ? e.message : '调用失败';
+  }
+  const ms = Date.now() - aiAssist.startedAt;
+  aiAssist.busy = false;
+  aiAssist.stopping = false;
+  aiAssist.req = null;
+  aiAssist.typingModel = '';
+
+  if (failure) {
+    pushAiAssistFailure(req, failure, ms);
+  } else if (res && res.ok && String(res.content || '').trim()) {
+    pushAiAssistSuccess(req, res, ms);
+  } else if (res && (res.cancelled || /已停止生成/.test(String(res.error || '')))) {
+    pushAiAssistStopped(req, ms);
+  } else {
+    pushAiAssistFailure(req, String((res && res.error) || '模型没有返回内容'), ms);
+  }
+
+  renderAiAssist();
+  renderAiAssistSessions();
+  renderAiAssistSend();
+  renderAiAssistModel();
+}
+function aiAssistRepeatReq(req) {
+  return {
+    mode: 'custom',
+    query: String((req && req.query) || ''),
+    think: req && req.think !== false,
+    web: req && req.web !== false
+  };
+}
+function pushAiAssistSuccess(req, res, ms) {
+  const msg = {
+    role: 'assistant',
+    text: String(res.content || ''),
+    request: aiAssistRepeatReq(req),
+    reasoning: String(res.reasoning || ''),
+    search: res.search && typeof res.search === 'object' ? res.search : null,
+    model: String(res.model || ''),
+    providerName: String(res.providerName || ''),
+    audit: res.audit && typeof res.audit === 'object' ? res.audit : null,
+    ms: ms,
+    ts: Date.now()
+  };
+  aiAssistStore((api, doc) => { api.append(doc, msg); return true; });
+  if (res.model) {
+    aiAssist.actualModel = String(res.model);
+    state.aiModelUsed = res.model;
+    renderAiPanel();
+  }
+  aiAssist.switched = !!res.switched ||
+    (!!res.model && !!state.aiModel && String(res.model) !== String(state.aiModel));
+}
+function pushAiAssistFailure(req, raw, ms) {
+  const rawText = String(raw || '模型没有返回内容');
+  const msg = {
+    role: 'assistant',
+    text: aiAssistErrorText(rawText),
+    error: rawText,
+    request: aiAssistRepeatReq(req),
+    ms: ms,
+    ts: Date.now()
+  };
+  aiAssistStore((api, doc) => { api.append(doc, msg); return true; });
+}
+function pushAiAssistStopped(req, ms) {
+  const msg = {
+    role: 'assistant',
+    text: '',
+    stopped: true,
+    request: aiAssistRepeatReq(req),
+    ms: ms,
+    ts: Date.now()
+  };
+  aiAssistStore((api, doc) => { api.append(doc, msg); return true; });
+}
+function sendAiAssist(raw) {
+  if (aiAssist.busy) { toast('正在生成，先停一下再发'); return; }
+  const ta = $('aiAssistInput');
+  const text = String(raw !== undefined && raw !== null ? raw : (ta ? ta.value : '')).trim();
+  if (!text) { toast('先写一句想问的'); return; }
+  const req = { mode: 'custom', query: text, think: aiAssistThinkOn(), web: aiAssistWebOn() };
+  aiAssistStore((api, doc) => {
+    api.append(doc, { role: 'user', text: text, request: aiAssistRepeatReq(req), ts: Date.now() });
+    return true;
+  });
+  if (ta) { ta.value = ''; autoGrowAiInput(); }
+  aiAssist.editing = -1;
+  renderAiAssist();
+  renderAiAssistSessions();
+  askAiAssist(req, { anchor: (aiAssist.messages || []).length - 1 });
+}
+function retryAiAssist(idx) {
+  if (aiAssist.busy) { toast('正在生成，先停一下再试'); return; }
+  const m = (aiAssist.messages || [])[idx];
+  if (!m) return;
+  if (!m.request || !m.request.query) { toast('这条消息没有可复用的请求'); return; }
+  const req = aiAssistRepeatReq(m.request);
+  aiAssistStore((api, doc) => {
+    const cur = api.current(doc);
+    if (!cur) return null;
+    return api.setMessages(doc, cur.id, (cur.messages || []).slice(0, idx));
+  });
+  aiAssist.editing = -1;
+  renderAiAssist();
+  askAiAssist(req, { anchor: idx - 1 });
+}
+function resendAiAssist(idx, rawText) {
+  if (aiAssist.busy) { toast('正在生成，先停一下再发'); return; }
+  const text = String(rawText || '').trim();
+  if (!text) { toast('内容不能为空'); return; }
+  const req = { mode: 'custom', query: text, think: aiAssistThinkOn(), web: aiAssistWebOn() };
+  const ok = aiAssistStore((api, doc) => {
+    const cur = api.current(doc);
+    if (!cur) return null;
+    api.setMessages(doc, cur.id, (cur.messages || []).slice(0, idx));
+    api.append(doc, { role: 'user', text: text, request: aiAssistRepeatReq(req), ts: Date.now() });
+    return true;
+  });
+  if (!ok) return;
+  aiAssist.editing = -1;
+  renderAiAssist();
+  renderAiAssistSessions();
+  askAiAssist(req, { anchor: idx });
+}
+function branchAiAssist(idx) {
+  if (aiAssist.busy) { toast('正在生成，先停一下再分支'); return; }
+  const done = aiAssistStore((api, doc) => {
+    const cur = api.current(doc);
+    if (!cur) return null;
+    return api.branch(doc, cur.id, idx);
+  });
+  if (!done) { toast('分支失败，请重试'); return; }
+  aiAssist.editing = -1;
+  renderAiAssistSessions();
+  renderAiAssist();
+  toast('已从这条消息开出新会话');
+}
+async function stopAiAssist() {
+  if (!aiAssist.busy || aiAssist.stopping) return;
+  aiAssist.stopping = true;
+  renderAiAssistSend();
+  try { if (bridge.aiCancel) await bridge.aiCancel(); } catch (e) { /* 已经结束 */ }
+}
+async function toggleAiAssistFlag(kind) {
+  if (!bridge.aiSaveConfig) { toast('当前环境不支持保存开关'); return; }
+  const key = kind === 'web' ? 'aiWeb' : 'aiThink';
+  const prev = state[key] !== false;
+  state[key] = !prev;
+  renderAiAssistToggles();
+  const patch = {};
+  patch[kind === 'web' ? 'web' : 'think'] = state[key];
+  let ok = false;
+  try {
+    const res = await bridge.aiSaveConfig(patch);
+    if (res && res.ok !== false) {
+      const got = kind === 'web' ? res.web : res.think;
+      if (typeof got === 'boolean') state[key] = got;
+      ok = true;
+    }
+  } catch (e) { ok = false; }
+  if (!ok) {
+    state[key] = prev;
+    toast('开关没保存成功，请重试');
+  }
+  renderAiAssistToggles();
+}
+function autoGrowAiInput() {
+  const el = $('aiAssistInput');
+  if (!el) return;
+  const cs = window.getComputedStyle(el);
+  const lh = parseFloat(cs.lineHeight) || 21;
+  const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+  const max = lh * 6 + pad;
+  el.style.height = 'auto';
+  const h = Math.min(el.scrollHeight, max);
+  el.style.height = h + 'px';
+  el.style.overflowY = el.scrollHeight > max ? 'auto' : 'hidden';
+}
+function refreshAiAssistConfig() {
+  if (!bridge.aiConfig) return;
+  Promise.resolve(loadAiConfig())
+    .then(() => { renderAiAssistModel(); renderAiAssistToggles(); })
+    .catch(() => {});
+}
+function openAiAssistant() {
+  const el = $('aiAssistant');
+  if (!el) return;
+  aiAssistEnsureDoc();
+  syncAiAssistMessages();
+  aiAssist.editing = -1;
+  el.hidden = false;
+  renderAiAssistModel();
+  renderAiAssistToggles();
+  renderAiAssistSend();
+  renderAiAssistSessions();
+  renderAiAssist();
+  refreshAiAssistConfig();
+  setTimeout(() => {
+    const ta = $('aiAssistInput');
+    if (ta) { ta.focus(); autoGrowAiInput(); }
+  }, 60);
+}
+function closeAiAssistant() {
+  const el = $('aiAssistant');
+  if (!el) return;
+  el.hidden = true;
+  aiAssist.editing = -1;
+  const list = $('aiAssistSessions');
+  if (list) list.hidden = true;
+  const btn = $('btnAiAssistList');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+  renderAiAssist();
+}
+
+function bindAiAssistant() {
+  const openBtn = $('btnAiAssistant');
+  if (openBtn) openBtn.addEventListener('click', openAiAssistant);
+  const openBtn2 = $('btnAiAssistantSide');
+  if (openBtn2) openBtn2.addEventListener('click', openAiAssistant);
+  const closeBtn = $('btnAiAssistClose');
+  if (closeBtn) closeBtn.addEventListener('click', closeAiAssistant);
+  const backdrop = $('aiAssistBackdrop');
+  if (backdrop) {
+    backdrop.addEventListener('click', () => {
+      const list = $('aiAssistSessions');
+      if (list && !list.hidden) {
+        list.hidden = true;
+        const b = $('btnAiAssistList');
+        if (b) b.setAttribute('aria-expanded', 'false');
+        return;
+      }
+      closeAiAssistant();
+    });
+  }
+  const modelBtn = $('btnAiAssistModel');
+  if (modelBtn) modelBtn.addEventListener('click', () => { if (typeof openAiSetup === 'function') openAiSetup(); });
+  const newBtn = $('btnAiAssistNew');
+  if (newBtn) newBtn.addEventListener('click', newAiAssistSession);
+  const sessNew = $('btnAiAssistSessNew');
+  if (sessNew) sessNew.addEventListener('click', newAiAssistSession);
+  const listBtn = $('btnAiAssistList');
+  if (listBtn) {
+    listBtn.addEventListener('click', () => {
+      const list = $('aiAssistSessions');
+      if (!list) return;
+      const open = list.hidden;
+      list.hidden = !open;
+      listBtn.setAttribute('aria-expanded', String(open));
+      if (open) renderAiAssistSessions();
+    });
+  }
+  const thinkBtn = $('btnAiAssistThink');
+  if (thinkBtn) thinkBtn.addEventListener('click', () => toggleAiAssistFlag('think'));
+  const webBtn = $('btnAiAssistWeb');
+  if (webBtn) webBtn.addEventListener('click', () => toggleAiAssistFlag('web'));
+  const sendBtn = $('btnAiAssistSend');
+  if (sendBtn) {
+    sendBtn.addEventListener('click', () => {
+      if (aiAssist.busy) stopAiAssist();
+      else sendAiAssist();
+    });
+  }
+  const ta = $('aiAssistInput');
+  if (ta) {
+    ta.addEventListener('input', autoGrowAiInput);
+    ta.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.shiftKey) return;
+      if (e.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      sendAiAssist();
+    });
+  }
+  const body = $('aiAssistBody');
+  if (body) {
+    body.addEventListener('click', (e) => {
+      const target = e.target;
+      const btn = target && target.closest ? target.closest('[data-ai-copy="code"]') : null;
+      if (!btn) return;
+      const box = btn.closest('.ai-code');
+      const code = box ? box.querySelector('pre code') : null;
+      if (code) aiAssistCopy(code.textContent, btn, '复制代码');
+    });
+  }
+  window.addEventListener('ai-store-changed', () => {
+    if (aiAssist.mute || !isAiAssistOpen() || aiAssist.busy) return;
+    aiAssist.doc = aiAssistApi() ? aiAssistApi().load() : null;
+    syncAiAssistMessages();
+    renderAiAssistSessions();
+    renderAiAssist();
+  });
+  const api = aiAssistApi();
+  if (api) {
+    aiAssist.doc = api.load();
+    syncAiAssistMessages();
+    if (typeof aiAssist.doc.currentId === 'string') {
+      const cur = api.current(aiAssist.doc);
+      if (cur) aiAssist.actualModel = '';
+    }
+  }
+  renderAiAssistToggles();
+  renderAiAssistModel();
+  renderAiAssistSend();
+  if (ta) autoGrowAiInput();
+}
+
 /* ---------------- 事件绑定 ---------------- */
 function bindEvents() {
   const fishVideos = ['petFishRun', 'petFishHomework']
@@ -3199,6 +4660,256 @@ function bindEvents() {
     const ok = await refreshWeather();
     toast(ok ? '天气已更新' : '天气获取失败，请检查网络或城市名');
   });
+  /* AI 配置：设置页一行入口 → 弹窗内完成全部配置 */
+  const aiRow = $('aiRow');
+  const openAiByRow = (e) => { if (e) e.preventDefault(); openAiSetup(); };
+  if (aiRow) {
+    aiRow.addEventListener('click', openAiByRow);
+    aiRow.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') openAiByRow(e);
+    });
+  }
+  $('btnAi2Close').addEventListener('click', closeAiSetup);
+  const ai2Back = $('aiModal2').querySelector('[data-ai2-close]');
+  if (ai2Back) ai2Back.addEventListener('click', closeAiSetup);
+
+  /* AI 助手抽屉：入口按钮、会话列表、发送与停止都在 bindAiAssistant 里 */
+  bindAiAssistant();
+
+  /* 输入即写回内存：切换供应商或重画时不会把刚填的字擦掉 */
+  if ($('aiInputBase')) {
+    $('aiInputBase').addEventListener('input', (e) => {
+      state.aiBaseUrl = e.target.value;
+      aiSaveError('');
+      refreshAiSaveState();
+    });
+  }
+  if ($('aiInputModel')) {
+    $('aiInputModel').addEventListener('input', (e) => {
+      state.aiModel = e.target.value;
+      aiSaveError('');
+      refreshAiSaveState();
+    });
+  }
+  if ($('aiInputKey')) {
+    $('aiInputKey').addEventListener('input', (e) => {
+      state.aiKeyDraft = e.target.value;
+      aiSaveError('');
+    });
+  }
+
+  /* 自动模型选择开关 */
+  if ($('switchAiAutoModel')) {
+    $('switchAiAutoModel').addEventListener('click', async () => {
+      const next = !state.aiAutoModel;
+      state.aiAutoModel = next;
+      renderAiSetup();
+      try {
+        const res = await bridge.aiSaveConfig({ autoModel: next });
+        if (res && res.ok) {
+          state.aiAutoModel = res.autoModel !== false;
+          aiSetupTip(next ? '已开启自动模型选择，排队或报错时按顺序换模型。' : '已关闭自动模型选择。');
+        } else {
+          aiSaveError((res && res.error) || '开关没保存成功，请重试');
+        }
+      } catch (e) {
+        aiSaveError('开关没保存成功：' + e.message);
+      }
+      renderAiSetup();
+    });
+  }
+
+  if ($('btnAi2Cancel')) $('btnAi2Cancel').addEventListener('click', closeAiSetup);
+
+  /* 清除密钥：只清当前供应商这一桶 */
+  if ($('btnAi2Clear')) {
+    $('btnAi2Clear').addEventListener('click', async () => {
+      try {
+        const res = await bridge.aiClearKey(state.aiProvider);
+        if (res && res.ok) {
+          state.aiHasKey = false;
+          state.aiModelList = [];
+          await loadAiConfig();
+          renderAiSetup();
+          aiSetupTip('已清除「' + (aiProviderMeta(state.aiProvider).name || 'AI') + '」在本机保存的密钥。');
+        } else {
+          aiSaveError((res && res.error) || '清除失败，请重试');
+        }
+      } catch (e) { aiSaveError('清除失败：' + e.message); }
+    });
+  }
+
+  /* 拉取模型：Kilo 免费池免密钥也能拉，不按密钥有无禁用 */
+  if ($('btnAiFetchModels')) {
+    $('btnAiFetchModels').addEventListener('click', async () => {
+      const btn = $('btnAiFetchModels');
+      const { base, model, key } = aiFormValues();
+      const isCustom = state.aiProvider === 'custom';
+      const noKey = aiIsNoKey();
+      if (!key && !state.aiHasKey && !noKey) {
+        aiSetupTip('请先填写 API 密钥，再获取模型列表。', true);
+        return;
+      }
+      btn.disabled = true;
+      aiSetupTip('正在获取模型列表…');
+      try {
+        const patch = { provider: state.aiProvider };
+        if (isCustom && base) patch.baseUrl = base;
+        if (model) patch.model = model;
+        const cfg = await bridge.aiSaveConfig(patch);
+        if (!cfg || !cfg.ok) {
+          aiSaveError((cfg && cfg.error) || '配置没保存成功，无法获取模型');
+          aiSetupTip('');
+          return;
+        }
+        if (key && !noKey) {
+          const saved = await bridge.aiSaveKey(key, state.aiProvider);
+          if (!saved || !saved.ok) { aiSaveError((saved && saved.error) || '密钥保存失败'); aiSetupTip(''); return; }
+          state.aiKeyDraft = '';
+        }
+        aiSaveError('');
+        const res = bridge.aiListModels ? await bridge.aiListModels() : { ok: false, error: '当前版本不支持' };
+        if (res && res.ok && Array.isArray(res.models) && res.models.length) {
+          state.aiModelList = res.models.slice(0, 60);
+          renderAiSetup();
+          aiSetupTip('已获取 ' + res.models.length + ' 个模型' + (res.keyless ? '（免密钥）' : '') + '，点选即可使用。');
+        } else {
+          aiSetupTip((res && res.error) || '该服务没有返回模型列表，请手动填写模型名。', true);
+        }
+        await loadAiConfig();
+        renderAiSetup();
+      } catch (e) {
+        aiSetupTip('获取失败：' + e.message, true);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+
+  if ($('btnAiHelp')) {
+    $('btnAiHelp').addEventListener('click', () => {
+      aiSetupTip('密钥在该服务商的控制台创建，形如 sk- 或一串字母数字；各供应商的密钥分别保存在本机，可随时清除。');
+    });
+  }
+
+  if ($('btnAiEye')) {
+    $('btnAiEye').addEventListener('click', () => {
+      const input = $('aiInputKey');
+      if (!input) return;
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      $('btnAiEye').textContent = show ? '隐藏' : '显示';
+    });
+  }
+
+  if ($('btnAi2GetKey')) {
+    $('btnAi2GetKey').addEventListener('click', async () => {
+      const meta = aiProviderMeta(state.aiProvider);
+      try {
+        const res = await bridge.aiOpenAuth();
+        if (res && res.ok) {
+          aiSetupTip('已打开浏览器。登录后复制 Key，回到这里粘贴即可（复制的内容会自动填入）。');
+        } else if (meta.keyUrl) {
+          await bridge.openExternal(meta.keyUrl);
+          aiSetupTip('已打开「' + (meta.name || 'AI') + '」的密钥页面。');
+        } else {
+          aiSetupTip((res && res.error) || '打开失败，请手动访问服务商控制台。', true);
+        }
+      } catch (e) {
+        aiSetupTip('打开浏览器失败，请手动访问服务商控制台。', true);
+      }
+    });
+  }
+
+  /* 测试连通性：先把弹窗里的地址与模型落到 store，再用它跑一次真实请求 */
+  if ($('btnAi2Test')) {
+    $('btnAi2Test').addEventListener('click', async () => {
+      if (state.aiTesting) return;
+      const btn = $('btnAi2Test');
+      state.aiTesting = true;
+      btn.disabled = true;
+      aiTestLine('');
+      aiSetupTip('正在测试连通性…');
+      try {
+        const { base, model, key } = aiFormValues();
+        const isCustom = state.aiProvider === 'custom';
+        const patch = { provider: state.aiProvider };
+        if (model) patch.model = model;
+        if (isCustom && base) patch.baseUrl = base;
+        const cfg = await bridge.aiSaveConfig(patch);
+        if (!cfg || !cfg.ok) {
+          aiSaveError((cfg && cfg.error) || '配置没保存成功，无法测试');
+          aiSetupTip('');
+          return;
+        }
+        if (key && !aiIsNoKey()) {
+          const saved = await bridge.aiSaveKey(key, state.aiProvider);
+          if (!saved || !saved.ok) { aiSaveError((saved && saved.error) || '密钥保存失败'); aiSetupTip(''); return; }
+          state.aiKeyDraft = '';
+        }
+        aiSaveError('');
+        const res = await bridge.aiTest();
+        if (res && res.ok) {
+          const sec = (Number(res.latencyMs || 0) / 1000).toFixed(1);
+          aiTestLine('正常 · ' + sec + ' 秒 · ' + (aiModelShort(res.model) || '未知模型') +
+            (res.switched ? '（已自动换模型）' : ''));
+          aiSetupTip('');
+        } else {
+          const err = String((res && res.error) || '未知原因');
+          aiTestLine('连接失败 · ' + (err.length > 60 ? err.slice(0, 60) + '…' : err), true, err);
+          aiSetupTip('');
+        }
+        await loadAiConfig();
+        renderAiSetup();
+      } catch (e) {
+        const msg = String(e.message || '未知原因');
+        aiTestLine('连接失败 · ' + (msg.length > 60 ? msg.slice(0, 60) + '…' : msg), true, msg);
+      } finally {
+        state.aiTesting = false;
+        btn.disabled = false;
+      }
+    });
+  }
+
+  /* 保存：失败把主进程回传的 error 原文就地显示，不再只丢 toast */
+  if ($('btnAi2Save')) {
+    $('btnAi2Save').addEventListener('click', async () => {
+      const missing = refreshAiSaveState();
+      if (missing.length) {
+        aiSaveError('还需要填写：' + missing.join('、') + '；填完才能保存。');
+        return;
+      }
+      const { base, model, key } = aiFormValues();
+      const isCustom = state.aiProvider === 'custom';
+      const btn = $('btnAi2Save');
+      btn.disabled = true;
+      aiSaveError('');
+      aiTestLine('');
+      try {
+        const patch = { enabled: true, provider: state.aiProvider, model, autoModel: !!state.aiAutoModel };
+        if (isCustom && base) patch.baseUrl = base;
+        const cfg = await bridge.aiSaveConfig(patch);
+        if (!cfg || !cfg.ok) {
+          aiSaveError((cfg && cfg.error) || '保存失败，请检查接口地址与模型名');
+          return;
+        }
+        if (key && !aiIsNoKey()) {
+          const saved = await bridge.aiSaveKey(key, state.aiProvider);
+          if (!saved || !saved.ok) { aiSaveError((saved && saved.error) || '密钥保存失败'); return; }
+          state.aiKeyDraft = '';
+        }
+        await loadAiConfig();
+        renderAiSetup();
+        aiSetupTip(state.aiReady === false ? '已保存，但配置还没填完整。' : '已保存，AI 知识助手已启用。');
+        toast(state.aiReady === false ? '已保存，但配置还没填完整' : '已保存，AI 知识助手已启用');
+      } catch (e) {
+        aiSaveError('保存失败：' + e.message);
+      } finally {
+        btn.disabled = false;
+        refreshAiSaveState();
+      }
+    });
+  }
   $('weatherCard').addEventListener('click', openWeatherDetail);
   $('weatherCard').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -3469,7 +5180,9 @@ function bindEvents() {
       return;
     }
     if (e.key === 'Escape') {
-      if (!$('msEgg').hidden) closeMilestoneEgg();
+      if (!$('aiModal2').hidden) closeAiSetup();
+      else if (isAiAssistOpen()) closeAiAssistant();
+      else if (!$('msEgg').hidden) closeMilestoneEgg();
       else if (!$('agreementModal').hidden) closeAgreementModal();
       else if (!$('eventsModal').hidden) closeEventsModal();
       else if (!$('updateNotesModal').hidden) dismissUpdateNotes();
@@ -3606,7 +5319,32 @@ function createMockBridge() {
     onSkinChanged: () => {},
     onScaleChanged: () => {},
     onDebugChanged: () => {},
-    onDebugPreview: () => {}
+    onDebugPreview: () => {},
+    aiConfig: async () => ({
+      ok: true, enabled: store.aiEnabled !== false, provider: store.aiProvider || 'zhipu', providerName: '智谱 GLM',
+      baseUrl: store.aiBaseUrl || 'https://open.bigmodel.cn/api/paas/v4/', model: store.aiModel || 'glm-4.7-flash',
+      topic: store.aiTopic || '每日热点', hasKey: !!store.aiKey,
+      think: store.aiThink !== false, web: store.aiWeb !== false,
+      loginUrl: 'https://bigmodel.cn/login?redirect=https%3A%2F%2Fbigmodel.cn%2Fusercenter%2Fproj-mgmt%2Fapikeys',
+      keyUrl: 'https://bigmodel.cn/usercenter/proj-mgmt/apikeys',
+      authUrl: 'https://bigmodel.cn/login', ready: true, readyError: '',
+      providers: [
+        { id: 'zhipu', name: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4/', model: 'glm-4.7-flash',
+          hint: 'GLM-4.7-Flash 输入输出全免，调用 API 不强制实名', hasAuth: true,
+          keyUrl: 'https://bigmodel.cn/usercenter/proj-mgmt/apikeys',
+          presets: ['glm-4.7-flash', 'glm-4-flash-250414', 'glm-z1-flash'] },
+        { id: 'custom', name: '自定义', baseUrl: '', model: '', hint: '任意 OpenAI 兼容服务', hasAuth: false, keyUrl: '', presets: [] }
+      ]
+    }),
+    aiSaveConfig: async (patch) => Object.assign(store, patch) && save(),
+    aiOpenAuth: async () => ({ ok: true, url: 'https://bigmodel.cn/login' }),
+    aiStopClipboard: async () => ({ ok: true }),
+    aiSaveKey: async (key) => { store.aiKey = String(key || ''); save(); return { ok: true, hasKey: true }; },
+    aiClearKey: async () => { store.aiKey = ''; save(); return { ok: true, hasKey: false }; },
+    aiTest: async () => ({ ok: false, error: '浏览器预览模式不支持真实调用' }),
+    aiListModels: async () => ({ ok: false, error: '浏览器预览模式不支持获取模型列表' }),
+    aiHot: async () => ({ ok: true, date: dateKey(), count: 0, text: '（浏览器预览模式不联网取热点）', error: '' }),
+    aiAsk: async () => ({ ok: false, error: '浏览器预览模式不支持真实调用' })
   };
 }
 

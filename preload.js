@@ -92,6 +92,19 @@ contextBridge.exposeInMainWorld('gaokao', {
   adminTriggerDraw: () => ipcRenderer.invoke('admin:trigger-draw'),
   onAdminOpen: (cb) => ipcRenderer.on('admin:open', () => cb()),
 
+  /* AI 大模型：配置 / 扫码添加 / 对话 / 联网热点 */
+  aiConfig: () => ipcRenderer.invoke('ai:config'),
+  aiSaveConfig: (patch) => ipcRenderer.invoke('ai:save-config', patch),
+  aiOpenAuth: () => ipcRenderer.invoke('ai:open-auth'),
+  aiStopClipboard: () => ipcRenderer.invoke('ai:stop-clipboard'),
+  aiSaveKey: (key, providerId) => ipcRenderer.invoke('ai:save-key', key, providerId),
+  aiClearKey: (providerId) => ipcRenderer.invoke('ai:clear-key', providerId),
+  aiTest: () => ipcRenderer.invoke('ai:test'),
+  aiListModels: () => ipcRenderer.invoke('ai:list-models'),
+  aiHot: (refresh) => ipcRenderer.invoke('ai:hot', refresh),
+  aiAsk: (payload) => ipcRenderer.invoke('ai:ask', payload),
+  aiCancel: () => ipcRenderer.invoke('ai:cancel'),
+
   /* 测试版控制面板 */
   openTestPanel: () => ipcRenderer.invoke('test:open'),
   closeTestPanel: () => ipcRenderer.invoke('test:close'),

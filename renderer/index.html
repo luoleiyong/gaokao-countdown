@@ -76,6 +76,7 @@
           <button class="btn-ghost" id="btnKnowledge">学科知识签</button>
           <button class="btn-ghost" id="btnTerm">二十四节气签</button>
           <button class="btn-ghost" id="btnClassroom">课堂助手</button>
+          <button class="btn-ghost" id="btnAiAssistant">AI 助手</button>
           <button class="btn-ghost" id="btnViewToday" hidden>查看今日签</button>
           <button class="btn-ghost day-egg-btn" id="btnDayEgg" hidden>观看高考彩蛋</button>
           <button class="btn-ghost" id="btnEggReset" hidden>重置彩蛋播放</button>
@@ -485,10 +486,26 @@
         </section>
 
         <section class="setting">
+          <label class="setting__label">AI 知识助手 <span class="setting__value" id="aiStatusLabel">未配置</span></label>
+          <div class="ai-row" id="aiRow" role="button" tabindex="0" title="点击配置模型与 API Key">
+            <span class="ai-row__dot" id="aiRowDot" data-state="off"></span>
+            <span class="ai-row__main">
+              <b id="aiRowTitle">未配置模型</b>
+              <i id="aiRowSub">点击选择供应商，Kilo 免费池开箱可用</i>
+            </span>
+            <span class="ai-row__act">配置</span>
+          </div>
+          <button class="btn-ghost btn-wide setting-action" id="btnAiAssistantSide">打开 AI 助手</button>
+          <p class="hint">默认用 Kilo 免费池，无需密钥；也可换成智谱 GLM 等供应商，密钥只保存在本机。</p>
+        </section>
+
+        <section class="setting">
           <label class="setting__label">知识点科目 <span class="setting__value" id="subjectCount">已选 6 / 6</span></label>
           <p class="hint">十门学科中最多选择 6 科（英语、日语分开），知识签只展示所选科目。</p>
           <div class="subject-grid" id="subjectGrid"></div>
         </section>
+
+
 
         <section class="setting">
           <label class="setting__label">天气 <span class="setting__value" id="weatherStatus">自动定位</span></label>
@@ -575,7 +592,136 @@
       </footer>
     </aside>
   </div>
+  <!-- ======================= AI 模型配置 ======================= -->
+  <style>
+    /* 面板局部样式：颜色一律走变量，主界面保持原金色（styles.css 未改） */
+    .ai-providers{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .ai-provider{display:flex;flex-direction:column;gap:3px;text-align:left;padding:9px 11px;
+      border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.03);
+      cursor:pointer;transition:border-color .16s,background .16s}
+    .ai-provider:hover{border-color:color-mix(in srgb,var(--gold) 42%,var(--line));background:rgba(255,255,255,.055)}
+    .ai-provider:focus-visible{outline:1px solid var(--gold);outline-offset:2px}
+    .ai-provider.is-on{border-color:color-mix(in srgb,var(--gold) 58%,var(--line));background:var(--gold-soft)}
+    .ai-provider__name{display:flex;align-items:center;gap:6px;font-size:12.5px;letter-spacing:.02em;color:var(--text)}
+    .ai-provider.is-on .ai-provider__name{color:var(--gold)}
+    .ai-provider__tag{flex:none;padding:1px 6px;border-radius:999px;font-style:normal;font-size:9px;letter-spacing:.06em;
+      border:1px solid color-mix(in srgb,var(--gold) 48%,var(--line));color:var(--gold)}
+    .ai-provider__sub{font-size:10px;line-height:1.5;letter-spacing:.01em;color:var(--faint)}
+    .ai-provider__link{align-self:flex-start;font-size:10px;color:var(--dim);
+      text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+    .ai-provider__link:hover{color:var(--gold)}
+    .ai-fielderr{margin:-2px 0 2px;font-size:10.5px;line-height:1.55;letter-spacing:.02em;
+      color:color-mix(in srgb,#c0392b 72%,var(--gold-deep))}
+    .ai-auto{display:flex;align-items:center;justify-content:space-between;gap:12px;
+      padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.025)}
+    .ai-auto b{display:block;font-size:12px;font-weight:500;letter-spacing:.02em;color:var(--text)}
+    .ai-auto span{display:block;margin-top:2px;font-size:10px;line-height:1.5;letter-spacing:.01em;color:var(--faint)}
+    .ai-auto__order{margin:-2px 0 2px;font-size:10px;line-height:1.6;letter-spacing:.01em;color:var(--faint);
+      font-family:ui-monospace,Consolas,monospace;word-break:break-all}
+    .ai-key__state{padding:1px 6px;border-radius:999px;font-size:9px;letter-spacing:.06em;
+      border:1px solid var(--line-strong);color:var(--faint)}
+    .ai-key__state[data-state="on"]{border-color:color-mix(in srgb,var(--gold) 52%,var(--line));color:var(--gold);background:var(--gold-soft)}
+    .ai-key__note{margin:2px 0 0;font-size:10px;line-height:1.55;letter-spacing:.01em;color:var(--faint)}
+    .ai-chips__label{margin:8px 0 6px;font-size:10px;letter-spacing:.06em;color:var(--faint)}
+    .ai-chip--saved{display:inline-flex;align-items:center;gap:4px;padding:0 4px 0 0}
+    .ai-chip__pick{padding:4px 8px;border-radius:999px;font-size:10.5px;letter-spacing:.02em;
+      font-family:ui-monospace,Consolas,monospace;color:inherit;cursor:pointer}
+    .ai-chip__del{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;
+      font-size:11px;line-height:1;color:var(--faint);border:1px solid var(--line-strong);transition:color .16s,border-color .16s}
+    .ai-chip__del:hover{color:var(--text);border-color:color-mix(in srgb,var(--gold) 52%,var(--line))}
+    .ai-test{margin:0;font-size:11px;line-height:1.6;letter-spacing:.02em;color:var(--gold);word-break:break-all}
+    .ai-test[data-state="err"]{color:color-mix(in srgb,#c0392b 72%,var(--gold-deep))}
+    .ai-catalog__acts{display:flex;align-items:center;gap:6px}
+  </style>
+  <div class="modal" id="aiModal2" hidden>
+    <div class="modal__backdrop" data-ai2-close></div>
+    <div class="modal__box ai-setup" role="dialog" aria-modal="true" aria-labelledby="aiSetupTitle">
+      <header class="ai-setup__head">
+        <h3 class="ai-setup__title" id="aiSetupTitle">AI 模型配置</h3>
+        <button class="win-btn" id="btnAi2Close" title="关闭">×</button>
+      </header>
 
+      <p class="ai-setup__desc">Kilo 免费池无需密钥；其他供应商的密钥分别保存在本机，不会上传。</p>
+
+      <div class="ai-setup__body">
+        <!-- 供应商卡片：Kilo 免费池默认选中 -->
+        <div class="ai-setup__field">
+          <span class="ai-setup__label" id="aiProviderLabel">供应商</span>
+          <div class="ai-providers" id="aiProviderList" role="radiogroup" aria-labelledby="aiProviderLabel"></div>
+          <p class="ai-key__note" id="aiProviderHint"></p>
+        </div>
+
+        <!-- 接口地址：只有自定义供应商可改 -->
+        <div class="ai-setup__field" id="aiFieldBase" hidden>
+          <label class="ai-setup__label" for="aiInputBase">接口地址</label>
+          <input class="input ai-setup__input" id="aiInputBase" spellcheck="false" placeholder="https://gateway.example/v1/" />
+        </div>
+        <p class="ai-fielderr" id="aiBaseErr" hidden></p>
+
+        <div class="ai-setup__field" id="aiFieldModel">
+          <label class="ai-setup__label" for="aiInputModel">模型名</label>
+          <input class="input ai-setup__input" id="aiInputModel" spellcheck="false" placeholder="例如 kilo-auto/free" />
+        </div>
+        <p class="ai-fielderr" id="aiFormHint" hidden></p>
+
+        <!-- 自动模型选择：排队或报错时按顺序换模型 -->
+        <div class="ai-auto">
+          <div>
+            <b>自动模型选择</b>
+            <span>当前模型排队或报错时，自动换下一个可用模型</span>
+          </div>
+          <button class="switch" id="switchAiAutoModel" type="button" aria-pressed="true"><i></i></button>
+        </div>
+        <p class="ai-auto__order" id="aiAutoOrder" hidden></p>
+
+        <div class="ai-setup__field" id="aiFieldKey">
+          <label class="ai-setup__label" for="aiInputKey">
+            API 密钥
+            <span class="ai-key__state" id="aiKeyState" data-state="off">未填写</span>
+            <button class="ai-help" id="btnAiHelp" type="button" title="查看说明">?</button>
+          </label>
+          <div class="ai-key">
+            <input class="input ai-setup__input ai-setup__input--key" id="aiInputKey" type="password" spellcheck="false"
+                   autocomplete="off" placeholder="输入 API 密钥" />
+            <button class="ai-eye" id="btnAiEye" type="button">显示</button>
+          </div>
+          <p class="ai-warn" id="aiKeyHint" hidden></p>
+          <p class="ai-key__note" id="aiKeyNote">各供应商的密钥分别保存；切换到别的供应商再切回来，密钥仍然在。</p>
+        </div>
+
+        <!-- 模型目录 -->
+        <div class="ai-catalog" id="aiCatalog">
+          <div class="ai-catalog__head">
+            <span>模型目录</span>
+            <div class="ai-catalog__acts">
+              <button class="ai-catalog__fetch" id="btnAiFetchModels" type="button">获取可用模型</button>
+            </div>
+          </div>
+          <div class="ai-catalog__body" id="aiCatalogBody">
+            <p class="ai-catalog__empty" id="aiCatalogEmpty">点「获取可用模型」拉取该供应商的模型；Kilo 免费池无需密钥。</p>
+            <div class="ai-chips" id="aiModelChips"></div>
+            <div id="aiCustomModelsBox" hidden>
+              <p class="ai-chips__label" id="aiCustomModelsLabel">已保存的模型（点选使用，× 删除）</p>
+              <div class="ai-chips" id="aiCustomModelChips"></div>
+            </div>
+          </div>
+        </div>
+
+        <p class="ai-test" id="aiTestResult" hidden></p>
+        <div class="ai-setup__tip" id="aiSetupTip" hidden></div>
+      </div>
+
+      <footer class="ai-setup__foot">
+        <button class="btn-ghost ai-setup__btn" id="btnAi2GetKey">获取密钥</button>
+        <div class="ai-setup__right">
+          <button class="btn-ghost ai-setup__btn" id="btnAi2Clear">清除密钥</button>
+          <button class="btn-ghost ai-setup__btn" id="btnAi2Test">测试连通性</button>
+          <button class="btn-ghost ai-setup__btn" id="btnAi2Cancel">取消</button>
+          <button class="btn-primary ai-setup__btn" id="btnAi2Save">保存</button>
+        </div>
+      </footer>
+    </div>
+  </div>
   <!-- ======================= 倒计时里程碑 / 高考日彩蛋 ======================= -->
   <div class="ms-egg" id="msEgg" hidden data-stage="ready">
     <video class="ms-egg__video" id="msEggVideo" muted playsinline preload="auto"></video>
@@ -598,6 +744,50 @@
       <div class="ms-egg__seal" id="msEggSeal">定</div>
       <button class="btn-primary ms-egg__btn" id="btnMsEggClose">收下</button>
     </div>
+  </div>
+
+  <!-- ======================= AI 助手抽屉 ======================= -->
+  <div class="ai-drawer" id="aiAssistant" hidden>
+    <div class="ai-drawer__backdrop" id="aiAssistBackdrop"></div>
+    <aside class="ai-drawer__panel" role="dialog" aria-modal="true" aria-labelledby="aiAssistTitle">
+      <header class="ai-drawer__head">
+        <div class="ai-drawer__brand">
+          <span class="ai-drawer__seal">助</span>
+          <h2 class="ai-drawer__title" id="aiAssistTitle">AI 助手</h2>
+        </div>
+        <div class="ai-drawer__tools">
+          <button class="ai-model-badge" id="btnAiAssistModel" type="button" title="点击配置模型与 API Key">
+            <b id="aiAssistModelName">未配置模型</b>
+            <i id="aiAssistModelSwitch" hidden>已切换</i>
+          </button>
+          <button class="win-btn" id="btnAiAssistNew" type="button" title="新建对话" aria-label="新建对话">＋</button>
+          <button class="win-btn" id="btnAiAssistList" type="button" title="会话列表" aria-label="会话列表" aria-expanded="false" aria-controls="aiAssistSessions">☰</button>
+          <button class="win-btn" id="btnAiAssistClose" type="button" title="关闭" aria-label="关闭 AI 助手">×</button>
+        </div>
+      </header>
+
+      <div class="ai-sess" id="aiAssistSessions" hidden>
+        <div class="ai-sess__head">
+          <span>最近会话</span>
+          <button class="ai-sess__new" id="btnAiAssistSessNew" type="button">新建会话</button>
+        </div>
+        <div class="ai-sess__list" id="aiAssistSessList"></div>
+      </div>
+
+      <div class="ai-drawer__body" id="aiAssistBody"></div>
+
+      <div class="ai-drawer__foot">
+        <div class="ai-drawer__bar">
+          <button class="ai-toggle" id="btnAiAssistThink" type="button" aria-pressed="true" title="先让模型想一遍再回答"><i></i><span>思考</span></button>
+          <button class="ai-toggle" id="btnAiAssistWeb" type="button" aria-pressed="true" title="允许联网检索后再回答"><i></i><span>联网</span></button>
+          <span class="ai-drawer__hint">Enter 发送 · Shift + Enter 换行</span>
+        </div>
+        <div class="ai-drawer__input">
+          <textarea class="ai-input" id="aiAssistInput" rows="1" placeholder="问点什么，例如：帮我理一下圆锥曲线的解题步骤"></textarea>
+          <button class="ai-send" id="btnAiAssistSend" type="button" title="发送">发送</button>
+        </div>
+      </div>
+    </aside>
   </div>
 
   <div class="toast" id="toast" hidden></div>
@@ -625,6 +815,7 @@
 <script src="signs.js"></script>
 <script src="mottos.js"></script>
 <script src="fish.js"></script>
+<script src="ai-store.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

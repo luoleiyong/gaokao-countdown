@@ -3,11 +3,12 @@
  * 高考倒计时 · 桌面宠物（Windows）
  * 主进程：窗口/宠物层级、托盘、开机自启、本地存储、启动日志
  */
-const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, dialog, net, shell, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, dialog, net, session, shell, globalShortcut, safeStorage, clipboard } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL, fileURLToPath } = require('url');
 const crypto = require('crypto');
+const nodeNet = require('net');
 const { execFile, execFileSync, spawn } = require('child_process');
 
 let XLSX = null;
@@ -37,6 +38,114 @@ const UPDATE_MANIFESTS = [
   'https://fastly.jsdelivr.net/gh/luoleiyong/gaokao-countdown@master/update/version.json',
   'https://gcore.jsdelivr.net/gh/luoleiyong/gaokao-countdown@master/update/version.json'
 ];
+
+/* ---------------- AI 大模型：免费、调用 API 不强制实名的智谱 GLM ---------------- */
+const SUBJECT_NAMES = {
+  chinese: '语文', math: '数学', english: '英语', japanese: '日语',
+  physics: '物理', chemistry: '化学', biology: '生物',
+  politics: '政治', history: '历史', geography: '地理'
+};
+/* 内置供应商只放免费、调用 API 不强制实名的；custom 供用户自行接入任意 OpenAI 兼容服务 */
+/* Kilo 免费池：api.kilo.ai 的 OpenAI 兼容网关，免费模型无需任何密钥（参考 dsh-our-free-model 的 src/kilo.js） */
+const KILO_BASE = 'https://api.kilo.ai/api/gateway/';
+/* free 为可无密钥调用的模型；think 表示可下发 reasoning.enabled=false 关掉思考，避免 max_tokens 被思考吃光 */
+const KILO_MODELS = [
+  { id: 'kilo-auto/free', name: 'Auto Free · 自动路由', ctx: 256000, think: true },
+  { id: 'nvidia/nemotron-3.5-lightning:free', name: 'Nemotron 3.5 Lightning · NVIDIA', ctx: 1000000, think: true },
+  { id: 'inclusionai/ling-3.2-flash:free', name: 'Ling 3.2 Flash · inclusionAI', ctx: 1048576, think: true },
+  { id: 'baidu/ernie-5.5-flash-preview:free', name: 'ERNIE 5.5 Flash · 百度', ctx: 1024000, think: true },
+  { id: 'nvidia/nemotron-3.5-super-vl:free', name: 'Nemotron 3.5 Super VL · NVIDIA', ctx: 1000000, think: true },
+  { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', name: 'Nemotron 3 Ultra 550B · NVIDIA', ctx: 1000000, think: true },
+  { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', name: 'Nemotron 3 Nano Omni · NVIDIA', ctx: 256000, think: true },
+  { id: 'particle-ai/particle-1:free', name: 'Particle 1', ctx: 1048576, think: true },
+  { id: 'recursive/flint-v1.0:free', name: 'Flint v1.0', ctx: 262144, think: true },
+  { id: 'reflection/beam-free', name: 'Beam Free', ctx: 1048576, think: true },
+  { id: 'openrouter/free', name: 'OpenRouter Free', ctx: 200000, think: true },
+  { id: 'liquid/lfm-3-1.7b:free', name: 'LFM 3 1.7B · Liquid', ctx: 262144, think: true },
+  { id: 'stealth/glyph-cluster', name: 'Glyph Cluster', ctx: 256000, think: true }
+];
+const AI_PROVIDERS = [
+  {
+    id: 'kilo',
+    name: 'Kilo 免费池',
+    baseUrl: KILO_BASE,
+    model: 'kilo-auto/free',
+    authUrl: '',
+    keyUrl: 'https://kilo.ai/',
+    noKey: true,
+    hint: '无需密钥，直连 Kilo 免费池；高峰期可开「自动换模型」',
+    presets: KILO_MODELS.map((m) => m.id),
+    models: KILO_MODELS
+  },
+  {
+    id: 'pollinations',
+    name: 'Pollinations 免费池',
+    baseUrl: 'https://text.pollinations.ai/v1',
+    model: 'openai-fast',
+    authUrl: '',
+    keyUrl: 'https://pollinations.ai/',
+    noKey: true,
+    hint: '无需密钥，匿名额度约每 45 秒 1 次；Kilo 排队时自动顶上',
+    presets: ['openai-fast'],
+    models: [{ id: 'openai-fast', name: 'GPT-OSS 20B · 带思考', ctx: 131072, think: true }]
+  },
+  {
+    id: 'zhipu',
+    name: '智谱 GLM',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4/',
+    model: 'glm-4.7-flash',
+    authUrl: 'https://bigmodel.cn/login',
+    keyUrl: 'https://bigmodel.cn/usercenter/proj-mgmt/apikeys',
+    hint: 'GLM-4.7-Flash 输入输出全免，调用 API 不强制实名',
+    presets: ['glm-4.7-flash', 'glm-4-flash-250414', 'glm-z1-flash']
+  },
+  {
+    id: 'sensenova',
+    name: '商汤日日新',
+    baseUrl: 'https://token.sensenova.cn/v1/',
+    model: 'sensenova-6.8-flash-lite',
+    authUrl: 'https://platform.sensenova.cn/login',
+    keyUrl: 'https://platform.sensenova.cn/console/api-key',
+    freeNote: 'Token Plan 每 5 小时 1500 次免费调用',
+    hint: '登录后可用免费模型，Token Plan 公测期免费',
+    presets: ['sensenova-6.8-flash-lite', 'deepseek-v4-flash', 'kimi-k3', 'glm-5.2']
+  },
+  {
+    id: 'custom',
+    name: '自定义',
+    baseUrl: '',
+    model: '',
+    authUrl: '',
+    keyUrl: '',
+    hint: '填入任意兼容 OpenAI Chat Completions 的服务地址与模型名；本机网关可免密钥',
+    presets: []
+  }
+];
+const AI_AUTH_REDIRECT = 'https://bigmodel.cn/usercenter/proj-mgmt/apikeys';
+const AI_LOGIN_URL = AI_PROVIDERS[0].authUrl + '?redirect=' + encodeURIComponent(AI_AUTH_REDIRECT);
+/* 登录地址按供应商取；自定义供应商没有登录页，返回空串 */
+function aiAuthUrlOf(provider) { return provider && provider.authUrl ? provider.authUrl : ''; }
+function aiLoginUrlOf(provider) {
+  const auth = aiAuthUrlOf(provider);
+  if (!auth) return '';
+  return auth + '?redirect=' + encodeURIComponent(provider.keyUrl || AI_AUTH_REDIRECT);
+}
+/* 联网热点：新浪滚动公开接口，失败时自动退回模型生成并如实标注来源 */
+const AI_HOT_URL = 'https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2510&k=&num=20&page=1';
+/* 联网检索：Bing RSS 与百度热搜都是公开只读接口，不需要密钥 */
+const AI_SEARCH_RSS = 'https://cn.bing.com/search?format=rss&count=10&q=';
+const AI_BAIDU_HOT = 'https://top.baidu.com/api/board?platform=wise&tab=realtime';
+/* 联网多源：今日头条热榜 / 知乎日报 / 权威 RSS（人民网、新华网、中新网）/ 科技媒体（IT之家、Solidot） */
+const AI_TOUTIAO_HOT = 'https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc';
+const AI_ZHIHU_LATEST = 'https://news-at.zhihu.com/api/4/news/latest';
+const AI_RSS_FEEDS = [
+  { name: '人民网', url: 'http://www.people.com.cn/rss/politics.xml', kind: 'politics' },
+  { name: '新华网', url: 'http://www.xinhuanet.com/politics/news_politics.xml', kind: 'politics' },
+  { name: '中新网', url: 'https://www.chinanews.com.cn/rss/scroll-news.xml', kind: 'society' },
+  { name: 'IT之家', url: 'https://www.ithome.com/rss/', kind: 'tech' },
+  { name: 'Solidot', url: 'https://www.solidot.org/index.rss', kind: 'tech' }
+];
+const AI_SEARCH_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 const STORE_DEFAULTS = {
   targetDate: '2027-06-07',
   skin: 'board',
@@ -61,7 +170,30 @@ const STORE_DEFAULTS = {
   backupAuto: true,
   lastBackupDate: '',
   backupDir: '',
-  classroom: null
+  classroom: null,
+  aiEnabled: true,
+  aiProvider: 'kilo',
+  aiBaseUrl: KILO_BASE,
+  aiModel: 'kilo-auto/free',
+  aiKeyEnc: '',
+  /* 每个供应商各自保存自己的加密密钥，切换供应商不再看起来像「密钥丢了」 */
+  aiKeys: {},
+  /* 用户手动填过的模型名，重启后仍在候选 chips 里 */
+  aiCustomModels: [],
+  /* 自动换模型：一个模型排队/超时/报错时按顺序切到下一个 */
+  aiAutoModel: true,
+  aiModelUsed: '',
+  /* 本机代理（Clash 等）：直连不通时自动探测并写回，也可手动指定 */
+  aiProxy: '',
+  /* 每个供应商各自记住最后用过的地址与模型，切来切去不会互相覆盖 */
+  aiProviderPrefs: {},
+  /* 显示模型思考过程（reasoning） */
+  aiThink: true,
+  /* 回答前先联网检索最新信息 */
+  aiWeb: true,
+  aiTopic: '每日热点',
+  aiNewsDate: '',
+  aiNewsCache: null
 };
 
 let win = null;
@@ -85,6 +217,12 @@ let saveBoundsTimer = null;
 let updateTask = { version: '', filePath: '', downloading: false, done: false };
 let installerLaunched = false;
 let historyBackup = null;
+/* AI 密钥：内存中保存明文，落盘只写加密后的 aiKeyEnc（新版按供应商分桶写 aiKeys） */
+let aiKey = '';
+let aiClipboardTimer = null;
+let aiClipboardLast = '';
+/* 当前正在进行的对话请求，用于「停止生成」 */
+let aiAbortCtl = null;
 
 function updateDir() {
   return path.join(app.getPath('temp'), 'GaokaoCountdownUpdate');
@@ -685,6 +823,37 @@ function loadStore() {
     if (!merged.backupDir) merged.backupDir = consumeInstallBackupHint();
     // 更新源固定为项目仓库，避免旧配置残留
     merged.updateUrl = DEFAULT_UPDATE_URL;
+    // AI 配置归一化：只接受已支持的供应商，密钥只保留加密串
+    merged.aiProvider = AI_PROVIDERS.some((p) => p.id === merged.aiProvider) ? merged.aiProvider : 'kilo';
+    // 旧的「本地网关」预设已移除：内置供应商地址若还指向本机，回落到该供应商默认地址
+    if (merged.aiProvider !== 'custom' && /127\.0\.0\.1|localhost/i.test(String(merged.aiBaseUrl || ''))) {
+      merged.aiBaseUrl = '';
+    }
+    const aiProvider = AI_PROVIDERS.find((p) => p.id === merged.aiProvider) || AI_PROVIDERS[0];
+    const rawBase = typeof merged.aiBaseUrl === 'string' ? merged.aiBaseUrl.trim() : '';
+    // 关键修复：自定义地址规范化失败时保留用户原文，不再静默清空
+    merged.aiBaseUrl = normalizeAiBase(rawBase) || rawBase || aiProvider.baseUrl;
+    merged.aiModel = typeof merged.aiModel === 'string' && merged.aiModel.trim()
+      ? merged.aiModel.trim().slice(0, 60)
+      : aiProvider.model;
+    merged.aiKeyEnc = typeof merged.aiKeyEnc === 'string' ? merged.aiKeyEnc : '';
+    // 密钥按供应商分桶：旧版只有一个 aiKeyEnc，迁移到当前供应商名下
+    const keys = migratedAiKeys(data.aiKeys);
+    // 只有「老版本单格密钥」这种一次性的情况才迁移到当前供应商；
+    // 已经有分桶就说明是新数据，缺谁就是没填，不能拿别人的 Key 顶上（会被网关判 401）。
+    if (!Object.keys(keys).length && merged.aiKeyEnc) keys[merged.aiProvider] = merged.aiKeyEnc;
+    merged.aiKeys = keys;
+    merged.aiCustomModels = normalizeModelNames(data.aiCustomModels);
+    merged.aiAutoModel = merged.aiAutoModel !== false;
+    merged.aiModelUsed = typeof merged.aiModelUsed === 'string' ? merged.aiModelUsed.slice(0, 80) : '';
+    merged.aiProxy = normalizeAiProxy(data.aiProxy);
+    merged.aiProviderPrefs = normalizeAiPrefs(data.aiProviderPrefs);
+    merged.aiEnabled = merged.aiEnabled !== false;
+    merged.aiTopic = typeof merged.aiTopic === 'string' && merged.aiTopic.trim()
+      ? merged.aiTopic.trim().slice(0, 40)
+      : '每日热点';
+    merged.aiNewsDate = typeof merged.aiNewsDate === 'string' ? merged.aiNewsDate : '';
+    merged.aiNewsCache = merged.aiNewsCache && typeof merged.aiNewsCache === 'object' ? merged.aiNewsCache : null;
     return merged;
   } catch {
     // 文件损坏时先留一份原件，避免用户数据被直接覆盖
@@ -940,6 +1109,86 @@ async function fetchText(url, timeout = 8000, headers) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/* 把底层网络异常翻译成用户看得懂的中文，避免直接抛 "This operation was aborted" */
+function friendlyNetError(e, timeout) {
+  const msg = String((e && e.message) || e || '');
+  const name = String((e && e.name) || '');
+  if (name === 'AbortError' || /aborted|abort/i.test(msg)) {
+    return '请求超时（' + Math.round(timeout / 1000) + ' 秒），免费模型在高峰期可能很慢，请稍后重试或换个时段';
+  }
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(msg)) return '域名解析失败，请检查网络连接';
+  if (/ECONNREFUSED/i.test(msg)) return '连接被拒绝，请检查接口地址是否正确';
+  if (/certificate|CERT_/i.test(msg)) return '证书校验失败，请确认接口地址是 https 且证书有效';
+  if (/net::ERR_/i.test(msg)) return '网络请求失败：' + msg.slice(0, 120);
+  return msg || '网络请求失败';
+}
+
+/* 智谱免费模型在高峰期会返回 429 + code 1305（访问量过大），这类错误值得退避重试 */
+function isRetryableError(e) {
+  const msg = String((e && e.message) || '');
+  if (/HTTP 429|HTTP 5\d\d/.test(msg)) return true;
+  if (/1302|1305/.test(msg)) return true;
+  if (/aborted|abort|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN/i.test(msg)) return true;
+  return false;
+}
+
+/* 大模型对话接口走 POST：带超时、错误翻译与有限次退避重试 */
+async function postJson(url, body, timeout = 60000, headers, retryOpts) {
+  const opt = retryOpts || {};
+  const maxTries = opt.tries || 2;
+  const payload = JSON.stringify(body);
+  let lastError = null;
+  for (let attempt = 0; attempt < maxTries; attempt++) {
+    if (attempt > 0) {
+      // 429/5xx 退避 2s、5s；超时类退避 1.5s
+      const wait = /HTTP 4|HTTP 5|1302|1305/.test(String(lastError && lastError.message))
+        ? (attempt === 1 ? 2000 : 5000)
+        : 1500;
+      if (opt.onRetry) { try { opt.onRetry(attempt, lastError); } catch { /* 忽略 */ } }
+      await new Promise((r) => setTimeout(r, wait));
+    }
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeout);
+    // 外部取消（用户点「停止」）：把外部 signal 接到本次请求上
+    const ext = opt.signal;
+    const onExt = () => { try { ac.abort(); } catch { /* 忽略 */ } };
+    if (ext) {
+      if (ext.aborted) onExt();
+      else if (typeof ext.addEventListener === 'function') ext.addEventListener('abort', onExt);
+    }
+    try {
+      const res = await net.fetch(url, {
+        method: 'POST',
+        signal: ac.signal,
+        headers: Object.assign({
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+          'Accept': 'application/json'
+        }, headers || {}),
+        body: payload
+      });
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '');
+        const raw = 'HTTP ' + res.status + (detail ? ' ' + detail.slice(0, 300) : '');
+        const err = new Error(raw);
+        err.status = res.status;
+        throw err;
+      }
+      return await res.json();
+    } catch (e) {
+      lastError = e;
+      if (ext && ext.aborted) throw new Error('已停止生成');
+      if (!isRetryableError(e) || attempt === maxTries - 1) {
+        throw new Error(friendlyNetError(e, timeout));
+      }
+    } finally {
+      if (ext && typeof ext.removeEventListener === 'function') ext.removeEventListener('abort', onExt);
+      clearTimeout(timer);
+    }
+  }
+  throw new Error(friendlyNetError(lastError, timeout));
 }
 
 function versionCmp(a, b) {
@@ -2089,6 +2338,1192 @@ function updateTrayMenu() {
 
 
 /* ---------------- IPC ---------------- */
+/* ---------------- AI 大模型：密钥 / 对话 / 联网热点 / 审核自查 ---------------- */
+
+/* 密钥加密：优先用 Electron safeStorage；不可用时退回带前缀的 Base64，绝不写明文 */
+function aiEncryptKey(plain) {
+  const text = String(plain || '');
+  try {
+    if (safeStorage.isEncryptionAvailable()) {
+      return safeStorage.encryptString(text).toString('base64');
+    }
+  } catch { /* 加密不可用时走降级 */ }
+  return Buffer.from('gk1:' + text, 'utf8').toString('base64');
+}
+
+function aiDecryptEnc(encRaw) {
+  const enc = encRaw ? String(encRaw) : '';
+  if (!enc) return '';
+  try {
+    const raw = Buffer.from(enc, 'base64');
+    if (raw.length > 4 && raw.slice(0, 4).toString('utf8') === 'gk1:') return raw.slice(4).toString('utf8');
+    if (safeStorage.isEncryptionAvailable()) return safeStorage.decryptString(raw);
+    return raw.toString('utf8');
+  } catch {
+    return '';
+  }
+}
+
+/* 兼容旧调用：只读当前供应商那一格 */
+function aiDecryptKey(storeRef) {
+  return aiDecryptEnc(storeRef && storeRef.aiKeyEnc);
+}
+
+/* 密钥按供应商分桶，切换供应商不再看起来像「密钥丢了」 */
+const aiKeyCache = new Map();
+
+function aiKeysBucket() {
+  if (!store.aiKeys || typeof store.aiKeys !== 'object') store.aiKeys = {};
+  return store.aiKeys;
+}
+
+function aiKeyOf(providerId) {
+  if (!providerId) return '';
+  if (aiKeyCache.has(providerId)) return aiKeyCache.get(providerId);
+  const bucket = aiKeysBucket();
+  let plain = aiDecryptEnc(bucket[providerId]);
+  // 旧版单格密钥只在「桶里一条都没有、且就是当前供应商」时兜底迁移；
+  // 否则切到免密钥供应商会把自己家的 Key 发给别人，直接被判 401。
+  if (!plain && providerId === store.aiProvider && !Object.keys(bucket).length) {
+    plain = aiDecryptEnc(store.aiKeyEnc) || aiKey;
+    if (plain) aiRememberKey(providerId, plain);
+  }
+  if (plain) aiKeyCache.set(providerId, plain);
+  return plain;
+}
+
+function aiRememberKey(providerId, plain) {
+  const value = String(plain || '');
+  if (!value) return;
+  aiKeyCache.set(providerId, value);
+  const bucket = aiKeysBucket();
+  bucket[providerId] = aiEncryptKey(value);
+  if (providerId === store.aiProvider) store.aiKeyEnc = bucket[providerId];
+}
+
+function aiForgetKey(providerId) {
+  aiKeyCache.delete(providerId);
+  const bucket = aiKeysBucket();
+  delete bucket[providerId];
+  if (providerId === store.aiProvider) {
+    store.aiKeyEnc = '';
+    aiKey = '';
+  }
+}
+
+function aiHasKey(providerId) {
+  return !!aiKeyOf(providerId);
+}
+
+/* 旧 store 只有 aiKeyEnc 一格，迁移成按供应商分桶 */
+function migratedAiKeys(raw) {
+  const out = {};
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    Object.keys(raw).forEach((k) => {
+      const enc = raw[k];
+      if (typeof enc === 'string' && enc) out[String(k)] = enc;
+    });
+  }
+  return out;
+}
+
+function normalizeModelNames(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const seen = new Set();
+  const out = [];
+  list.forEach((item) => {
+    const name = String(item || '').trim().slice(0, 80);
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    out.push(name);
+  });
+  return out.slice(0, 20);
+}
+
+/* 每个供应商各记一份「上次用的地址 + 模型」，切回来时原样还原 */
+function normalizeAiPrefs(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  AI_PROVIDERS.forEach((prov) => {
+    const item = raw[prov.id];
+    if (!item || typeof item !== 'object') return;
+    const baseUrl = typeof item.baseUrl === 'string' ? item.baseUrl.trim().slice(0, 200) : '';
+    const model = typeof item.model === 'string' ? item.model.trim().slice(0, 80) : '';
+    if (!baseUrl && !model) return;
+    out[prov.id] = { baseUrl, model };
+  });
+  return out;
+}
+
+function aiPrefsBucket() {
+  if (!store.aiProviderPrefs || typeof store.aiProviderPrefs !== 'object') store.aiProviderPrefs = {};
+  return store.aiProviderPrefs;
+}
+
+function aiRememberPref(providerId, baseUrl, model) {
+  if (!providerId) return;
+  const bucket = aiPrefsBucket();
+  const prev = bucket[providerId] || {};
+  const next = {
+    baseUrl: String(baseUrl || prev.baseUrl || '').slice(0, 200),
+    model: String(model || prev.model || '').slice(0, 80)
+  };
+  if (!next.baseUrl && !next.model) return;
+  bucket[providerId] = next;
+}
+
+function aiProviderOf(storeRef) {
+  const found = AI_PROVIDERS.find((p) => p.id === storeRef.aiProvider);
+  if (found && found.id !== 'custom') return found;
+  if (found && found.id === 'custom') {
+    return {
+      id: 'custom',
+      name: '自定义',
+      baseUrl: storeRef.aiBaseUrl || '',
+      model: storeRef.aiModel || '',
+      authUrl: '',
+      keyUrl: '',
+      hint: found.hint,
+      presets: Array.isArray(storeRef.aiCustomModels) ? storeRef.aiCustomModels.slice(0, 20) : []
+    };
+  }
+  return AI_PROVIDERS[0];
+}
+
+/* 自定义供应商必须同时有 baseUrl 与 model，才允许发请求 */
+/* 本地网关（magpie / Ollama / LM Studio 等）允许不带协议头与末尾 /v1 */
+const LOCAL_HOST_RE = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\]|::1)(:\d+)?(\/|$)/i;
+
+function normalizeAiBase(input) {
+  let b = String(input || '').trim();
+  if (!b) return '';
+  // 只写了 127.0.0.1:3425 这种，补上 http://
+  if (!/^https?:\/\//i.test(b)) {
+    if (LOCAL_HOST_RE.test(b)) b = 'http://' + b;
+    else return '';
+  }
+  return b.replace(/\/+$/, '') + '/';
+}
+
+/* 本机代理地址：支持 http://127.0.0.1:1081、socks5://…，或只写 127.0.0.1:1081 */
+function normalizeAiProxy(input) {
+  const raw = String(input == null ? '' : input).trim().slice(0, 120);
+  if (!raw) return '';
+  if (/^(https?|socks5):\/\//i.test(raw)) return raw.replace(/\/+$/, '');
+  if (/^[\w.\-]+:\d{2,5}$/.test(raw)) return 'http://' + raw;
+  return '';
+}
+
+function aiIsLocalBase(base) {
+  return LOCAL_HOST_RE.test(String(base || '').replace(/^https?:\/\//i, ''));
+}
+
+/* ---------------- AI 出网：直连不通时自动走本机代理 ---------------- */
+/* 背景：api.kilo.ai 在部分网络下 443 被阻断（DNS 正常、TCP 握手超时），
+   而本机常驻 Clash / v2ray 之类代理（1081 / 7890 / 7897 / 10809 / 1080）。
+   这里用独立 session 承载 AI 请求，直连失败后探测本机代理端口，命中就改走代理并记住。 */
+const AI_PROXY_PORTS = [1081, 7890, 7897, 10809, 1080];
+let aiNetSessionRef = null;
+let aiProxyApplied = null;
+
+function aiNetSession() {
+  if (!aiNetSessionRef) {
+    try { aiNetSessionRef = session.fromPartition('ai-net'); } catch { aiNetSessionRef = null; }
+  }
+  return aiNetSessionRef || session.defaultSession;
+}
+
+function aiProxyOf() {
+  const raw = String(store.aiProxy || '').trim();
+  if (!raw) return '';
+  if (/^(https?|socks5):\/\//i.test(raw)) return raw.replace(/\/+$/, '');
+  return 'http://' + raw.replace(/\/+$/, '');
+}
+
+async function aiApplyProxy(proxyUrl) {
+  const target = proxyUrl || '';
+  if (aiProxyApplied === target) return;
+  const ses = aiNetSession();
+  try {
+    if (!target) await ses.setProxy({ mode: 'direct' });
+    else await ses.setProxy({ proxyRules: target, proxyBypassRules: '<-loopback>' });
+    aiProxyApplied = target;
+  } catch (e) {
+    appendLog('AI_PROXY_APPLY_FAIL', { proxy: target, error: String(e && e.message || '').slice(0, 120) });
+  }
+}
+
+function aiProbePort(port) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      try { sock.destroy(); } catch { /* 忽略 */ }
+      resolve(ok);
+    };
+    const sock = nodeNet.connect({ host: '127.0.0.1', port });
+    sock.setTimeout(350);
+    sock.once('connect', () => finish(true));
+    sock.once('timeout', () => finish(false));
+    sock.once('error', () => finish(false));
+  });
+}
+
+async function aiFindLocalProxy() {
+  for (const port of AI_PROXY_PORTS) {
+    if (await aiProbePort(port)) return 'http://127.0.0.1:' + port;
+  }
+  return '';
+}
+
+function aiNetError(e) {
+  if (e && e.status) return false;
+  const msg = String((e && e.message) || '');
+  return /ERR_[A-Z_]+|ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|EAI_AGAIN|EPROTO|socket hang up|network|timeout|超时|无法连接|连接失败|网络/i.test(msg);
+}
+
+async function aiFetchOnce(url, ctx, proxyUrl) {
+  await aiApplyProxy(proxyUrl);
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), ctx.timeout);
+  const ext = ctx.signal;
+  const onExt = () => { try { ac.abort(); } catch { /* 忽略 */ } };
+  if (ext) {
+    if (ext.aborted) onExt();
+    else if (typeof ext.addEventListener === 'function') ext.addEventListener('abort', onExt);
+  }
+  try {
+    const res = await aiNetSession().fetch(url, {
+      method: ctx.method,
+      headers: ctx.headers,
+      body: ctx.payload,
+      signal: ac.signal
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      const err = new Error('HTTP ' + res.status + (detail ? ' ' + detail.slice(0, 300) : ''));
+      err.status = res.status;
+      throw err;
+    }
+    return await res.json();
+  } finally {
+    if (ext && typeof ext.removeEventListener === 'function') ext.removeEventListener('abort', onExt);
+    clearTimeout(timer);
+  }
+}
+
+/* AI 专用 JSON 请求：直连 → 失败探测本机代理 → 走代理；显式配置了代理则 代理 → 直连 */
+async function aiFetchJson(url, opts) {
+  const o = opts || {};
+  const method = o.method || 'POST';
+  const ctx = {
+    method,
+    timeout: o.timeout || 60000,
+    signal: o.signal,
+    payload: o.body === undefined ? undefined : JSON.stringify(o.body),
+    headers: Object.assign({
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+      'Accept': 'application/json'
+    }, method === 'GET' ? {} : { 'Content-Type': 'application/json' }, o.headers || {})
+  };
+  const tries = Math.max(1, o.tries || 1);
+  const run = async (proxyUrl) => {
+    let last = null;
+    for (let attempt = 0; attempt < tries; attempt++) {
+      if (attempt > 0) {
+        const wait = /HTTP 4|HTTP 5|1302|1305/.test(String(last && last.message)) ? (attempt === 1 ? 2000 : 5000) : 1500;
+        await new Promise((r) => setTimeout(r, wait));
+      }
+      try {
+        return await aiFetchOnce(url, ctx, proxyUrl);
+      } catch (e) {
+        last = e;
+        if (ctx.signal && ctx.signal.aborted) throw new Error('已停止生成');
+        if (!isRetryableError(e) || attempt === tries - 1) break;
+      }
+    }
+    throw last || new Error('请求失败');
+  };
+
+  const explicit = aiProxyOf();
+  if (explicit) {
+    try {
+      return await run(explicit);
+    } catch (e) {
+      if (ctx.signal && ctx.signal.aborted) throw e;
+      if (!aiNetError(e)) throw new Error(friendlyNetError(e, ctx.timeout));
+      return await run('');
+    }
+  }
+  try {
+    return await run('');
+  } catch (e) {
+    if (ctx.signal && ctx.signal.aborted) throw e;
+    if (!aiNetError(e)) throw new Error(friendlyNetError(e, ctx.timeout));
+    const found = await aiFindLocalProxy();
+    if (!found) throw new Error(friendlyNetError(e, ctx.timeout) + '；本机没有检测到可用代理');
+    const res = await run(found);
+    store.aiProxy = found;
+    saveStore();
+    appendLog('AI_PROXY_AUTO', { proxy: found });
+    return res;
+  }
+}
+
+function aiConfigReady(storeRef) {
+  const base = String(storeRef.aiBaseUrl || '').trim();
+  const model = String(storeRef.aiModel || '').trim();
+  const provider = AI_PROVIDERS.find((p) => p.id === storeRef.aiProvider) || AI_PROVIDERS[0];
+  if (storeRef.aiProvider === 'custom') {
+    const norm = normalizeAiBase(base);
+    if (!norm) return { ok: false, error: '请先填写接口地址（https:// 开头；本机地址可直接写 127.0.0.1:端口）' };
+    if (!model) return { ok: false, error: '请先填写模型名（可从网关的 /v1/models 里挑）' };
+    return { ok: true, base: norm, model };
+  }
+  if (!base && provider.baseUrl) return { ok: true, base: provider.baseUrl, model: model || provider.model };
+  return { ok: true, base, model };
+}
+
+/* ---------------- 自动模型选择：一个模型排队/报错就换下一个 ---------------- */
+/* Kilo 免费池里实测响应快的模型排前面；kilo-auto/free 是网关自己的自动路由 */
+const AI_KILO_ORDER = KILO_MODELS.map((m) => m.id);
+const aiCooldown = new Map();
+const AI_COOLDOWN_MS = 90000;
+
+function aiCooling(model) {
+  const at = aiCooldown.get(model);
+  if (!at) return false;
+  if (Date.now() - at < AI_COOLDOWN_MS) return true;
+  aiCooldown.delete(model);
+  return false;
+}
+
+function aiModelMeta(providerId, model) {
+  const pid = String(providerId || '');
+  if (pid === 'kilo') {
+    const found = KILO_MODELS.find((m) => m.id === model);
+    return found || { id: model, name: model, ctx: 0, think: true };
+  }
+  return { id: model, name: model, ctx: 0, think: false };
+}
+
+/* 候选链：当前配置的模型 → Kilo 免费池其余模型 → 其他已配密钥的供应商 */
+function aiCandidates(opts) {
+  const o = opts || {};
+  const provider = aiProviderOf(store);
+  const out = [];
+  const seen = new Set();
+  const push = (providerId, model, allowCooling) => {
+    const m = String(model || '').trim();
+    if (!m) return;
+    const key = providerId + '::' + m;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const meta = aiModelMeta(providerId, m);
+    const entryProvider = AI_PROVIDERS.find((p) => p.id === providerId) || provider;
+    out.push({
+      providerId,
+      providerName: entryProvider.name,
+      base: providerId === 'custom' ? (normalizeAiBase(store.aiBaseUrl) || '') : (entryProvider.baseUrl || ''),
+      model: m,
+      modelName: meta.name,
+      think: !!meta.think,
+      key: aiKeyOf(providerId),
+      noKey: !!entryProvider.noKey,
+      cooling: aiCooling(m) && !allowCooling
+    });
+  };
+
+  const preferred = String(o.model || store.aiModel || '').trim();
+  if (provider.id === 'kilo') {
+    push('kilo', preferred, true);
+    /* 只排前 3 个 Kilo 模型，给其它免密钥通道留出候选位，不然整条链全被 Kilo 占满 */
+    AI_KILO_ORDER.slice(0, 3).forEach((m) => push('kilo', m, false));
+  } else if (provider.id === 'custom') {
+    push('custom', preferred, true);
+    (Array.isArray(store.aiCustomModels) ? store.aiCustomModels : []).forEach((m) => push('custom', m, false));
+  } else {
+    push(provider.id, preferred || provider.model, true);
+    (provider.presets || []).forEach((m) => push(provider.id, m, false));
+  }
+
+  if (store.aiAutoModel !== false) {
+    AI_PROVIDERS.forEach((p) => {
+      if (p.id === 'custom' || p.id === provider.id) return;
+      if (!p.noKey && !aiKeyOf(p.id)) return;
+      const models = p.id === 'kilo' ? AI_KILO_ORDER.slice(0, 3) : [p.model].concat((p.presets || []).slice(0, 2));
+      models.forEach((m) => push(p.id, m, false));
+    });
+  }
+
+  // 冷却中的模型排到最后，仅当整条链都冷却时才回退使用
+  const ready = out.filter((c) => !c.cooling);
+  const cooling = out.filter((c) => c.cooling);
+  const ordered = ready.concat(cooling);
+  const limit = o.maxModels || (out.length > 1 ? 6 : 1);
+  return ordered.slice(0, Math.max(1, limit));
+}
+
+/* ---------------- 免密钥网关预检：不可达就别傻等 90 秒 ---------------- */
+const aiReachCache = new Map();
+const AI_REACH_TTL = 5 * 60 * 1000;
+
+async function aiReachable(cand) {
+  const base = String((cand && cand.base) || '').replace(/\/+$/, '');
+  if (!base) return true;
+  const hit = aiReachCache.get(base);
+  if (hit && Date.now() - hit.at < AI_REACH_TTL) return hit.ok;
+  let ok = false;
+  try {
+    const res = await aiFetchJson(base + '/models', { method: 'GET', timeout: 5000, tries: 1 });
+    ok = !!(res && (Array.isArray(res.data) || Array.isArray(res.models)));
+  } catch (e) {
+    ok = false;
+  }
+  aiReachCache.set(base, { ok, at: Date.now() });
+  return ok;
+}
+
+/* 免密钥供应商整家不通时，直接从候选链里摘掉；全都不通就留一个快失败的兜底 */
+async function aiPruneCandidates(list) {
+  if (list.length <= 1) return list;
+  const blocked = new Set();
+  for (const c of list) {
+    // 只探 Kilo：它时通时断，探一次能省掉几十秒等待；其它免密钥通道（Pollinations）有频率限制，多探反而浪费额度
+    if (!c.noKey || c.providerId !== 'kilo' || blocked.has(c.providerId)) continue;
+    const ok = await aiReachable(c);
+    if (!ok) blocked.add(c.providerId);
+  }
+  if (!blocked.size) return list;
+  appendLog('AI_PROVIDER_UNREACHABLE', { providers: Array.from(blocked) });
+  const live = list.filter((c) => !blocked.has(c.providerId));
+  if (live.length) return live;
+  const only = list.slice(0, 1);
+  only[0].fastFail = true;
+  return only;
+}
+
+/* GET 版 JSON 请求：用于拉取 /models 列表 */
+async function postJsonGet(url, timeout = 30000, headers) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeout);
+  try {
+    const res = await net.fetch(url, {
+      method: 'GET',
+      signal: ac.signal,
+      headers: Object.assign({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+        'Accept': 'application/json'
+      }, headers || {})
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error('HTTP ' + res.status + (detail ? ' ' + detail.slice(0, 160) : ''));
+    }
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* 单次请求：针对一个候选模型发一次 Chat Completions */
+async function aiCallOnce(cand, body, o) {
+  const headers = {};
+  // 免密钥供应商绝不带 Authorization：带上别人的 Key 会被网关判 401
+  const key = cand.noKey ? '' : (cand.key || '');
+  if (key) headers.Authorization = 'Bearer ' + key;
+  const base = String(cand.base || '').replace(/\/+$/, '');
+  if (!base) throw new Error('接口地址为空，请先在 AI 设置里填写');
+  const url = base + '/chat/completions';
+  const send = (payload) => aiFetchJson(url, { body: payload, timeout: o.timeout || 90000, headers, tries: o.tries || 1, signal: o.signal });
+
+  const wantThink = o.think === true;
+  const payload = Object.assign({}, body);
+  if (cand.think) {
+    // 想拿思考过程就显式要，不想要就关掉：Nemotron / GPT-OSS 这类会先输出 reasoning，把 max_tokens 吃光
+    payload.reasoning = { enabled: wantThink };
+    delete payload.reasoning_effort;
+  }
+  /* 参数级降级梯子：网关不认哪个字段就摘掉哪个，最后一次只用最朴素的三个字段 */
+  const ladder = [payload];
+  if (cand.think) ladder.push(Object.assign({}, body));
+  if (body.response_format) {
+    const noFmt = Object.assign({}, body);
+    delete noFmt.response_format;
+    ladder.push(noFmt);
+  }
+  if (body.max_tokens) {
+    // 商汤每日新兼容模式用 max_completion_tokens，智谱用 max_tokens，两个都试
+    const alt = Object.assign({}, body);
+    alt.max_completion_tokens = alt.max_tokens;
+    delete alt.max_tokens;
+    ladder.push(alt);
+    const none = Object.assign({}, body);
+    delete none.max_tokens;
+    ladder.push(none);
+  }
+  if (typeof body.temperature === 'number') {
+    const noTemp = Object.assign({}, body);
+    delete noTemp.temperature;
+    ladder.push(noTemp);
+  }
+  let res = null;
+  let usedPayload = null;
+  let lastErr = null;
+  const tried = new Set();
+  for (const attemptBody of ladder) {
+    const sig = JSON.stringify(attemptBody);
+    if (tried.has(sig)) continue;
+    tried.add(sig);
+    try {
+      res = await send(attemptBody);
+      usedPayload = attemptBody;
+      lastErr = null;
+      break;
+    } catch (e) {
+      lastErr = e;
+      if (String(e.message) === '已停止生成') break;
+      const st = Number(e.status) || 0;
+      // 认证/权限/地址/限流/服务端错误：换字段没用，直接交给上层换模型
+      if (st === 401 || st === 403 || st === 404 || st === 429 || st >= 500) break;
+      const soft = st === 400 || /reasoning|unknown|unsupported|invalid|parameter|字段|max_tokens|response_format|temperature|400/i.test(String(e.message));
+      if (!soft) break;
+    }
+  }
+  if (lastErr) throw lastErr;
+  const choices = (res && res.choices) || [];
+  if (!choices.length) {
+    throw new Error((res && res.error && res.error.message) || '模型没有返回内容');
+  }
+  const msg = choices[0].message || {};
+  let content = String(msg.content == null ? '' : msg.content).trim();
+  let reasoning = String(msg.reasoning || msg.reasoning_content || '').trim();
+  if (!content && reasoning && wantThink && cand.think && usedPayload) {
+    // 思考很贵：轻量模型常把 max_tokens 全花在 reasoning 上，正文被截成空串。
+    // 这时对同一个模型关掉思考再要一次正文，两段都留下，用户既看得到思考也拿得到答案。
+    try {
+      const plain = Object.assign({}, usedPayload, { reasoning: { enabled: false } });
+      const res2 = await send(plain);
+      const msg2 = (res2.choices && res2.choices[0] && res2.choices[0].message) || {};
+      const c2 = String(msg2.content == null ? '' : msg2.content).trim();
+      if (c2) {
+        content = c2;
+        res = res2;
+        const r2 = String(msg2.reasoning || msg2.reasoning_content || '').trim();
+        if (r2.length > reasoning.length) reasoning = r2;
+      }
+    } catch (e) {
+      if (String(e.message) === '已停止生成') throw e;
+    }
+  }
+  if (!content) {
+    const err = new Error(reasoning ? '模型只输出了思考过程，正文是空的' : '模型没有返回内容');
+    err.emptyContent = true;
+    err.reasoning = reasoning.slice(0, 6000);
+    throw err;
+  }
+  return {
+    content,
+    usage: res.usage || null,
+    model: res.model || cand.model,
+    reasoning: reasoning.slice(0, 6000),
+    reasoningLen: reasoning.length
+  };
+}
+
+/* 通用对话：messages 为 [{role, content}]；开启自动换模型时沿候选链逐个尝试 */
+async function aiChat(messages, opts) {
+  const o = opts || {};
+  const cands = await aiPruneCandidates(aiCandidates(o));
+  if (!cands.length) {
+    const ready = aiConfigReady(store);
+    throw new Error(ready.ok ? '暂无可用的模型，请检查 AI 设置' : ready.error);
+  }
+  const attempted = [];
+  let lastError = null;
+  for (let i = 0; i < cands.length; i++) {
+    const cand = cands[i];
+    if (o.signal && o.signal.aborted) throw new Error('已停止生成');
+    const body = {
+      model: cand.model,
+      messages,
+      temperature: typeof o.temperature === 'number' ? o.temperature : 0.4,
+      stream: false
+    };
+    if (o.maxTokens) body.max_tokens = o.maxTokens;
+    if (o.json) body.response_format = { type: 'json_object' };
+    try {
+      const oneOpts = cand.fastFail
+        ? Object.assign({}, o, { timeout: Math.min(o.timeout || 90000, 12000) })
+        : Object.assign({}, o, { think: o.think === true });
+      const res = await aiCallOnce(cand, body, oneOpts);
+      aiCooldown.delete(cand.model);
+      /* 记下这次真正跑起来的模型：徽标与配置面板都读它 */
+      store.aiModelUsed = (res.model && String(res.model)) || cand.model;
+      saveStore();
+      return {
+        content: res.content,
+        usage: res.usage,
+        model: res.model,
+        reasoning: res.reasoning || '',
+        providerId: cand.providerId,
+        providerName: cand.providerName,
+        attempted,
+        switched: attempted.length > 0
+      };
+    } catch (e) {
+      lastError = e;
+      if (e.message === '已停止生成') throw e;
+      attempted.push({ model: cand.model, providerName: cand.providerName, error: String(e.message || '').slice(0, 160) });
+      aiCooldown.set(cand.model, Date.now());
+    }
+  }
+  const hint = cands.some((c) => c.fastFail) ? '；免费模型池当前网络不可达，可在 AI 设置里填本机代理，或换用有密钥的供应商' : '';
+  const err = new Error((lastError ? lastError.message : '模型没有返回内容') + hint);
+  err.attempted = attempted;
+  throw err;
+}
+
+function aiSubjectText(storeRef) {
+  const ids = Array.isArray(storeRef.selectedSubjects) && storeRef.selectedSubjects.length
+    ? storeRef.selectedSubjects
+    : DEFAULT_SUBJECTS;
+  return ids.map((id) => SUBJECT_NAMES[id] || id).join('、');
+}
+
+function aiTopicLabel(storeRef, topic) {
+  const t = String(topic || '').trim() || storeRef.aiTopic || '每日热点';
+  return t.slice(0, 40);
+}
+
+/* 联网热点：多源并行（今日头条 + 百度热搜 + 知乎日报 + 人民网），按天缓存；全挂时退回新浪滚动 */
+async function aiHotNews(force) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (!force && store.aiNewsDate === today && store.aiNewsCache && store.aiNewsCache.text) {
+    return store.aiNewsCache;
+  }
+  let error = '';
+  const lines = [];
+  const sources = [];
+  const jobs = [
+    { name: '今日头条', p: aiToutiaoHotItems(10, 9000) },
+    { name: '百度热搜', p: aiBaiduHotItems(8, 9000) },
+    { name: '知乎日报', p: aiZhihuDailyItems(5, 9000) },
+    { name: '人民网', p: aiRssSourceItems(AI_RSS_FEEDS[0], 4, 9000) }
+  ];
+  const settled = await Promise.allSettled(jobs.map((j) => j.p));
+  settled.forEach((res, i) => {
+    const name = jobs[i].name;
+    if (res.status === 'fulfilled' && Array.isArray(res.value) && res.value.length) {
+      sources.push({ name, count: res.value.length });
+      res.value.forEach((it) => {
+        const bits = [it.title];
+        if (it.snippet) bits.push('— ' + it.snippet);
+        if (it.url) bits.push('（' + it.url + '）');
+        lines.push('[' + name + '] ' + bits.join(' '));
+      });
+    } else if (res.status === 'rejected') {
+      const msg = String((res.reason && res.reason.message) || res.reason).slice(0, 120);
+      if (!error) error = msg;
+      appendLog('AI_NEWS_FAIL', { engine: name, error: msg });
+    }
+  });
+  /* 四路都挂了：退回新浪滚动，至少给模型一点当日新闻 */
+  if (!lines.length) {
+    try {
+      const raw = await fetchText(AI_HOT_URL, 10000);
+      let parsed = null;
+      try { parsed = JSON.parse(raw); } catch { parsed = null; }
+      const items = parsed && parsed.result && Array.isArray(parsed.result.data) ? parsed.result.data : [];
+      items.slice(0, 12).forEach((it) => {
+        const title = String((it && (it.title || it.stitle)) || '').trim();
+        const url = String((it && it.url) || '').trim();
+        if (title) lines.push('[新浪] ' + title + (url ? ' （' + url + '）' : ''));
+      });
+      if (lines.length) sources.push({ name: '新浪滚动', count: lines.length });
+    } catch (e) {
+      if (!error) error = e.message;
+    }
+  }
+  const count = lines.length;
+  const text = lines.slice(0, 24).map((one, i) => '(' + (i + 1) + ') ' + one).join('\n');
+  const payload = {
+    date: today,
+    count,
+    sources,
+    text: text || '（暂未获取到今日热点，将由模型生成通用备考素材）',
+    error
+  };
+  store.aiNewsDate = today;
+  store.aiNewsCache = payload;
+  saveStore();
+  return payload;
+}
+
+
+/* ---------------- 联网检索：Bing RSS 主通道 + 百度热搜榜 ---------------- */
+function aiStripTags(s) {
+  return String(s || '')
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function aiRssItems(xml, limit) {
+  const out = [];
+  const blocks = String(xml || '').match(/<item>[\s\S]*?<\/item>/g) || [];
+  blocks.slice(0, limit || 8).forEach((one) => {
+    const pick = (tag) => {
+      const m = one.match(new RegExp('<' + tag + '>([\\s\\S]*?)<\\/' + tag + '>'));
+      return m ? aiStripTags(m[1]) : '';
+    };
+    const title = pick('title');
+    const url = pick('link');
+    if (!title || !url) return;
+    out.push({ title: title.slice(0, 120), url: url.slice(0, 400), date: pick('pubDate').slice(0, 40), snippet: pick('description').slice(0, 160) });
+  });
+  return out;
+}
+
+/* 今日头条热榜：公开 JSON，data[].Title / Url */
+async function aiToutiaoHotItems(limit, timeout) {
+  const raw = await fetchText(AI_TOUTIAO_HOT, timeout || 9000);
+  const j = JSON.parse(raw);
+  const arr = Array.isArray(j.data) ? j.data : [];
+  return arr.slice(0, limit || 10).map((x) => ({
+    title: aiStripTags(x.Title || x.title || '').slice(0, 120),
+    url: String(x.Url || x.url || '').slice(0, 400),
+    date: '实时',
+    snippet: '',
+    src: '今日头条'
+  })).filter((x) => x.title);
+}
+
+/* 知乎日报：公开 JSON，stories[].title / id / hint */
+async function aiZhihuDailyItems(limit, timeout) {
+  const raw = await fetchText(AI_ZHIHU_LATEST, timeout || 9000);
+  const j = JSON.parse(raw);
+  const arr = Array.isArray(j.stories) ? j.stories : [];
+  return arr.slice(0, limit || 6).map((x) => ({
+    title: aiStripTags(x.title || '').slice(0, 120),
+    url: x.url ? (/^https?:/.test(String(x.url)) ? String(x.url) : 'https://daily.zhihu.com/story/' + x.id) : '',
+    date: '今日',
+    snippet: aiStripTags(x.hint || '').slice(0, 120),
+    src: '知乎日报'
+  })).filter((x) => x.title);
+}
+
+/* 通用 RSS：给权威媒体与科技媒体的订阅源 */
+async function aiRssSourceItems(feed, limit, timeout) {
+  if (!feed || !feed.url) return [];
+  const xml = await fetchText(feed.url, timeout || 9000, { Accept: 'application/rss+xml,application/xml,text/xml,*/*' });
+  return aiRssItems(xml, limit || 5).map((it) => Object.assign(it, { src: feed.name }));
+}
+
+/* 多源去重合并：标题去掉空白与标点后取前 16 字作指纹 */
+function aiMergeItems(groups, limit) {
+  const seen = new Set();
+  const out = [];
+  (groups || []).forEach((list) => {
+    (list || []).forEach((it) => {
+      if (!it || !it.title) return;
+      const key = String(it.title).replace(/[\s,.!?，。！？、：；「」（）【】"'“”·\-—|:;]/g, '').slice(0, 16);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      out.push(it);
+    });
+  });
+  return out.slice(0, limit || 12);
+}
+
+/* 问题类型：决定抓哪几路源，避免每次都把七个源全打一遍 */
+function aiQueryKind(q) {
+  const s = String(q || '');
+  if (/科技|人工智能|大模型|芯片|手机|开源|编程|软件|硬件|苹果|华为|小米|特斯拉|发布会|显卡|操作系统|互联网/i.test(s)) return 'tech';
+  if (/时政|政策|会议|外交|国际|军事|领导人|国务院|两会|主席|总统|战争|局势|民生|社会/i.test(s)) return 'politics';
+  if (/新闻|热点|热搜|大事|时事|今天|今日|昨天|最近|近期|发生了什么|有什么事|世界|国内/i.test(s)) return 'news';
+  return 'general';
+}
+
+/* 百度热搜：当下真实在聊的话题，适合回答「今天发生了什么」 */
+async function aiBaiduHotItems(limit, timeout) {
+  const raw = await fetchText(AI_BAIDU_HOT, timeout || 10000);
+  const j = JSON.parse(raw);
+  const card = (((j.data || {}).cards || [])[0] || {});
+  const group = ((card.content || [])[0] || {});
+  return (group.content || []).slice(0, limit || 8).map((x) => ({
+    title: String((x && x.word) || '').slice(0, 120),
+    url: String((x && x.url) || '').slice(0, 400),
+    date: '实时',
+    snippet: aiStripTags((x && x.desc) || '').slice(0, 160),
+    src: '百度热搜'
+  })).filter((x) => x.title);
+}
+
+/* Bing RSS：给具体问题找网页标题与链接 */
+async function aiBingItems(q, limit, timeout) {
+  const xml = await fetchText(AI_SEARCH_RSS + encodeURIComponent(q), timeout || 12000, { Accept: 'application/rss+xml,application/xml,text/xml,*/*' });
+  return aiRssItems(xml, limit || 8).map((it) => Object.assign(it, { src: 'Bing' }));
+}
+
+async function aiSearchWeb(query, opts) {
+  const q = String(query || '').trim().slice(0, 120);
+  const o = opts || {};
+  if (!q) return { ok: false, query: '', source: '', items: [], sources: [], kind: '' };
+  /* 按问题类型分派：新闻走热搜组，科技走 IT 媒体，时政走权威 RSS，具体事实走网页搜索 */
+  const kind = aiQueryKind(q);
+  const limit = o.limit || 8;
+  const timeout = o.timeout || 12000;
+  const jobs = [];
+  const add = (name, fn) => jobs.push({ name, p: Promise.resolve().then(fn) });
+  if (kind === 'news') {
+    add('今日头条', () => aiToutiaoHotItems(limit, timeout));
+    add('百度热搜', () => aiBaiduHotItems(limit, timeout));
+    add('知乎日报', () => aiZhihuDailyItems(6, timeout));
+  } else if (kind === 'tech') {
+    add('IT之家', () => aiRssSourceItems(AI_RSS_FEEDS[3], limit, timeout));
+    add('Solidot', () => aiRssSourceItems(AI_RSS_FEEDS[4], limit, timeout));
+    add('Bing 搜索', () => aiBingItems(q, limit, timeout));
+  } else if (kind === 'politics') {
+    add('人民网', () => aiRssSourceItems(AI_RSS_FEEDS[0], 5, timeout));
+    add('新华网', () => aiRssSourceItems(AI_RSS_FEEDS[1], 5, timeout));
+    add('中新网', () => aiRssSourceItems(AI_RSS_FEEDS[2], 5, timeout));
+  } else {
+    add('Bing 搜索', () => aiBingItems(q, limit, timeout));
+    add('知乎日报', () => aiZhihuDailyItems(5, timeout));
+  }
+  const settled = await Promise.allSettled(jobs.map((j) => j.p));
+  const groups = [];
+  const sources = [];
+  settled.forEach((res, i) => {
+    const name = jobs[i].name;
+    if (res.status === 'fulfilled' && Array.isArray(res.value) && res.value.length) {
+      groups.push(res.value);
+      sources.push({ name, count: res.value.length });
+    } else if (res.status === 'rejected') {
+      appendLog('AI_SEARCH_FAIL', { engine: name, error: String((res.reason && res.reason.message) || res.reason).slice(0, 120) });
+    }
+  });
+  let items = aiMergeItems(groups, Math.max(limit, 10));
+  /* 多源全挂：退回网页搜索兜底一次 */
+  if (!items.length && !jobs.some((j) => j.name === 'Bing 搜索')) {
+    try {
+      const bing = await aiBingItems(q, limit, timeout);
+      if (bing.length) {
+        items = bing;
+        sources.push({ name: 'Bing 搜索', count: bing.length });
+      }
+    } catch (e) {
+      appendLog('AI_SEARCH_FAIL', { engine: 'bing', error: String((e && e.message) || e).slice(0, 120) });
+    }
+  }
+  const source = sources.map((s) => s.name).join(' · ');
+  return { ok: items.length > 0, query: q, kind, source, items, sources, at: aiNowBits().time };
+}
+
+/* 判断这句话是不是在问「现在/最近」的事，需要先联网再回答 */
+function aiNeedsWeb(text) {
+  const s = String(text || '');
+  if (!s) return false;
+  return /今天|今日|昨天|昨晚|刚刚|最近|近期|现在|最新|新闻|热点|热搜|发生了什么|有什么事|行情|股价|价格|发布|上市|开售|赛程|比分|天气|版本|更新|2026|2027|今年|本月|上周|这周|实时|current|latest|today|news/i.test(s);
+}
+
+function aiNowBits() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return {
+    date: now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()),
+    time: pad(now.getHours()) + ':' + pad(now.getMinutes())
+  };
+}
+
+function aiWebBlock(search) {
+  if (!search || !search.ok || !search.items.length) return '';
+  const nowBits = aiNowBits();
+  const lines = search.items.map((it, i) => {
+    const bits = [(it.src ? '[' + it.src + '] ' : '') + (i + 1) + '. ' + it.title];
+    if (it.date) bits.push('（' + it.date + '）');
+    if (it.snippet) bits.push(' — ' + it.snippet);
+    if (it.url) bits.push('\n   ' + it.url);
+    return bits.join('');
+  });
+  return [
+    '【联网检索结果 · ' + (search.source || '公开搜索') + ' · 检索词「' + search.query + '」 · 今天是 ' + nowBits.date + '，抓取于 ' + nowBits.time + '】',
+    lines.join('\n'),
+    '说明：今天是 ' + nowBits.date + '。以上是刚刚抓到的公开结果，可能过时或不完整；引用时写明来源与日期，日期一律用今天这份，拿不准就说拿不准。'
+  ].join('\n');
+}
+
+function parseAudit(text) {
+  let s = String(text || '');
+  const m = s.match(/\{[\s\S]*\}/);
+  if (m) s = m[0];
+  try {
+    const obj = JSON.parse(s);
+    return {
+      ok: obj.ok !== false,
+      issues: Array.isArray(obj.issues) ? obj.issues.map((x) => String(x)).slice(0, 10) : [],
+      note: typeof obj.note === 'string' ? obj.note : ''
+    };
+  } catch {
+    return { ok: true, issues: [], note: '审核结果无法解析，已保留原文并提示人工核对' };
+  }
+}
+
+/* 审核自查：先让模型自检，不通过时带意见重写一次，仍不过则如实标注 */
+async function aiRunAsk(payload) {
+  const provider = aiProviderOf(store);
+  const ac = new AbortController();
+  aiAbortCtl = ac;
+  const signal = ac.signal;
+  const subject = String((payload && payload.subject) || '').trim();
+  const mode = String((payload && payload.mode) || 'knowledge').trim();
+  const topic = aiTopicLabel(store, payload && payload.topic);
+  const query = String((payload && payload.query) || '').trim();
+  const subjectText = subject ? '「' + subject + '」' : '（' + aiSubjectText(store) + '）';
+
+  const wantThink = payload && payload.think !== undefined ? !!payload.think : store.aiThink !== false;
+  const wantWeb = payload && payload.web !== undefined ? !!payload.web : store.aiWeb !== false;
+
+  let newsBlock = '';
+  let source = '模型生成';
+  if (mode === 'news') {
+    const news = await aiHotNews(!!(payload && payload.refresh));
+    newsBlock = news.text;
+    const newsNames = (news.sources || []).map((s) => s.name).join(' + ');
+    source = news.count ? '联网热点（' + (newsNames || '公开热榜') + '）' : '模型生成';
+  }
+
+  /* 问「今天/最近」的事、或用户手动开了联网：先抓公开结果再交给模型 */
+  const askText = query || topic;
+  let search = { ok: false, query: '', source: '', items: [] };
+  if (wantWeb && aiNeedsWeb(askText)) {
+    search = await aiSearchWeb(mode === 'news' ? topic : askText, { limit: 8, timeout: 12000 });
+    if (search.ok) source = search.source + '（联网检索）';
+  }
+  const webBlock = aiWebBlock(search);
+
+  const nowBits = aiNowBits();
+  const system = [
+    '你是「AI 知识助手」，一个通用对话助手，除了辅导高考，也能像 ChatGPT 那样聊任何话题。',
+    '',
+    '【当前时间】今天是 ' + nowBits.date + '，现在 ' + nowBits.time + '（北京时间）。凡涉及「今天/今年/最近」的时间基准都用这一天，不要写成往年日期。',
+    '【能力范围】学科知识、时事新闻、生活常识、技术、写作、闲聊都可以直接回答，不需要把每个问题都扯回学习。',
+    '【联网信息】如果下面给了【联网检索结果】，就基于它回答「今天/最近」的问题，并写明来源与日期；如果没给，或结果与问题无关，就如实说你这边没有实时信息，再给出已知背景，绝不编造具体日期、数字、人名、比分或价格。',
+    '【诚实】不确定就直说不确定；不要为了显得完整而虚构细节，也不要声明自己是「只做高考的助手」而拒绝回答。',
+    '',
+    '【排版要求】用 Markdown 让重点一眼可见：',
+    '1. 每个要点用 **加粗** 标出关键词或结论，不要把整句都加粗。',
+    '2. 分点用有序列表（1. 2. 3.）或无序列表（- ），每条一行。',
+    '3. 需要分组时用三级标题 ### 小标题。',
+    '4. 对比、并列关系用 Markdown 表格。',
+    '5. 关键术语、公式、代码用 `反引号` 包裹。',
+    '6. 不要输出 HTML 标签，不要堆砌「【】」「■■」这类装饰符号。',
+    '',
+    '【文风】简体中文，先给结论再展开，简洁直接；闲聊就正常聊天，不写「综上所述」「希望对你有帮助」这类套话。',
+    '【语言】除模型名、代码、专有名词外一律用简体中文，不要在中文段落里夹整句英文；检索到的英文内容要译成中文再说。'
+  ].join('\n');
+
+  let user = '';
+  if (mode === 'news') {
+    user = [
+      '任务：结合' + subjectText + '学科，整理「' + topic + '」内容。',
+      '请输出：',
+      '1. 热点要点：不超过 5 条，每条不超过 40 字。',
+      '2. 学科链接：说明每条与该学科考点或作文角度的关联。',
+      '3. 素材建议：给出 1-2 个可化用的表达方向。',
+      '不要编造热点，只基于下面提供的材料；材料为空时请说明并改为通用备考建议。',
+      '---',
+      '【今日热点材料】',
+      newsBlock
+    ].join('\n');
+  } else if (mode === 'custom') {
+    user = [
+      '问题：' + (query || topic),
+      webBlock ? '' : '（这次没有联网检索结果，涉及实时信息时请说明这一点。）',
+      webBlock
+    ].filter(Boolean).join('\n\n');
+  } else {
+    user = [
+      '任务：讲解' + subjectText + '学科的' + (query ? '「' + query + '」' : topic) + '相关知识点。',
+      '请输出：',
+      '1. 核心结论：不超过 80 字，直接给出准确定义或结论。',
+      '2. 要点拆解：3-5 条，每条不超过 50 字。',
+      '3. 易错提醒：1-2 条，指出常见误解或易错点。',
+      '知识必须准确、无争议；若存在教材版本差异，请注明「不同教材表述略有差异」。不要编造数据、人名或引语。',
+      webBlock
+    ].filter(Boolean).join('\n');
+  }
+  if (mode === 'news' && webBlock) user += '\n\n' + webBlock;
+
+  /* 带上最近几轮问答作为上下文，让追问能接着聊 */
+  const historyMsgs = [];
+  const hist = Array.isArray(payload && payload.history) ? payload.history : [];
+  hist.slice(-6).forEach((m) => {
+    if (!m || !m.content) return;
+    const role = m.role === 'assistant' ? 'assistant' : 'user';
+    historyMsgs.push({ role: role, content: String(m.content).slice(0, 2000) });
+  });
+
+  const gen = await aiChat([
+    { role: 'system', content: system },
+    ...historyMsgs,
+    { role: 'user', content: user }
+  ], { maxTokens: wantThink ? 2400 : 1600, timeout: 120000, tries: 2, signal, think: wantThink });
+
+  let content = gen.content;
+  let audit = { ok: true, issues: [], note: '' };
+  try {
+    const auditRes = await aiChat([
+      { role: 'system', content: '你是严格的内容审核员，检查面向高考学生的知识内容。只输出 JSON：{"ok":true,"issues":[],"note":""}。'
+        + '没有明显问题时 ok 为 true、issues 为空、note 写「未发现明显错误」；'
+        + '存在事实错误、夸大、无法验证的具体数据或引语时 ok 为 false，issues 列出问题要点（每条不超过 40 字）。' },
+      { role: 'user', content: '请检查下面这段内容：\n' + content }
+    ], { json: true, temperature: 0.1, maxTokens: 500, timeout: 90000, tries: 1, signal });
+    audit = parseAudit(auditRes.content);
+  } catch (e) {
+    audit = { ok: true, issues: [], note: '审核未完成：' + e.message };
+  }
+
+  if (!audit.ok && audit.issues && audit.issues.length) {
+    try {
+      const fix = await aiChat([
+        { role: 'system', content: system },
+        { role: 'user', content: user + '\n\n【审核意见，请据此修正后再输出】\n' + audit.issues.map((s, i) => '(' + (i + 1) + ') ' + s).join('\n') }
+      ], { maxTokens: 1200, timeout: 120000, tries: 1, signal });
+      if (fix.content && fix.content.trim()) {
+        content = fix.content;
+        audit = { ok: true, issues: [], note: '已按审核意见修正' };
+      }
+    } catch (e) {
+      audit.note += '；修正未完成：' + e.message;
+    }
+  }
+
+  return {
+    ok: true,
+    subject,
+    topic,
+    mode,
+    query,
+    source,
+    content,
+    model: gen.model,
+    modelName: aiModelMeta(gen.providerId || provider.id, gen.model).name,
+    provider: gen.providerId || provider.id,
+    providerName: gen.providerName || provider.name,
+    switched: !!gen.switched,
+    attempted: Array.isArray(gen.attempted) ? gen.attempted : [],
+    usage: gen.usage,
+    audit,
+    reasoning: String(gen.reasoning || '').slice(0, 6000),
+    think: wantThink,
+    search: { ok: !!search.ok, query: search.query || '', source: search.source || '', items: Array.isArray(search.items) ? search.items.slice(0, 8) : [] }
+  };
+}
+
+async function aiTestConnection() {
+  const provider = aiProviderOf(store);
+  const ready = aiConfigReady(store);
+  if (!ready.ok) return { ok: false, error: ready.error };
+  const keyless = !!provider.noKey || (provider.id === 'custom' && aiIsLocalBase(ready.base || ''));
+  if (!keyless && !aiKeyOf(provider.id)) {
+    return { ok: false, error: '还没有 API Key，请先添加；也可以切换到无需密钥的 Kilo / Pollinations 免费池' };
+  }
+  const started = Date.now();
+  const res = await aiChat([{ role: 'user', content: '请只回复两个字：正常' }], { maxTokens: 32, timeout: 60000, tries: 2 });
+  return {
+    ok: true,
+    latencyMs: Date.now() - started,
+    model: res.model,
+    modelName: aiModelMeta(res.providerId || provider.id, res.model).name,
+    provider: res.providerId || provider.id,
+    providerName: res.providerName || provider.name,
+    switched: !!res.switched,
+    content: res.content
+  };
+}
+
+/* 拉取模型列表：Kilo 免费池免密钥，其余供应商需要 Key */
+async function aiListModels() {
+  const provider = aiProviderOf(store);
+  const ready = aiConfigReady(store);
+  if (!ready.ok) return { ok: false, error: ready.error };
+  const base = (ready.base || provider.baseUrl || '').replace(/\/+$/, '');
+  if (!base) return { ok: false, error: '还没有填写接口地址' };
+  const key = aiKeyOf(provider.id);
+  const keyless = !!provider.noKey || aiIsLocalBase(base);
+  if (!keyless && !key) return { ok: false, error: '还没有 API Key' };
+  const headers = key ? { Authorization: 'Bearer ' + key } : {};
+  /* Pollinations 只暴露根路径 /models，直接用它内置的免费清单，省一次必失败的请求 */
+  if (provider.id === 'pollinations' && Array.isArray(provider.models) && provider.models.length) {
+    return { ok: true, models: provider.models.map((m) => ({ id: m.id, name: m.name, free: true, ctx: m.ctx || 0 })), keyless };
+  }
+  const res = await aiFetchJson(base + '/models', { method: 'GET', timeout: 30000, headers, tries: 1 });
+  const list = Array.isArray(res && res.data) ? res.data : (Array.isArray(res) ? res : []);
+  let models = list
+    .map((m) => {
+      const id = String((m && (m.id || m.name)) || '').trim();
+      if (!id) return null;
+      return {
+        id,
+        name: String((m && (m.display_name || m.name)) || id),
+        free: m && (m.isFree === true || m.free === true || /:free$/.test(id) || id === 'kilo-auto/free')
+      };
+    })
+    .filter(Boolean);
+  if (provider.id === 'kilo') {
+    const freeIds = new Set(KILO_MODELS.map((m) => m.id));
+    models = models.filter((m) => m.free || freeIds.has(m.id));
+    // 网关没标免费时，也用本地清单兜底
+    KILO_MODELS.forEach((m) => {
+      if (!models.some((x) => x.id === m.id)) models.push({ id: m.id, name: m.name, free: true, ctx: m.ctx });
+    });
+  }
+  const seen = new Set();
+  models = models.filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true)));
+  if (!models.length) return { ok: false, error: '服务没有返回模型列表' };
+  return { ok: true, models, keyless };
+}
+
+/* 方案 C 的辅助：用户复制 Key 后自动回填。只做剪贴板轮询，不替代浏览器操作 */
+function startAiClipboardWatch() {
+  stopAiClipboardWatch();
+  aiClipboardLast = '';
+  aiClipboardTimer = setInterval(() => {
+    try {
+      const text = clipboard.readText();
+      if (!text) return;
+      const value = text.trim();
+      if (!value || value === aiClipboardLast) return;
+      // 智谱 Key 形如 32位.id 或纯字母数字，这里放宽到 20 位以上、且不含明显非 Key 字符
+      if (value.length < 20 || value.length > 200) return;
+      if (!/^[A-Za-z0-9_.:\-]+$/.test(value)) return;
+      aiClipboardLast = value;
+      aiKey = value;
+      store.aiKeyEnc = aiEncryptKey(value);
+      saveStore();
+      stopAiClipboardWatch();
+      appendLog('AI_KEY_FILLED', { length: value.length });
+    } catch { /* 读取剪贴板异常时忽略，下轮再试 */ }
+  }, 1500);
+}
+
+function stopAiClipboardWatch() {
+  if (aiClipboardTimer) {
+    clearInterval(aiClipboardTimer);
+    aiClipboardTimer = null;
+  }
+}
+
 function wireIpc() {
   ipcMain.handle('app:get-init', () => {
     const bdir = backupDirInfo();
@@ -2117,7 +3552,34 @@ function wireIpc() {
       backupPath: bdir.dir,
       backupCustom: bdir.custom,
       backupFallback: bdir.fallback,
-      backupDefaultPath: bdir.defaultDir
+      backupDefaultPath: bdir.defaultDir,
+      aiEnabled: store.aiEnabled !== false,
+      aiProvider: store.aiProvider,
+      aiProviderName: aiProviderOf(store).name,
+      aiBaseUrl: store.aiBaseUrl,
+      aiModel: store.aiModel,
+      aiModelUsed: store.aiModelUsed || '',
+      aiTopic: store.aiTopic,
+      aiHasKey: aiHasKey(aiProviderOf(store).id),
+      aiNoKey: !!aiProviderOf(store).noKey,
+      aiAutoModel: store.aiAutoModel !== false,
+      aiThink: store.aiThink !== false,
+      aiWeb: store.aiWeb !== false,
+      aiProxy: store.aiProxy || '',
+      aiCustomModels: normalizeModelNames(store.aiCustomModels),
+      aiLoginUrl: aiLoginUrlOf(aiProviderOf(store)),
+      aiKeyUrl: aiProviderOf(store).keyUrl || '',
+      aiAuthUrl: aiAuthUrlOf(aiProviderOf(store)),
+      aiReady: aiConfigReady(store).ok,
+      aiReadyError: aiConfigReady(store).ok ? '' : aiConfigReady(store).error,
+      aiProviders: AI_PROVIDERS.map((p) => ({
+        id: p.id, name: p.name, baseUrl: p.baseUrl, model: p.model,
+        hint: p.hint || '', presets: Array.isArray(p.presets) ? p.presets : [],
+        noKey: !!p.noKey, hasAuth: !!p.authUrl, keyUrl: p.keyUrl || '',
+        models: (Array.isArray(p.models) ? p.models : []).map((m) => ({
+          id: m.id, name: m.name || m.id, ctx: m.ctx || 0, free: true
+        }))
+      }))
     },
     isFirstToday: firstTodayLaunch,
     today: dateKey(),
@@ -2801,6 +4263,256 @@ function wireIpc() {
     return { ok: true };
   });
   ipcMain.on('knowledge:close', () => goHomeView());
+
+  /* ---------------- AI 大模型 IPC ---------------- */
+  ipcMain.handle('ai:config', () => {
+    const provider = aiProviderOf(store);
+    const ready = aiConfigReady(store);
+    const hasKey = aiHasKey(provider.id);
+    const base = store.aiBaseUrl || provider.baseUrl || '';
+    return {
+      ok: true,
+      enabled: store.aiEnabled !== false,
+      provider: provider.id,
+      providerName: provider.name,
+      baseUrl: base,
+      model: store.aiModel || provider.model,
+      modelUsed: store.aiModelUsed || '',
+      topic: store.aiTopic,
+      hasKey,
+      noKey: !!provider.noKey || aiIsLocalBase(base),
+      autoModel: store.aiAutoModel !== false,
+      think: store.aiThink !== false,
+      web: store.aiWeb !== false,
+      proxy: store.aiProxy || '',
+      customModels: normalizeModelNames(store.aiCustomModels),
+      models: (Array.isArray(provider.models) ? provider.models : []).map((m) => ({
+        id: m.id, name: m.name || m.id, ctx: m.ctx || 0, free: true
+      })),
+      loginUrl: aiLoginUrlOf(provider),
+      keyUrl: provider.keyUrl || '',
+      authUrl: aiAuthUrlOf(provider),
+      ready: ready.ok,
+      readyError: ready.ok ? '' : ready.error,
+      providers: AI_PROVIDERS.map((p) => ({
+        id: p.id, name: p.name, baseUrl: p.baseUrl, model: p.model,
+        hint: p.hint || '', presets: Array.isArray(p.presets) ? p.presets : [],
+        noKey: !!p.noKey, hasAuth: !!p.authUrl, keyUrl: p.keyUrl || '',
+        models: (Array.isArray(p.models) ? p.models : []).map((m) => ({
+          id: m.id, name: m.name || m.id, ctx: m.ctx || 0, free: true
+        }))
+      }))
+    };
+  });
+
+  /* 保存非密钥配置；密钥单独走 ai:save-key，避免明文进 IPC 日志 */
+  ipcMain.handle('ai:save-config', (_e, payload) => {
+    const p = payload && typeof payload === 'object' ? payload : {};
+    const prevProvider = store.aiProvider;
+    const warnings = [];
+    if (typeof p.enabled === 'boolean') store.aiEnabled = p.enabled;
+    if (typeof p.autoModel === 'boolean') store.aiAutoModel = p.autoModel;
+    if (typeof p.think === 'boolean') store.aiThink = p.think;
+    if (typeof p.web === 'boolean') store.aiWeb = p.web;
+    if (typeof p.provider === 'string' && AI_PROVIDERS.some((x) => x.id === p.provider)) {
+      if (p.provider !== prevProvider) {
+        // 切换前把旧供应商的地址与模型存进它自己的格子，切回来能原样还原
+        aiRememberPref(prevProvider, store.aiBaseUrl, store.aiModel);
+        store.aiProvider = p.provider;
+        const target = AI_PROVIDERS.find((x) => x.id === p.provider) || AI_PROVIDERS[0];
+        const saved = aiPrefsBucket()[p.provider] || {};
+        // 用户没显式给地址/模型时：优先用该供应商上次的值，其次用内置默认值
+        if (typeof p.baseUrl !== 'string') store.aiBaseUrl = saved.baseUrl || target.baseUrl || '';
+        if (typeof p.model !== 'string') store.aiModel = saved.model || target.model || '';
+        delete store.aiModelUsed;
+      } else {
+        store.aiProvider = p.provider;
+      }
+    }
+    if (typeof p.baseUrl === 'string') {
+      const rawBase = p.baseUrl.trim();
+      if (!rawBase) {
+        // 空串视为「不改」，避免一次误清空让用户以为配置没保存
+        if (!store.aiBaseUrl) warnings.push('接口地址为空，请填写完整地址');
+      } else {
+        const normalized = normalizeAiBase(rawBase);
+        if (!normalized) {
+          // 非法地址不再静默清空：原值保留并把原因回给界面
+          return {
+            ok: false,
+            error: '接口地址要以 http:// 或 https:// 开头，例如 https://api.example.com/v1/',
+            baseUrl: store.aiBaseUrl || ''
+          };
+        }
+        store.aiBaseUrl = normalized;
+      }
+    }
+    if (typeof p.model === 'string') {
+      const model = p.model.trim().slice(0, 80);
+      if (model) store.aiModel = model;
+    }
+    if (typeof p.proxy === 'string') {
+      const rawProxy = p.proxy.trim();
+      if (!rawProxy) store.aiProxy = '';
+      else {
+        const normProxy = normalizeAiProxy(rawProxy);
+        if (!normProxy) {
+          return { ok: false, error: '代理地址要写成 127.0.0.1:1081 或 http://127.0.0.1:1081 这种形式', proxy: store.aiProxy || '' };
+        }
+        if (normProxy !== store.aiProxy) aiProxyApplied = null;
+        store.aiProxy = normProxy;
+      }
+    }
+    if (typeof p.topic === 'string' && p.topic.trim()) store.aiTopic = p.topic.trim().slice(0, 40);
+    // 自定义模型清单：rememberModel 追加，forgetModel 删除
+    if (typeof p.rememberModel === 'string' && p.rememberModel.trim()) {
+      store.aiCustomModels = normalizeModelNames([p.rememberModel.trim()].concat(store.aiCustomModels || []));
+    }
+    if (typeof p.forgetModel === 'string' && p.forgetModel.trim()) {
+      const drop = p.forgetModel.trim();
+      store.aiCustomModels = normalizeModelNames((store.aiCustomModels || []).filter((m) => m !== drop));
+      if (store.aiModel === drop) store.aiModel = '';
+    }
+    // 当前供应商的地址与模型也写进它自己的格子，下次切换不会丢
+    aiRememberPref(store.aiProvider, store.aiBaseUrl, store.aiModel);
+    saveStore();
+    appendLog('AI_CONFIG_SAVE', { enabled: store.aiEnabled, provider: store.aiProvider, model: store.aiModel, autoModel: store.aiAutoModel });
+    return {
+      ok: true,
+      enabled: store.aiEnabled,
+      model: store.aiModel,
+      provider: store.aiProvider,
+      baseUrl: store.aiBaseUrl,
+      topic: store.aiTopic,
+      autoModel: store.aiAutoModel !== false,
+      think: store.aiThink !== false,
+      web: store.aiWeb !== false,
+      proxy: store.aiProxy || '',
+      customModels: normalizeModelNames(store.aiCustomModels),
+      warnings
+    };
+  });
+
+  /* 打开登录页（带 redirect 回跳 Key 管理页），并开始剪贴板轮询等待复制 */
+  ipcMain.handle('ai:open-auth', async () => {
+    const provider = aiProviderOf(store);
+    const url = aiLoginUrlOf(provider) || provider.keyUrl;
+    if (!url) {
+      return { ok: false, error: '当前供应商没有内置登录页，请直接在对话框里粘贴 API Key' };
+    }
+    try {
+      await shell.openExternal(url);
+      startAiClipboardWatch();
+      appendLog('AI_AUTH_OPEN', { url, provider: provider.id });
+      return { ok: true, url, keyUrl: provider.keyUrl, redirect: AI_AUTH_REDIRECT };
+    } catch (e) {
+      return { ok: false, error: e.message, url, keyUrl: provider.keyUrl };
+    }
+  });
+
+  /* 拉取可用模型列表：走 OpenAI 兼容的 GET /models */
+  ipcMain.handle('ai:list-models', async () => {
+    const provider = aiProviderOf(store);
+    try {
+      const out = await aiListModels();
+      if (!out.ok) return out;
+      appendLog('AI_MODELS_OK', { provider: provider.id, count: out.models.length, keyless: !!out.keyless });
+      return out;
+    } catch (e) {
+      appendLog('AI_MODELS_FAIL', { provider: provider.id, message: e.message });
+      return { ok: false, error: friendlyNetError(e) };
+    }
+  });
+
+  ipcMain.handle('ai:stop-clipboard', () => {
+    stopAiClipboardWatch();
+    return { ok: true };
+  });
+
+  /* 用户手动粘贴 Key 时保存：只存加密串 */
+  ipcMain.handle('ai:save-key', (_e, key, providerId) => {
+    const provider = aiProviderOf(store);
+    const pid = typeof providerId === 'string' && AI_PROVIDERS.some((p) => p.id === providerId) ? providerId : provider.id;
+    const value = String(key || '').replace(/\s+/g, '');
+    if (!value) {
+      // 免密钥供应商允许留空，其它供应商留空等于清空
+      aiForgetKey(pid);
+      saveStore();
+      appendLog('AI_KEY_EMPTY', { provider: pid });
+      return { ok: true, hasKey: false };
+    }
+    if (value.length < 8) {
+      return { ok: false, error: 'API Key 太短，请确认复制完整' };
+    }
+    if (/[^A-Za-z0-9_.:\-]/.test(value)) {
+      return { ok: false, error: 'API Key 里有异常字符，请重新复制' };
+    }
+    aiRememberKey(pid, value);
+    if (pid === store.aiProvider) aiKey = value;
+    saveStore();
+    stopAiClipboardWatch();
+    appendLog('AI_KEY_SAVE', { provider: pid, length: value.length });
+    return { ok: true, hasKey: true };
+  });
+
+  ipcMain.handle('ai:clear-key', (_e, providerId) => {
+    const provider = aiProviderOf(store);
+    const pid = typeof providerId === 'string' && AI_PROVIDERS.some((p) => p.id === providerId) ? providerId : provider.id;
+    aiForgetKey(pid);
+    if (pid === store.aiProvider) aiKey = '';
+    stopAiClipboardWatch();
+    saveStore();
+    appendLog('AI_KEY_CLEAR', { provider: pid });
+    return { ok: true, hasKey: false };
+  });
+
+  /* 连通性测试：真实发一次最小请求 */
+  ipcMain.handle('ai:test', async () => {
+    try {
+      const out = await aiTestConnection();
+      appendLog('AI_TEST', { ok: !!out.ok, model: out.model, provider: out.provider, error: out.error || '' });
+      return out;
+    } catch (e) {
+      appendLog('AI_TEST_FAIL', { message: e.message });
+      return { ok: false, error: e.message };
+    }
+  });
+
+  /* 只取今日联网热点，不调用模型 */
+  ipcMain.handle('ai:hot', async (_e, refresh) => {
+    try {
+      return { ok: true, ...(await aiHotNews(!!refresh)) };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  /* AI 对话框主入口：知识点 / 每日热点 / 自定义提问，均带审核自查 */
+  ipcMain.handle('ai:ask', async (_e, payload) => {
+    try {
+      if (!store.aiEnabled) {
+        return { ok: false, error: 'AI 功能还没开启，请先在设置里打开' };
+      }
+      return await aiRunAsk(payload || {});
+    } catch (e) {
+      const cancelled = /已停止生成/.test(e.message || '');
+      if (!cancelled) appendLog('AI_ASK_FAIL', { message: e.message });
+      return { ok: false, error: e.message, cancelled, attempted: e.attempted || [] };
+    } finally {
+      aiAbortCtl = null;
+    }
+  });
+
+  /* 停止生成：中断当前请求 */
+  ipcMain.handle('ai:cancel', () => {
+    if (aiAbortCtl) {
+      try { aiAbortCtl.abort(); } catch { /* 忽略重复中断 */ }
+      aiAbortCtl = null;
+      appendLog('AI_CANCEL', {});
+      return { ok: true };
+    }
+    return { ok: true, idle: true };
+  });
 
   ipcMain.on('window:hide', () => {
     if (win && !win.isDestroyed()) win.hide();

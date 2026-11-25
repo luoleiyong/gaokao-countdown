@@ -43,6 +43,7 @@
             剩余 <b id="kPoolCount">0</b> 条 · 已抽 <b id="kDrawCount">0</b> 次
           </div>
           <div class="k-actions">
+            <button class="btn-ghost k-ai-btn" id="kAi" title="用 AI 检索知识点或整理每日热点">AI 检索</button>
             <button class="btn-primary" id="kDraw10">十 连 抽</button>
             <button class="btn-primary" id="kDraw">摇 一 签</button>
           </div>
@@ -95,6 +96,91 @@
   </div>
 </div>
 
+<!-- ======================= AI 对话框 ======================= -->
+<div class="modal" id="aiModal" hidden>
+  <div class="modal__backdrop" data-ai-close></div>
+  <div class="modal__box ai-box" role="dialog" aria-modal="true" aria-labelledby="aiBoxTitle">
+    <header class="ai-box__head">
+      <div class="ai-box__head-main">
+        <button class="ai-sessions__toggle" id="btnAiSessions" type="button" aria-expanded="false" aria-controls="aiSessions" title="展开对话列表">对话</button>
+        <h3 class="ai-box__title" id="aiBoxTitle">AI 助手</h3>
+      </div>
+      <button class="win-btn" id="btnAiClose" type="button" title="关闭（Esc）" aria-label="关闭">×</button>
+    </header>
+
+    <div class="ai-box__main">
+      <aside class="ai-sessions" id="aiSessions" aria-label="对话列表">
+        <div class="ai-sessions__head">
+          <span class="ai-sessions__title">对话</span>
+          <button class="ai-sessions__new" id="btnAiNewChat" type="button" title="新建对话">＋ 新建对话</button>
+        </div>
+        <div class="ai-sessions__list" id="aiSessionList" role="list"></div>
+      </aside>
+
+      <div class="ai-box__col">
+        <div class="ai-toolbar">
+          <div class="ai-modes" role="tablist" aria-label="提问模式">
+            <button class="ai-mode is-on" type="button" data-mode="knowledge" role="tab" aria-selected="true">知识点讲解</button>
+            <button class="ai-mode" type="button" data-mode="news" role="tab" aria-selected="false">每日热点</button>
+            <button class="ai-mode" type="button" data-mode="custom" role="tab" aria-selected="false">自定义提问</button>
+          </div>
+          <div class="ai-toggles" role="group" aria-label="生成选项">
+            <button class="ai-toggle" id="btnAiThink" type="button" aria-pressed="false" title="让模型先输出思考过程">思考</button>
+            <button class="ai-toggle" id="btnAiWeb" type="button" aria-pressed="false" title="让模型联网检索资料">联网</button>
+          </div>
+          <div class="ai-model-wrap">
+            <button class="ai-model" id="btnAiModel" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="aiModels" title="切换模型">
+              <span class="ai-model__label">模型</span>
+              <span class="ai-model__name" id="aiModelName">读取中…</span>
+              <span class="ai-model__tag" id="aiModelTag" hidden>已切换</span>
+            </button>
+            <div class="ai-models" id="aiModels" role="listbox" aria-label="选择模型" hidden></div>
+          </div>
+        </div>
+
+        <div class="ai-box__body">
+          <div class="ai-scroll" id="aiChatScroll">
+            <div class="ai-chat" id="aiChat"></div>
+          </div>
+          <button class="ai-jump" id="aiJump" type="button" hidden>回到最新</button>
+        </div>
+
+        <div class="ai-compose" id="aiCompose">
+          <div class="ai-scope" id="aiScopeRow">
+            <label class="ai-field">
+              <span class="ai-field__label">学科</span>
+              <select class="ai-field__input" id="aiSubject"></select>
+            </label>
+            <label class="ai-field ai-field--wide">
+              <span class="ai-field__label">主题</span>
+              <input class="ai-field__input" id="aiTopic" type="text" placeholder="如：每日热点 / 函数与导数" />
+            </label>
+          </div>
+          <div class="ai-presets" id="aiPresets">
+            <button class="ai-preset" type="button" data-topic="每日热点">每日热点</button>
+            <button class="ai-preset" type="button" data-topic="人民日报素材">人民日报素材</button>
+            <button class="ai-preset" type="button" data-topic="作文金句">作文金句</button>
+            <button class="ai-preset" type="button" data-topic="时政评论">时政评论</button>
+          </div>
+          <div class="ai-input">
+            <textarea class="ai-input__area" id="aiQuery" rows="1" placeholder="输入要讲解的知识点，例如：牛顿第二定律的适用范围"></textarea>
+            <div class="ai-input__bar">
+              <span class="ai-input__hint">Enter 发送，Shift + Enter 换行</span>
+              <button class="ai-box__send" id="btnAiSend" type="button" disabled>发送</button>
+            </div>
+          </div>
+          <div class="ai-notice" id="aiNotice" hidden></div>
+        </div>
+
+        <footer class="ai-box__foot">
+          <button class="ai-box__clear" id="btnAiClearChat" type="button">清空对话</button>
+          <span class="ai-foot__hint">对话只保存在本机，关掉窗口也会保留。</span>
+        </footer>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="knowledge-1.js"></script>
 <script src="knowledge-2.js"></script>
 <script src="knowledge-3.js"></script>
@@ -107,6 +193,7 @@
 <script src="knowledge-10.js"></script>
 <script src="knowledge-extra.js"></script>
 <script src="sound.js"></script>
+<script src="ai-store.js"></script>
 <script src="knowledge.js"></script>
 </body>
 </html>

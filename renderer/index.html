@@ -756,10 +756,20 @@
           <h2 class="ai-drawer__title" id="aiAssistTitle">AI 助手</h2>
         </div>
         <div class="ai-drawer__tools">
-          <button class="ai-model-badge" id="btnAiAssistModel" type="button" title="点击配置模型与 API Key">
-            <b id="aiAssistModelName">未配置模型</b>
-            <i id="aiAssistModelSwitch" hidden>已切换</i>
-          </button>
+          <div class="ai-model-wrap">
+            <button class="ai-model-badge" id="btnAiAssistModel" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="aiAssistModels" title="选择模型">
+              <b id="aiAssistModelName">未配置模型</b>
+              <i id="aiAssistModelSwitch" hidden>已切换</i>
+              <em class="ai-model-badge__caret" aria-hidden="true"></em>
+            </button>
+            <div class="ai-models" id="aiAssistModels" hidden role="listbox" aria-label="选择模型">
+              <label class="ai-models__search">
+                <input id="aiAssistModelSearch" type="search" placeholder="搜索模型…" autocomplete="off" spellcheck="false">
+              </label>
+              <div class="ai-models__list" id="aiAssistModelList"></div>
+              <button class="ai-models__cfg" id="btnAiAssistModelCfg" type="button">模型与密钥配置…</button>
+            </div>
+          </div>
           <button class="win-btn" id="btnAiAssistNew" type="button" title="新建对话" aria-label="新建对话">＋</button>
           <button class="win-btn" id="btnAiAssistList" type="button" title="会话列表" aria-label="会话列表" aria-expanded="false" aria-controls="aiAssistSessions">☰</button>
           <button class="win-btn" id="btnAiAssistClose" type="button" title="关闭" aria-label="关闭 AI 助手">×</button>

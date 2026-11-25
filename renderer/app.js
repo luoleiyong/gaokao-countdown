@@ -3444,7 +3444,8 @@ const aiAssist = {
   editing: -1,
   mute: false,
   switched: false,
-  actualModel: ''
+  actualModel: '',
+  modelOpen: false
 };
 
 function aiAssistApi() { return window.AIStore || null; }
@@ -3907,7 +3908,8 @@ function renderAiAssist() {
 function aiAssistModelLabel() {
   const meta = aiProviderMeta(state.aiProvider) || {};
   const cfg = state.aiModel || meta.model || '';
-  const id = aiAssist.actualModel || state.aiModelUsed || cfg;
+  /* 徽标显示「已选中的模型」，自动降级时用右侧小标提示，避免点开菜单后对不上 */
+  const id = cfg || aiAssist.actualModel || state.aiModelUsed;
   return aiModelShort(id) || '未配置模型';
 }
 function renderAiAssistModel() {
@@ -3918,9 +3920,145 @@ function renderAiAssistModel() {
   if (flag) flag.hidden = !switched;
   const btn = $('btnAiAssistModel');
   if (btn) {
-    const model = aiAssist.actualModel || state.aiModelUsed || state.aiModel || '';
-    btn.title = (state.aiProviderName || '模型') + (model ? ' · ' + model : '') + '（点击配置）';
+    const cfgModel = state.aiModel || '';
+    const usedModel = aiAssist.actualModel || state.aiModelUsed || '';
+    const model = cfgModel || usedModel;
+    let title = (state.aiProviderName || '模型') + (model ? ' · ' + model : '');
+    if (usedModel && cfgModel && usedModel !== cfgModel) title += '（本次实际用 ' + usedModel + '）';
+    btn.title = title + '（点击切换模型）';
   }
+  if (aiAssist.modelOpen) renderAiAssistModelMenu();
+}
+
+/* ---- 抽屉：模型选择器（按供应商分组 + 搜索 + 当前项打勾） ---- */
+function aiAssistModelGroups() {
+  const groups = [];
+  const provs = (state.aiProviders && state.aiProviders.length)
+    ? state.aiProviders
+    : [AI_FALLBACK_PROVIDER];
+  provs.forEach((p) => {
+    if (!p || !p.id) return;
+    const items = [];
+    const seen = {};
+    const push = (id, name, ctx) => {
+      const key = String(id || '').trim();
+      if (!key || seen[key]) return;
+      seen[key] = true;
+      items.push({ id: key, name: String(name || '') || aiModelShort(key), ctx: Number(ctx) || 0 });
+    };
+    (Array.isArray(p.models) ? p.models : []).forEach((m) => push(m && m.id ? m.id : m, m && m.name, m && m.ctx));
+    (Array.isArray(p.presets) ? p.presets : []).forEach((id) => push(id, '', 0));
+    if (p.model) push(p.model, '', 0);
+    if (p.id === 'custom') (state.aiCustomModels || []).forEach((id) => push(id, '', 0));
+    if (p.id === state.aiProvider && state.aiModel) push(state.aiModel, '', 0);
+    if (items.length) groups.push({ provider: p.id, name: p.name || p.id, noKey: !!p.noKey, items });
+  });
+  return groups;
+}
+
+function renderAiAssistModelMenu() {
+  const box = $('aiAssistModelList');
+  if (!box) return;
+  const search = $('aiAssistModelSearch');
+  const kw = String((search && search.value) || '').trim().toLowerCase();
+  box.innerHTML = '';
+  let total = 0;
+  aiAssistModelGroups().forEach((g) => {
+    const items = g.items.filter((m) => {
+      if (!kw) return true;
+      return m.id.toLowerCase().includes(kw) || String(m.name || '').toLowerCase().includes(kw);
+    });
+    if (!items.length) return;
+    const head = document.createElement('div');
+    head.className = 'ai-models__group';
+    head.textContent = g.name;
+    box.appendChild(head);
+    items.forEach((m) => {
+      total += 1;
+      const on = g.provider === state.aiProvider && m.id === String(state.aiModel || '');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ai-models__item' + (on ? ' is-on' : '');
+      btn.setAttribute('role', 'option');
+      btn.setAttribute('aria-selected', String(on));
+      btn.title = m.id + (m.ctx ? '　·　上下文 ' + m.ctx : '');
+      const name = document.createElement('span');
+      name.className = 'ai-models__name';
+      name.textContent = m.name || aiModelShort(m.id);
+      btn.appendChild(name);
+      if (m.ctx) {
+        const ctx = document.createElement('span');
+        ctx.className = 'ai-models__ctx';
+        ctx.textContent = Math.round(m.ctx / 1000) + 'K';
+        btn.appendChild(ctx);
+      }
+      if (on) {
+        const tick = document.createElement('em');
+        tick.className = 'ai-models__tick';
+        tick.textContent = '✓';
+        btn.appendChild(tick);
+      }
+      btn.addEventListener('click', () => chooseAiAssistModel(g.provider, m));
+      box.appendChild(btn);
+    });
+  });
+  if (!kw && total) {
+    const cur = box.querySelector('.ai-models__item.is-on');
+    if (cur && typeof cur.scrollIntoView === 'function') {
+      try { cur.scrollIntoView({ block: 'nearest' }); } catch (e) { /* 忽略 */ }
+    }
+  }
+  if (!total) {
+    const empty = document.createElement('div');
+    empty.className = 'ai-models__empty';
+    empty.textContent = kw
+      ? '没有匹配「' + kw + '」的模型'
+      : '当前供应商没有模型清单，可在下方配置里直接填写模型名';
+    box.appendChild(empty);
+  }
+}
+
+function setAiAssistModelMenu(open) {
+  const box = $('aiAssistModels');
+  const btn = $('btnAiAssistModel');
+  if (!box || !btn) return;
+  aiAssist.modelOpen = !!open;
+  box.hidden = !open;
+  btn.setAttribute('aria-expanded', String(!!open));
+  if (!open) return;
+  const search = $('aiAssistModelSearch');
+  if (search) search.value = '';
+  renderAiAssistModelMenu();
+  if (search) setTimeout(() => { try { search.focus(); } catch (e) { /* 忽略 */ } }, 30);
+}
+
+async function chooseAiAssistModel(provider, m) {
+  setAiAssistModelMenu(false);
+  if (!m || !m.id) return;
+  const patch = { model: m.id };
+  if (provider && provider !== state.aiProvider) patch.provider = provider;
+  const beforeModel = state.aiModel;
+  const beforeProvider = state.aiProvider;
+  state.aiModel = m.id;
+  if (provider) state.aiProvider = provider;
+  renderAiAssistModel();
+  let res = null;
+  try { res = await bridge.aiSaveConfig(patch); } catch (e) { res = { ok: false, error: (e && e.message) || '' }; }
+  if (!res || res.ok === false) {
+    state.aiModel = beforeModel;
+    state.aiProvider = beforeProvider;
+    renderAiAssistModel();
+    toast('切换模型失败：' + ((res && res.error) || '请重试'));
+    return;
+  }
+  if (res.model) state.aiModel = res.model;
+  if (res.provider) state.aiProvider = res.provider;
+  state.aiModelUsed = '';
+  aiAssist.actualModel = '';
+  aiAssist.switched = false;
+  renderAiAssistModel();
+  toast('已切换到 ' + (m.name || aiModelShort(m.id)));
+  refreshAiAssistConfig();
 }
 function renderAiAssistToggles() {
   const think = $('btnAiAssistThink');
@@ -4313,6 +4451,7 @@ function closeAiAssistant() {
   if (list) list.hidden = true;
   const btn = $('btnAiAssistList');
   if (btn) btn.setAttribute('aria-expanded', 'false');
+  setAiAssistModelMenu(false);
   renderAiAssist();
 }
 
@@ -4326,6 +4465,7 @@ function bindAiAssistant() {
   const backdrop = $('aiAssistBackdrop');
   if (backdrop) {
     backdrop.addEventListener('click', () => {
+      if (aiAssist.modelOpen) { setAiAssistModelMenu(false); return; }
       const list = $('aiAssistSessions');
       if (list && !list.hidden) {
         list.hidden = true;
@@ -4337,7 +4477,32 @@ function bindAiAssistant() {
     });
   }
   const modelBtn = $('btnAiAssistModel');
-  if (modelBtn) modelBtn.addEventListener('click', () => { if (typeof openAiSetup === 'function') openAiSetup(); });
+  if (modelBtn) {
+    modelBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setAiAssistModelMenu(!aiAssist.modelOpen);
+    });
+  }
+  const modelCfg = $('btnAiAssistModelCfg');
+  if (modelCfg) {
+    modelCfg.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setAiAssistModelMenu(false);
+      if (typeof openAiSetup === 'function') openAiSetup();
+    });
+  }
+  const modelSearch = $('aiAssistModelSearch');
+  if (modelSearch) {
+    modelSearch.addEventListener('input', () => renderAiAssistModelMenu());
+    modelSearch.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); setAiAssistModelMenu(false); }
+    });
+  }
+  document.addEventListener('click', (e) => {
+    if (!aiAssist.modelOpen) return;
+    if (e.target && e.target.closest && e.target.closest('.ai-model-wrap')) return;
+    setAiAssistModelMenu(false);
+  });
   const newBtn = $('btnAiAssistNew');
   if (newBtn) newBtn.addEventListener('click', newAiAssistSession);
   const sessNew = $('btnAiAssistSessNew');
@@ -5181,6 +5346,7 @@ function bindEvents() {
     }
     if (e.key === 'Escape') {
       if (!$('aiModal2').hidden) closeAiSetup();
+      else if (aiAssist.modelOpen) setAiAssistModelMenu(false);
       else if (isAiAssistOpen()) closeAiAssistant();
       else if (!$('msEgg').hidden) closeMilestoneEgg();
       else if (!$('agreementModal').hidden) closeAgreementModal();

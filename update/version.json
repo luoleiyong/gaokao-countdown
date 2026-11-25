@@ -1,5 +1,5 @@
 {
-  "version": "2.9.3",
-  "notes": "AI 助手升级：联网检索换成多引擎并发搜索（今日头条 / 360 搜索 / Bing / 搜狗），自动打开正文再作答，回答里用 [1][2] 这样的编号标注来源；来源卡片新增「已联网检索 N 条 · 读过 X 篇」，每条都能看摘要与发布时间；窄栏下的表格改为横向滚动，日期和长链接不再被挤成竖排。",
+  "version": "2.9.5",
+  "notes": "修复了一些已知问题",
   "url": "https://github.com/luoleiyong/gaokao-countdown/releases/latest"
 }

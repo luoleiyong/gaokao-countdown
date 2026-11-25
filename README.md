@@ -210,6 +210,8 @@ npm start
 
 | 文件 | 作用 |
 |---|---|
+| `admin-tool/GaokaoAdminTool.exe` | **双击即用**：启动后自动写入 1 分钟票据并打开主程序的管理员模式，不用装 Node.js |
+| `admin-tool/GaokaoAdminTool.cs` | 上面那个 exe 的源码（C# WinForms，编译：`csc /target:winexe /win32icon:admin-tool\app.ico /out:admin-tool\GaokaoAdminTool.exe admin-tool\GaokaoAdminTool.cs`） |
 | `admin-tool/admin-unlock-ui.js` | 图形界面版：启动一个只监听 127.0.0.1 的本地页面，按钮式开启 / 收回免密、改管理员密码 |
 | `admin-tool/admin-unlock-ui.html` | 上面那个页面的界面文件（与 js 放在同一目录） |
 | `admin-tool/admin-unlock-ui.cmd` | 双击启动入口：有 Node.js 就用 Node，没有就用已打包的应用以 `ELECTRON_RUN_AS_NODE` 方式运行同一脚本 |
@@ -219,6 +221,9 @@ npm start
 用法：
 
 ```bash
+# exe 版：双击 admin-tool\GaokaoAdminTool.exe，启动后自动打开主程序的管理员模式
+# 也支持无界面参数：--minutes N 开票、--lock 收回、--status 看状态
+
 # 界面版（会自动打开浏览器）
 node admin-tool/admin-unlock-ui.js
 
@@ -234,11 +239,14 @@ Windows 上直接双击 `admin-tool/admin-unlock-ui.cmd` 也可以，不需要�
 原理与代码位置：
 
 - 工具往 `%APPDATA%\GaokaoCountdown\admin-unlock.json` 写一张带 `expires` 的票据
-- 主进程读票据并决定是否放行：`main.js:20`（`ADMIN_TICKET_FILE`）、`main.js:803`（`adminTicketFresh`）、`main.js:4881`（`adminGuard`）
-- 管理员入口三处判定：`main.js:4922`（`classroom:admin-status`）、`main.js:4940`（`classroom:admin-login`）、`main.js:4956`（`classroom:admin-setup`）
+- 主进程读票据并决定是否放行：`main.js:20`（`ADMIN_TICKET_FILE`）、`main.js:805`（`adminTicketFresh`）、`main.js:4919`（`adminGuard`）
+- 管理员入口三处判定：`main.js:4960`（`classroom:admin-status`）、`main.js:4994`（`classroom:admin-login`）、`main.js:4976`（`classroom:admin-setup`）
+- 自动开管理员：exe 启动主程序时带 `--admin`，主程序在 `main.js:5416`（第二个实例）与 `main.js:5454`（首次启动）里调用 `openClassroomWindow({ admin: true })`
 - 票据过期或被 `--lock` 收回后，进入管理员模式立刻恢复密码验证，不需要重启应用
 
 票据默认只开 1 分钟：够进管理员面板改完一次设置，超时自动恢复密码验证。
+
+非 VIP 限次：免密进入的管理员会话，**一天只能改一名学生的权重**。改成功那一刻起额度就记在 `%APPDATA%\GaokaoCountdown\admin-quota.json`，同一名学生可以继续微调，换其他人会被 `main.js:5160` 的 `classroom:update-name` 拦下并提示「请稍后重试（非VIP用户仅限一人使用）。请次日再试」；管理员面板里其他人的权重输入框直接置灰（`renderer/classroom.js:646` 与 `renderer/classroom.js:670`，横幅样式在 `renderer/classroom.css:1220`）。用密码登录的管理员会话不受这条限制；免密会话被限额后，管理员面板里会出现「兑换码」输入框，兑换成功后权重不限次数（`main.js` 的 `classroom:vip-redeem`，凭据落在 `%APPDATA%\GaokaoCountdown\vip.json`）。
 
 这个目录不会被打包进发布版（`package.json` 的 `build` 没有把它列进 `files` 或 `extraResources`），只在本机仓库里使用；票据文件同样只在本机，带过期时间。
 
@@ -319,7 +327,7 @@ gaokao-countdown/
 │   ├── signs.js            幸运签签池
 │   ├── solar-terms.js      二十四节气
 │   └── sound.js            抽签与点名音效
-├── admin-tool/             管理员免密小工具（界面版 + 命令行版，不打包进发布版）
+├── admin-tool/             管理员免密小工具（exe 版 + 界面版 + 命令行版，不打包进发布版）
 │   ├── admin-unlock-ui.cmd  双击启动入口
 │   ├── admin-unlock-ui.js   本地页面服务（127.0.0.1）
 │   ├── admin-unlock-ui.html 工具界面

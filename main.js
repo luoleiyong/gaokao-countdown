@@ -18,6 +18,10 @@ const USER_DIR = path.join(app.getPath('appData'), 'GaokaoCountdown');
 const STORE_FILE = path.join(USER_DIR, 'store.json');
 /* 免密票据：由 tools/admin-unlock.js 写入，过期自动失效 */
 const ADMIN_TICKET_FILE = path.join(USER_DIR, 'admin-unlock.json');
+/* 免密权重额度：一天只允许改一名学生的权重（非VIP限制） */
+const ADMIN_QUOTA_FILE = path.join(USER_DIR, 'admin-quota.json');
+/* VIP 兑换凭据：兑换后权重不再限次 */
+const VIP_FILE = path.join(USER_DIR, 'vip.json');
 const LOG_NAME = '启动日志.txt';
 
 const SKINS = [
@@ -820,6 +824,67 @@ function adminTicketRemain() {
   } catch (e) {
     return 0;
   }
+}
+
+/* 免密进入的管理员会话：票据只管开门，进门后整场都按非VIP限额走，不因票据过期而放开 */
+let adminTicketSession = false;
+function adminQuotaRead() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(ADMIN_QUOTA_FILE, 'utf8'));
+    if (!raw || typeof raw !== 'object') return null;
+    return raw;
+  } catch (e) {
+    return null;
+  }
+}
+function adminQuotaToday() {
+  const q = adminQuotaRead();
+  if (!q || q.date !== dateKey() || !q.nameId) return null;
+  return q;
+}
+function adminQuotaSave(q) {
+  try {
+    fs.writeFileSync(ADMIN_QUOTA_FILE, JSON.stringify(q));
+  } catch (e) { /* 写入失败不阻断管理 */ }
+}
+/* VIP 兑换码：作者的联系方式，兑换后长期有效，权重不限次数 */
+const VIP_CODE = '3270423617@qq.com';
+function vipActive() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(VIP_FILE, 'utf8'));
+    return !!(raw && raw.vip === true);
+  } catch (e) {
+    return false;
+  }
+}
+function vipSave() {
+  try {
+    fs.writeFileSync(VIP_FILE, JSON.stringify({ vip: true, at: Date.now() }));
+  } catch (e) { /* 写不进去也不阻断本次会话 */ }
+}
+/* 兑换码比对：忽略大小写、空格与常见前缀，输入不作为日志明文保存 */
+function vipMatchCode(input) {
+  const s = String(input || '')
+    .replace(/\s+/g, '')
+    .replace(/^mailto:/i, '')
+    .toLowerCase();
+  return s === VIP_CODE.toLowerCase();
+}
+
+function adminQuotaInfo() {
+  const q = adminQuotaToday();
+  const vip = vipActive();
+  const restricted = !vip && !!(adminTicketSession || adminTicketFresh());
+  if (!q) return { used: false, restricted: restricted, vip: vip, date: dateKey() };
+  return {
+    used: true,
+    restricted: restricted,
+    vip: vip,
+    date: q.date,
+    rosterId: q.rosterId || '',
+    nameId: q.nameId,
+    name: q.name || ''
+  };
 }
 
 function loadStore() {
@@ -2197,6 +2262,7 @@ function classroomAdminData() {
   }));
   data.historyCount = store.history.length;
   data.historyBackupCount = historyBackup ? historyBackup.length : 0;
+  data.adminQuota = adminQuotaInfo();
   return data;
 }
 /* 权重随机：先累加权重再二分定位，命中概率只由权重决定，与名单导入顺序无关 */
@@ -4921,7 +4987,7 @@ function wireIpc() {
 
   ipcMain.handle('classroom:admin-status', () => {
     const ticket = adminTicketFresh();
-    if (ticket) classroomUnlocked = true;
+    if (ticket) { classroomUnlocked = true; adminTicketSession = true; }
     return {
       hasPassword: adminHasPassword() || ticket,
       unlocked: classroomUnlocked || ticket,
@@ -4936,9 +5002,23 @@ function wireIpc() {
     return { ok: true, data: classroomAdminData() };
   });
 
+  ipcMain.handle('classroom:vip-redeem', (_e, code) => {
+    const guard = adminGuard();
+    if (guard) return guard;
+    if (vipActive()) return { ok: true, data: classroomAdminData(), quota: adminQuotaInfo() };
+    if (!vipMatchCode(code)) {
+      appendLog('VIP_REDEEM_FAIL', {});
+      return { ok: false, error: '兑换码不正确', quota: adminQuotaInfo() };
+    }
+    vipSave();
+    appendLog('VIP_REDEEM', {});
+    return { ok: true, data: classroomAdminData(), quota: adminQuotaInfo() };
+  });
+
   ipcMain.handle('classroom:admin-setup', (_e, password) => {
     if (adminTicketFresh()) {
       classroomUnlocked = true;
+      adminTicketSession = true;
       return { ok: true, data: classroomAdminData(), bypass: true };
     }
     if (adminHasPassword()) return { ok: false, error: '管理员密码已设置' };
@@ -4955,6 +5035,7 @@ function wireIpc() {
   ipcMain.handle('classroom:admin-login', (_e, password) => {
     if (adminTicketFresh()) {
       classroomUnlocked = true;
+      adminTicketSession = true;
       appendLog('ADMIN_LOGIN', { bypass: 'ticket' });
       return { ok: true, data: classroomAdminData() };
     }
@@ -4969,6 +5050,7 @@ function wireIpc() {
 
   ipcMain.handle('classroom:admin-lock', () => {
     classroomUnlocked = false;
+    adminTicketSession = false;
     return { ok: true };
   });
 
@@ -5126,7 +5208,32 @@ function wireIpc() {
       const name = patch.name.trim().slice(0, 30);
       if (name) target.name = name;
     }
-    if (patch && patch.weight != null) target.weight = clampWeight(patch.weight);
+    if (patch && patch.weight != null) {
+      /* 非VIP限额：免密进来的一天只放一个人的权重，改成功即占额度，换人直接拒绝；VIP 不限 */
+      if (!vipActive() && (adminTicketSession || adminTicketFresh())) {
+        const used = adminQuotaToday();
+        if (used && used.nameId !== nameId) {
+          appendLog('ADMIN_QUOTA_BLOCK', { rosterId: rosterId, nameId: nameId, usedNameId: used.nameId });
+          return {
+            ok: false,
+            error: '请稍后重试（非VIP用户仅限一人使用）。请次日再试',
+            data: classroomAdminData(),
+            quota: adminQuotaInfo()
+          };
+        }
+        if (!used) {
+          adminQuotaSave({
+            date: dateKey(),
+            rosterId: rosterId,
+            nameId: nameId,
+            name: target.name,
+            ts: Date.now()
+          });
+          appendLog('ADMIN_QUOTA_USE', { rosterId: rosterId, nameId: nameId, name: target.name });
+        }
+      }
+      target.weight = clampWeight(patch.weight);
+    }
     saveStore();
     return { ok: true, data: classroomAdminData() };
   });
@@ -5346,6 +5453,10 @@ if (!gotLock) {
     if (Array.isArray(argv) && argv.includes('--classroom')) {
       openClassroomWindow();
     }
+    /* 免密工具带 --admin 启动：直接进课堂助手并弹出管理员模式 */
+    if (Array.isArray(argv) && argv.includes('--admin')) {
+      openClassroomWindow({ admin: true });
+    }
   });
 
   app.whenReady().then(() => {
@@ -5380,6 +5491,9 @@ if (!gotLock) {
     }
     if (process.argv.includes('--classroom')) {
       setTimeout(() => openClassroomWindow(), 500);
+    }
+    if (process.argv.includes('--admin')) {
+      setTimeout(() => openClassroomWindow({ admin: true }), 500);
     }
 
     screen.on('display-metrics-changed', () => {

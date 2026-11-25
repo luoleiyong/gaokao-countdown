@@ -70,6 +70,7 @@ contextBridge.exposeInMainWorld('gaokao', {
   classroomAdminSetup: (password) => ipcRenderer.invoke('classroom:admin-setup', password),
   classroomAdminLogin: (password) => ipcRenderer.invoke('classroom:admin-login', password),
   classroomAdminLock: () => ipcRenderer.invoke('classroom:admin-lock'),
+  classroomVipRedeem: (code) => ipcRenderer.invoke('classroom:vip-redeem', code),
   classroomChangePassword: (oldPassword, newPassword) => ipcRenderer.invoke('classroom:admin-change-password', oldPassword, newPassword),
   classroomImportRosters: (paths) => ipcRenderer.invoke('classroom:import-rosters', paths),
   classroomCreateRoster: (name, text) => ipcRenderer.invoke('classroom:create-roster', name, text),

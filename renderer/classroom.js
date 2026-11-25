@@ -643,8 +643,19 @@ function renderAdminPanel() {
   }
   const roster = rosters.find((r) => r.id === state.adminRosterId);
   const body = $('adminBody');
+  const quota = d.adminQuota || { used: false, restricted: false, vip: false };
+  const quotaVip = !!quota.vip;
+  const quotaLocked = !!(quota.used && quota.restricted && !quotaVip);
+  const quotaName = quota.name || '该学生';
   body.innerHTML =
     `<p class="admin-hint">管理员模式可修改名单名称、修改学生姓名、查看被抽中次数，并为每位学生单独设置抽取权重（0.1 – 10，权重越高越容易被抽到）。</p>
+    ${quotaVip ? `<div class="admin-quota admin-quota--vip"><b>已解锁权重不限次数</b>：所有学生的权重都可以随时调整。</div>` : ''}
+    ${quotaLocked ? `<div class="admin-quota"><b>今日免密额度已用于「${esc(quotaName)}」</b>：只能继续调整这名学生的权重，其他学生的权重今日锁定，明天自动恢复。
+      <div class="admin-quota__redeem">
+        <input class="cls-input" id="adminVipCode" placeholder="兑换码" autocomplete="off" spellcheck="false" />
+        <button class="cls-ghost" id="btnAdminVipRedeem">兑换</button>
+      </div>
+    </div>` : ''}
     <div class="admin-toolbar">
       <select class="cls-input" id="adminRosterSelect">
         ${rosters.length
@@ -663,7 +674,7 @@ function renderAdminPanel() {
           ${roster && roster.names.length
             ? roster.names.map((n) => `<tr data-nid="${esc(n.id)}">
                 <td><input class="cls-input admin-name-input" data-role="name" value="${esc(n.name)}" /></td>
-                <td><input type="number" class="admin-weight" data-role="weight" min="0.1" max="10" step="0.1" value="${n.weight}" /></td>
+                <td><input type="number" class="admin-weight" data-role="weight" min="0.1" max="10" step="0.1" value="${n.weight}"${quotaLocked && n.id !== quota.nameId ? ' disabled title="非VIP用户仅限一人使用，请次日再试"' : ''} /></td>
                 <td><span class="admin-count"><b>${n.count}</b> 次</span></td>
                 <td><button class="cls-danger" data-role="remove" style="padding:4px 10px">删除</button></td>
               </tr>`).join('')
@@ -726,6 +737,28 @@ function wireAdminPanel(roster) {
     else toast((res && res.error) || '操作失败');
   });
 
+  const vipBtn = $('btnAdminVipRedeem');
+  if (vipBtn) {
+    vipBtn.addEventListener('click', async () => {
+      const input = $('adminVipCode');
+      const code = ((input && input.value) || '').trim();
+      if (!code) return toast('请输入兑换码');
+      const res = await bridge.classroomVipRedeem(code);
+      if (res && res.ok) {
+        applyAdmin(res.data);
+        toast('兑换成功，权重已不限次数');
+      } else {
+        toast((res && res.error) || '兑换失败');
+      }
+    });
+    const input = $('adminVipCode');
+    if (input) {
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); vipBtn.click(); }
+      });
+    }
+  }
+
   $('btnAdminDeleteRoster').addEventListener('click', async () => {
     if (!roster) return toast('暂无名单');
     if (!window.confirm(`确定删除名单「${roster.name}」？该名单的学生与抽取记录都会被删除。`)) return;
@@ -748,6 +781,8 @@ function wireAdminPanel(roster) {
       if (role === 'name') toast('姓名已保存');
     } else {
       toast((res && res.error) || '保存失败');
+      if (res && res.data) applyAdmin(res.data);
+      else if (role === 'weight') refreshAdmin();
     }
   });
   table.addEventListener('click', async (e) => {

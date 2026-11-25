@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>管理员免密 · 高考倒计时</title>
+<style>
+  :root{
+    --bg:#f4f1ea; --card:#fffdf8; --line:#e2dbca; --text:#2f2b23; --dim:#7d7568;
+    --gold:#a8813a; --gold-soft:#f0e4c8; --ok:#3f7d52; --bad:#b0473f; --shadow:0 10px 30px rgba(74,62,38,.12);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#14130f; --card:#1d1b16; --line:#33302a; --text:#eae4d6; --dim:#9a9384;
+      --gold:#d9b66a; --gold-soft:#2c2618; --ok:#79b98d; --bad:#e08379; --shadow:0 10px 30px rgba(0,0,0,.5); }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:14px/1.6 "Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+    min-height:100vh;display:flex;justify-content:center;padding:32px 18px}
+  .wrap{width:100%;max-width:760px}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+  .logo{width:40px;height:40px;border-radius:12px;border:1px solid var(--line);
+    background:var(--gold-soft);color:var(--gold);display:flex;align-items:center;justify-content:center;
+    font-size:18px;font-weight:700}
+  h1{font-size:20px;margin:0;letter-spacing:.5px}
+  header small{color:var(--dim);display:block;font-size:12px;font-weight:400}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px;
+    box-shadow:var(--shadow);margin-bottom:16px}
+  .card h2{font-size:13px;margin:0 0 12px;color:var(--dim);font-weight:600;letter-spacing:.5px}
+  .status{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--dim);flex:none}
+  .dot.on{background:var(--ok);box-shadow:0 0 0 4px rgba(63,125,82,.15)}
+  .dot.off{background:var(--bad);box-shadow:0 0 0 4px rgba(176,71,63,.15)}
+  .status b{font-size:16px}
+  .sub{color:var(--dim);font-size:13px}
+  .path{margin-top:10px;font-size:12px;color:var(--dim);word-break:break-all;
+    background:var(--gold-soft);border-radius:10px;padding:8px 10px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  button{cursor:pointer;font:inherit;border-radius:10px;border:1px solid var(--line);
+    background:var(--card);color:var(--text);padding:9px 16px;transition:.15s}
+  button:hover{border-color:var(--gold);color:var(--gold)}
+  button.primary{background:var(--gold);border-color:var(--gold);color:#fff8ea;font-weight:600}
+  button.primary:hover{filter:brightness(1.06);color:#fff8ea}
+  button.danger{border-color:var(--bad);color:var(--bad)}
+  button.danger:hover{background:var(--bad);color:#fff}
+  input{font:inherit;color:var(--text);background:var(--card);border:1px solid var(--line);
+    border-radius:10px;padding:9px 12px;width:120px;outline:none}
+  input#pw1,input#pw2{width:160px}
+  input:focus{border-color:var(--gold)}
+  .hint{color:var(--dim);font-size:12px;margin-top:10px}
+  #log{font:12px/1.7 Consolas,Menlo,monospace;color:var(--dim);white-space:pre-wrap;max-height:150px;overflow:auto}
+  ul{margin:6px 0 0;padding-left:18px;color:var(--dim);font-size:13px}
+  li{margin:2px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">助</div>
+    <div>
+      <h1>管理员免密工具</h1>
+      <small>高考倒计时 · 仅在本机使用，不随发布版分发</small>
+    </div>
+  </header>
+
+  <div class="card">
+    <h2>当前状态</h2>
+    <div class="status">
+      <span class="dot off" id="dot"></span>
+      <div>
+        <b id="state">读取中…</b>
+        <div class="sub" id="detail"></div>
+      </div>
+      <div style="margin-left:auto"><button id="refresh">刷新</button></div>
+    </div>
+    <div class="path" id="filePath"></div>
+  </div>
+
+  <div class="card">
+    <h2>开启免密</h2>
+    <div class="row">
+      <button data-min="1" class="primary">1 分钟</button>
+      <button data-min="5">5 分钟</button>
+      <button data-min="30">30 分钟</button>
+      <button data-min="60">1 小时</button>
+      <input id="customMin" type="number" min="1" max="10080" placeholder="自定义分钟" />
+      <button id="customGo">按自定义时长开启</button>
+    </div>
+    <div class="hint">默认开 1 分钟，够进管理员面板做完一次修改；开启后进入「课堂助手 → 管理员模式」会直接进入，不再询问密码。</div>
+  </div>
+
+  <div class="card">
+    <h2>立即收回</h2>
+    <div class="row">
+      <button class="danger" id="lock">收回免密</button>
+      <span class="hint" style="margin:0">收回后立刻恢复密码验证，不需要重启应用。</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>直接改管理员密码</h2>
+    <div class="row">
+      <input id="pw1" type="password" placeholder="新密码" />
+      <input id="pw2" type="password" placeholder="再输一次" />
+      <button id="reset">修改密码</button>
+    </div>
+    <div class="hint">不需要知道旧密码。改完要重启应用才生效。</div>
+  </div>
+
+  <div class="card">
+    <h2>操作记录</h2>
+    <div id="log">等待操作。</div>
+  </div>
+
+  <div class="card">
+    <h2>说明</h2>
+    <ul>
+      <li>票据写在 <span id="dirInline"></span>，带过期时间，应用每次进入管理员都会重新读取。</li>
+      <li>页面只监听 127.0.0.1，其它网页无法跨站调用这些接口。</li>
+      <li>关掉这个页面或命令行窗口，工具即停止；已经开启的免密继续有效直到过期。</li>
+    </ul>
+  </div>
+</div>
+<script>
+var HEAD = { 'Content-Type': 'application/json', 'X-GK-Tool': '1' };
+var logEl = document.getElementById('log');
+function log(line){
+  var t = new Date().toTimeString().slice(0, 8);
+  logEl.textContent = '[' + t + '] ' + line + '\n' + logEl.textContent;
+}
+function fmt(ms){
+  if (ms <= 0) return '已过期';
+  var m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000);
+  if (m >= 60) return Math.floor(m / 60) + ' 小时 ' + (m % 60) + ' 分钟';
+  return m + ' 分 ' + s + ' 秒';
+}
+function getStatus(){
+  return fetch('/api/status').then(function(r){ return r.json(); }).then(function(d){
+    var dot = document.getElementById('dot');
+    var state = document.getElementById('state');
+    var detail = document.getElementById('detail');
+    dot.className = 'dot ' + (d.valid ? 'on' : 'off');
+    state.textContent = d.valid ? '免密已开启，剩余 ' + fmt(d.remain) : '未开启免密';
+    detail.textContent = d.valid
+      ? '到期时间 ' + new Date(d.expires).toLocaleString() + '　·　' + (d.hasPassword ? '管理员密码已设置' : '管理员密码未设置')
+      : '进入管理员模式会要求输入密码' + (d.hasPassword ? '' : '（当前尚未设置密码）');
+    document.getElementById('filePath').textContent = '票据文件：' + d.file;
+    document.getElementById('dirInline').textContent = d.dir;
+  });
+}
+function post(path, body){
+  return fetch(path, { method: 'POST', headers: HEAD, body: JSON.stringify(body || {}) }).then(function(r){ return r.json(); });
+}
+function unlock(minutes){
+  return post('/api/unlock', { minutes: minutes }).then(function(d){
+    log(d.ok ? '已开启 ' + d.minutes + ' 分钟免密（到期 ' + new Date(d.expires).toLocaleString() + '）' : ('失败：' + d.error));
+    return getStatus();
+  });
+}
+var quick = document.querySelectorAll('[data-min]');
+for (var i = 0; i < quick.length; i++) {
+  (function(btn){ btn.onclick = function(){ unlock(Number(btn.getAttribute('data-min'))); }; })(quick[i]);
+}
+document.getElementById('customGo').onclick = function(){
+  var v = Number(document.getElementById('customMin').value);
+  if (!v || v < 1) { log('请先填一个大于 0 的分钟数。'); return; }
+  unlock(v);
+};
+document.getElementById('lock').onclick = function(){
+  post('/api/lock').then(function(d){
+    log(d.removed ? '已收回免密，现在进入管理员需要密码。' : '本来就没有免密票据。');
+    getStatus();
+  });
+};
+document.getElementById('reset').onclick = function(){
+  var a = document.getElementById('pw1').value, b = document.getElementById('pw2').value;
+  if (a.length < 4) { log('密码至少 4 位。'); return; }
+  if (a !== b) { log('两次输入的密码不一致。'); return; }
+  post('/api/reset-password', { password: a }).then(function(d){
+    log(d.ok ? '管理员密码已修改，重启应用后生效。' : ('失败：' + d.error));
+    document.getElementById('pw1').value = '';
+    document.getElementById('pw2').value = '';
+  });
+};
+document.getElementById('refresh').onclick = function(){ getStatus(); log('已刷新状态。'); };
+getStatus();
+setInterval(getStatus, 5000);
+</script>
+</body>
+</html>

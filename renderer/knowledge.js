@@ -709,7 +709,7 @@ function buildAiReasonBlock(m) {
   return det;
 }
 
-/* 来源列表：meta 行下方一行「已联网检索 N 条」，展开后逐条列出 */
+/* 来源列表：meta 行下方一行「已联网检索 N 条 · 引擎」，展开后逐条给出域名、标题与摘要 */
 function buildAiSearchBlock(m, idx) {
   var search = m && m.search;
   if (!search || typeof search !== 'object') return null;
@@ -727,15 +727,30 @@ function buildAiSearchBlock(m, idx) {
   head.setAttribute('aria-expanded', 'false');
   head.setAttribute('aria-controls', listId);
 
+  var engines = (Array.isArray(search.engines) ? search.engines : []).map(function (e) {
+    return String((e && e.name) || '').trim();
+  }).filter(Boolean);
+  var read = search.read && typeof search.read === 'object' ? search.read : null;
+
   var title = document.createElement('span');
   title.className = 'ai-src__title';
-  title.textContent = '已联网检索 ' + items.length + ' 条';
+  title.textContent = '已联网检索 ' + items.length + ' 条' + (engines.length ? ' · ' + engines.join(' / ') : '');
+  head.appendChild(title);
+  if (read && read.ok) {
+    var readTag = document.createElement('span');
+    readTag.className = 'ai-src__read';
+    readTag.textContent = '读过 ' + read.ok + ' 篇';
+    head.appendChild(readTag);
+  }
   var caret = document.createElement('span');
   caret.className = 'ai-src__caret';
   caret.textContent = '展开';
-  head.appendChild(title);
   head.appendChild(caret);
-  if (search.query) head.title = '检索词：' + search.query;
+  var tip = ['检索词：' + (search.query || '')];
+  if (search.elapsed) tip.push('耗时 ' + search.elapsed + ' 秒');
+  if (search.cached) tip.push('本次复用了刚才的结果');
+  if (read && read.tried) tip.push('抓正文 ' + read.ok + '/' + read.tried);
+  head.title = tip.join(' · ');
 
   var list = document.createElement('div');
   list.className = 'ai-src__list';
@@ -756,11 +771,18 @@ function buildAiSearchBlock(m, idx) {
     var t = document.createElement('span');
     t.className = 'ai-src__item-title';
     t.textContent = host ? (label && label !== host ? host + ' · ' + label : host) : label;
+    a.appendChild(t);
+    var excerpt = String(it.excerpt || '').trim();
+    if (excerpt) {
+      var ex = document.createElement('span');
+      ex.className = 'ai-src__excerpt';
+      ex.textContent = excerpt.slice(0, 160);
+      a.appendChild(ex);
+    }
     var meta = document.createElement('span');
     meta.className = 'ai-src__item-meta';
-    meta.textContent = it.date || '';
-    if (!it.date) meta.hidden = true;
-    a.appendChild(t);
+    meta.textContent = [it.src, it.date].filter(Boolean).join(' · ');
+    if (!meta.textContent) meta.hidden = true;
     a.appendChild(meta);
     list.appendChild(a);
   });

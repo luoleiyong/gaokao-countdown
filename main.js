@@ -16,6 +16,8 @@ try { XLSX = require('xlsx'); } catch { /* 缺少表格组件时仅支持 txt/cs
 
 const USER_DIR = path.join(app.getPath('appData'), 'GaokaoCountdown');
 const STORE_FILE = path.join(USER_DIR, 'store.json');
+/* 免密票据：由 tools/admin-unlock.js 写入，过期自动失效 */
+const ADMIN_TICKET_FILE = path.join(USER_DIR, 'admin-unlock.json');
 const LOG_NAME = '启动日志.txt';
 
 const SKINS = [
@@ -795,6 +797,29 @@ function adminHasPassword() {
 function adminVerify(password) {
   if (!adminHasPassword()) return false;
   return hashPassword(password, store.classroom.passwordSalt) === store.classroom.passwordHash;
+}
+
+/* 读免密票据：{expires: 毫秒时间戳}；不存在、格式错、过期都算无效 */
+function adminTicketFresh() {
+  try {
+    if (!fs.existsSync(ADMIN_TICKET_FILE)) return false;
+    const raw = JSON.parse(fs.readFileSync(ADMIN_TICKET_FILE, 'utf8'));
+    const exp = Number(raw && raw.expires);
+    if (!exp || !isFinite(exp)) return false;
+    if (exp <= Date.now()) return false;
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+function adminTicketRemain() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(ADMIN_TICKET_FILE, 'utf8'));
+    const exp = Number(raw && raw.expires);
+    return exp > Date.now() ? exp - Date.now() : 0;
+  } catch (e) {
+    return 0;
+  }
 }
 
 function loadStore() {
@@ -3174,6 +3199,319 @@ async function aiBingItems(q, limit, timeout) {
   return aiRssItems(xml, limit || 8).map((it) => Object.assign(it, { src: 'Bing' }));
 }
 
+/* ---------------- 深度检索：多引擎搜索 → 抓正文 → 带编号引用 ---------------- */
+/* 参考 Perplexity / 秘塔这类「检索式 AI」的做法：先在多引擎找候选，再抓回正文，
+   交给模型时每条都带编号与链接，回答里用 [1][2] 指回来源。 */
+const AI_SEARCH_ENGINES = [
+  { id: 'toutiao', name: '头条搜索', parse: 'toutiao', url: (q) => 'https://so.toutiao.com/search?keyword=' + encodeURIComponent(q) + '&pd=information' },
+  { id: 'so360', name: '360搜索', parse: 'so360', url: (q) => 'https://www.so.com/s?q=' + encodeURIComponent(q) },
+  { id: 'bing', name: 'Bing', parse: 'bing', url: (q) => 'https://cn.bing.com/search?q=' + encodeURIComponent(q) + '&count=10' },
+  { id: 'sogou', name: '搜狗', parse: 'sogou', url: (q) => 'https://www.sogou.com/web?query=' + encodeURIComponent(q) }
+];
+const AI_DEEP_CACHE = new Map();
+const AI_DEEP_TTL = 5 * 60 * 1000;
+const AI_DEEP_CACHE_MAX = 40;
+
+/* 比 aiStripTags 更彻底：先剥脚本样式，再解 HTML 实体，用于搜索结果与网页正文 */
+function aiHtmlText(s) {
+  return String(s || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;|&ensp;|&emsp;|&thinsp;|&#0?160;|&#0?183;|&middot;/gi, ' ')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
+    .replace(/&mdash;|&ndash;/g, '—').replace(/&hellip;/g, '…')
+    .replace(/&ldquo;/g, '“').replace(/&rdquo;/g, '”')
+    .replace(/&[a-z#0-9]+;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function aiCleanTitle(s) {
+  return aiHtmlText(s).replace(/([\u4e00-\u9fa5，。、；：！？（）「」《》])\s+(?=[\u4e00-\u9fa5，。、；：！？（）「」《》])/g, '$1');
+}
+
+function aiParseBing(html) {
+  const out = [];
+  String(html || '').split('class="b_algo"').slice(1).forEach((seg) => {
+    const h2 = seg.match(/<h2[\s\S]{0,3000}?<\/h2>/);
+    if (!h2) return;
+    const a = h2[0].match(/<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/);
+    if (!a) return;
+    const title = aiCleanTitle(a[2]);
+    if (!title || title.length < 4) return;
+    const p = seg.match(/<p[^>]*>([\s\S]{0,800}?)<\/p>/);
+    out.push({ title: title.slice(0, 120), url: a[1], snippet: p ? aiHtmlText(p[1]).slice(0, 200) : '', src: 'Bing' });
+  });
+  return out;
+}
+
+function aiParseSogou(html) {
+  const out = [];
+  String(html || '').split('class="vr-title').slice(1).forEach((seg) => {
+    const a = seg.match(/<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]{0,400}?)<\/a>/);
+    if (!a) return;
+    const title = aiCleanTitle(a[2]);
+    if (!title || title.length < 6) return;
+    if (/相关资讯|全部结果|搜索热词|大家都在搜/.test(title)) return;
+    if (/sogou\.com\/sogou\?/.test(a[1])) return;
+    out.push({ title: title.slice(0, 120), url: a[1], snippet: '', src: '搜狗' });
+  });
+  return out;
+}
+
+function aiParse360(html) {
+  const out = [];
+  String(html || '').split('class="res-title').slice(1).forEach((seg) => {
+    const md = seg.match(/data-mdurl="([^"]+)"/);
+    const a = seg.match(/<a[^>]*href="([^"]+)"[^>]*>([\s\S]{0,400}?)<\/a>/);
+    if (!a) return;
+    const url = md ? md[1] : (/^https?:/.test(a[1]) ? a[1] : '');
+    const title = aiCleanTitle(a[2]);
+    if (!url || !title) return;
+    const p = seg.match(/<p[^>]*class="res-desc"[^>]*>([\s\S]{0,800}?)<\/p>/);
+    out.push({ title: title.slice(0, 120), url: url, snippet: p ? aiHtmlText(p[1]).slice(0, 200) : '', src: '360搜索' });
+  });
+  return out;
+}
+
+function aiParseToutiao(html) {
+  const out = [];
+  const seen = new Set();
+  const re = /<a[^>]*href="(\/search\/jump\?[^"]+)"[^>]*>([\s\S]{0,300}?)<\/a>/g;
+  let m;
+  while ((m = re.exec(String(html || '')))) {
+    const title = aiCleanTitle(m[2]);
+    if (!title || title.length < 5 || seen.has(title)) continue;
+    seen.add(title);
+    const hit = m[1].match(/(?:\?|&|&amp;)url=([^&"]+)/);
+    let real = '';
+    if (hit) { try { real = decodeURIComponent(hit[1]); } catch (e) { real = ''; } }
+    if (!/^https?:/i.test(real) && real) {
+      try { real = decodeURIComponent(unescape(real)); } catch (e) { /* 保留原值 */ }
+    }
+    const h5 = String(real).match(/[?&]h5_url=([^&]+)/);
+    if (h5) {
+      try {
+        const inner = decodeURIComponent(h5[1]);
+        if (/^https?:/i.test(inner)) real = inner;
+      } catch (e) { /* 保留外层地址 */ }
+    }
+    out.push({
+      title: title.slice(0, 120),
+      url: /^https?:/i.test(real) ? real : 'https://so.toutiao.com' + m[1].replace(/&amp;/g, '&'),
+      snippet: '',
+      src: '头条搜索'
+    });
+  }
+  return out;
+}
+
+/* 网页正文：按块标签切段，丢掉短块（导航、按钮），保留像正文的段落 */
+function aiPageText(html) {
+  const src = String(html || '');
+  const titleM = src.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const descM = src.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']/i);
+  const body = src
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<(nav|header|footer|aside|noscript|svg|form|iframe)[\s\S]*?<\/\1>/gi, ' ');
+  const paras = body.split(/<\/(?:p|div|section|article|h[1-4]|li|td|br)>/i)
+    .map((x) => aiHtmlText(x))
+    .filter((x) => x.length >= 40);
+  let text = paras.join('\n');
+  if (text.length < 200 && descM) text = aiHtmlText(descM[1]) + '\n' + text;
+  return { title: titleM ? aiHtmlText(titleM[1]).slice(0, 120) : '', text: text.slice(0, 2400) };
+}
+
+/* 抓 HTML 时按 meta / header 里的字符集解码，GBK 站点不会变成乱码 */
+async function aiFetchHtmlText(url, timeout, headers) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeout || 9000);
+  try {
+    const res = await net.fetch(url, {
+      signal: ac.signal,
+      headers: Object.assign({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,*/*',
+        'Accept-Language': 'zh-CN,zh;q=0.9'
+      }, headers || {})
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const buf = Buffer.from(await res.arrayBuffer());
+    const head = buf.slice(0, 4096).toString('latin1');
+    const ct = String(res.headers.get('content-type') || '');
+    let cs = (ct.match(/charset=["']?([\w-]+)/i) || [])[1] || (head.match(/charset=["']?([\w-]+)/i) || [])[1] || '';
+    cs = /gb2312|gbk|gb18030/i.test(cs) ? 'gbk' : /big5/i.test(cs) ? 'big5' : 'utf-8';
+    try { return new TextDecoder(cs).decode(buf); } catch (e) { return buf.toString('utf8'); }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function aiReadPage(item, timeout) {
+  if (!item || !/^https?:/i.test(item.url || '')) return null;
+  if (/\.(pdf|zip|rar|7z|mp4|mp3|apk|exe|dmg)(\?|$)/i.test(item.url)) return null;
+  const html = await aiFetchHtmlText(item.url, timeout || 9000);
+  const page = aiPageText(html);
+  const text = String(page.text || '').replace(/[ \t]+/g, ' ').replace(/\n{2,}/g, '\n').trim();
+  if (text.length < 60) return null;
+  return { url: item.url, title: page.title || item.title, chars: text.length, excerpt: text.slice(0, 1600) };
+}
+
+/* 从摘要里认时间：2026年11月13日 / 9 小时之前 / 昨天 */
+function aiSniffDate(text) {
+  const s = String(text || '');
+  const m = s.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+  if (m) return m[1] + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[3]).padStart(2, '0');
+  const m2 = s.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m2) return m2[1] + '-' + String(m2[2]).padStart(2, '0') + '-' + String(m2[3]).padStart(2, '0');
+  const h = s.match(/(\d{1,2})\s*小时之[前内]/) || s.match(/(\d{1,2})\s*分钟之[前内]/);
+  if (h) return '今天';
+  if (/昨天|昨日/.test(s)) return '昨天';
+  if (/今天|今日|刚刚/.test(s)) return '今天';
+  return '';
+}
+
+function aiHostOf(url) {
+  try { return new URL(url).host.replace(/^www\./, ''); } catch (e) { return ''; }
+}
+
+/* 一次问题给两个检索式：原句 + 「最新」，让结果既准确又有时效 */
+function aiVariantQueries(q) {
+  const base = String(q || '').trim().slice(0, 100);
+  if (!base) return [];
+  const out = [base];
+  if (!/最新|今天|今日|实时|刚刚/.test(base)) out.push(base + ' 最新');
+  return out.slice(0, 2);
+}
+
+/* 太短或纯寒暄的句子不必联网，省掉一次五秒的等待 */
+function aiWorthWeb(text) {
+  const s = String(text || '').trim();
+  if (s.length < 4) return false;
+  if (/^(你好|您好|hi|hello|hey|在吗|谢谢|好的|嗯+|哦|测试|test)[!！。.？?~]*$/i.test(s)) return false;
+  return true;
+}
+
+async function aiDeepSearch(query, opts) {
+  const o = opts || {};
+  const q = String(query || '').trim().slice(0, 120);
+  const nowBits = aiNowBits();
+  if (!q) return { ok: false, query: '', source: '', items: [], engines: [], read: null, elapsed: 0, at: nowBits.time };
+  const hit = AI_DEEP_CACHE.get(q);
+  if (hit && Date.now() - hit.at < AI_DEEP_TTL && !o.refresh && hit.data && hit.data.ok) {
+    return Object.assign({ cached: true }, hit.data);
+  }
+  const started = Date.now();
+  const timeout = o.timeout || 11000;
+  const plan = [];
+  aiVariantQueries(q).forEach((v, vi) => {
+    AI_SEARCH_ENGINES.forEach((eng) => {
+      if (vi > 0 && eng.id !== 'toutiao' && eng.id !== 'bing') return;
+      plan.push({ engine: eng, q: v });
+    });
+  });
+  const parseOf = (id, html) => (id === 'toutiao' ? aiParseToutiao(html) : id === 'so360' ? aiParse360(html) : id === 'bing' ? aiParseBing(html) : aiParseSogou(html));
+  const settled = await Promise.allSettled(plan.map((p) => (async () => {
+    const html = await fetchText(p.engine.url(p.q), timeout, { Accept: 'text/html,application/xhtml+xml,*/*', 'Accept-Language': 'zh-CN,zh;q=0.9' });
+    return { name: p.engine.name, items: parseOf(p.engine.id, html) };
+  })()));
+  const engines = [];
+  const buckets = [];
+  settled.forEach((res, i) => {
+    if (res.status === 'fulfilled' && res.value.items && res.value.items.length) {
+      const name = res.value.name;
+      const at = engines.find((e) => e.name === name);
+      if (at) at.count += res.value.items.length;
+      else engines.push({ name: name, count: res.value.items.length });
+      buckets.push(res.value.items);
+    } else if (res.status === 'rejected') {
+      appendLog('AI_SEARCH_FAIL', { engine: plan[i].engine.name, error: String((res.reason && res.reason.message) || res.reason).slice(0, 120) });
+    }
+  });
+  /* 轮转交织：各家轮流占一位，避免结果多的引擎霸占前排 */
+  const merged = [];
+  const seen = new Set();
+  const maxLen = buckets.reduce((n, b) => Math.max(n, b.length), 0);
+  for (let i = 0; i < maxLen; i++) {
+    for (let b = 0; b < buckets.length; b++) {
+      const it = buckets[b][i];
+      if (!it || !it.title) continue;
+      if (/^https?:\/\/ai\.so\.com\//i.test(it.url || '')) continue;
+      if (/百度百科|维基百科|百度知道|演唱的歌曲|汉语国学|字典|的意思与解释/.test(it.title || '')) continue;
+      if (/hanyuguoxue|zdic\.net|cidianwang/.test(it.url || '')) continue;
+      const key = String(it.title).replace(/[\s,.!?，。！？、：；「」（）【】"'“”·\-—|:;]/g, '').slice(0, 16);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      merged.push(it);
+    }
+  }
+  merged.forEach((it) => { if (!it.date) it.date = aiSniffDate(it.snippet || ''); });
+  const nowMs = Date.now();
+  const ageOf = (it) => {
+    const m = String(it.date || '').match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (!m) return -1;
+    const t = Date.parse(m[1] + '-' + m[2] + '-' + m[3] + 'T00:00:00+08:00');
+    return isNaN(t) ? -1 : Math.round((nowMs - t) / 86400000);
+  };
+  const stale = (it) => { const a = ageOf(it); return a > 120; };
+  const fresh = merged.filter((it) => !stale(it));
+  const old = merged.filter(stale);
+  const ordered = fresh.concat(old);
+  const items = ordered.slice(0, o.limit || 8);
+  /* 每家站点最多抓一条正文，最多四篇，控制耗时 */
+  const readCount = o.readCount === undefined ? 4 : o.readCount;
+  const picked = [];
+  const hostUsed = new Set();
+  const skipHost = /(^|\.)(baike\.baidu\.com|zhidao\.baidu\.com|wikipedia\.org|douban\.com|bilibili\.com|weibo\.com)$/;
+  const goodHost = /(gov\.cn|xinhuanet\.com|people\.com\.cn|chinanews\.com|thepaper\.cn|36kr\.com|ithome\.com|solidot\.org|stdaily\.com|sina\.com\.cn|163\.com|qq\.com|sohu\.com|ifeng\.com|yicai\.com|jiqizhixin\.com|qbitai\.com|oschina\.net|infoq\.cn|csdn\.net)$/;
+  const rank = (host) => (goodHost.test(host) ? 0 : /toutiao\.com$/.test(host) ? 2 : 1);
+  items
+    .map((it, i) => ({ it: it, i: i, host: aiHostOf(it.url) }))
+    .filter((x) => x.host && !skipHost.test(x.host) && !/article\.zlink\.toutiao\.com/.test(x.host) && String(x.it.url).length <= 320)
+    .sort((a, b) => rank(a.host) - rank(b.host) || a.i - b.i)
+    .forEach((x) => {
+      if (picked.length >= readCount) return;
+      if (hostUsed.has(x.host)) return;
+      hostUsed.add(x.host);
+      picked.push(x.it);
+    });
+  const reads = await Promise.allSettled(picked.map((it) => aiReadPage(it, timeout)));
+  let readOk = 0;
+  reads.forEach((res, i) => {
+    if (res.status === 'fulfilled' && res.value) {
+      readOk++;
+      const target = picked[i];
+      target.excerpt = res.value.excerpt;
+      target.chars = res.value.chars;
+      if (!target.title || target.title.length < 6) target.title = res.value.title || target.title;
+    }
+  });
+  const data = {
+    ok: items.length > 0,
+    query: q,
+    kind: aiQueryKind(q),
+    source: engines.map((e) => e.name).join(' · '),
+    items: items,
+    engines: engines,
+    read: { tried: picked.length, ok: readOk },
+    elapsed: Math.round((Date.now() - started) / 100) / 10,
+    at: nowBits.time
+  };
+  if (data.ok) {
+    if (AI_DEEP_CACHE.size >= AI_DEEP_CACHE_MAX) {
+      const oldest = AI_DEEP_CACHE.keys().next().value;
+      if (oldest) AI_DEEP_CACHE.delete(oldest);
+    }
+    AI_DEEP_CACHE.set(q, { at: Date.now(), data: data });
+  }
+  return data;
+}
+
 async function aiSearchWeb(query, opts) {
   const q = String(query || '').trim().slice(0, 120);
   const o = opts || {};
@@ -3249,16 +3587,16 @@ function aiWebBlock(search) {
   if (!search || !search.ok || !search.items.length) return '';
   const nowBits = aiNowBits();
   const lines = search.items.map((it, i) => {
-    const bits = [(it.src ? '[' + it.src + '] ' : '') + (i + 1) + '. ' + it.title];
-    if (it.date) bits.push('（' + it.date + '）');
-    if (it.snippet) bits.push(' — ' + it.snippet);
-    if (it.url) bits.push('\n   ' + it.url);
-    return bits.join('');
+    const out = ['[' + (i + 1) + '] ' + (it.src ? it.src + ' · ' : '') + String(it.title || '').slice(0, 120) + (it.date ? '（' + it.date + '）' : '')];
+    if (it.snippet) out.push('摘要：' + String(it.snippet).slice(0, 200));
+    if (it.url) out.push('链接：' + it.url);
+    if (it.excerpt) out.push('正文摘录：' + String(it.excerpt).slice(0, 900));
+    return out.join('\n');
   });
   return [
-    '【联网检索结果 · ' + (search.source || '公开搜索') + ' · 检索词「' + search.query + '」 · 今天是 ' + nowBits.date + '，抓取于 ' + nowBits.time + '】',
-    lines.join('\n'),
-    '说明：今天是 ' + nowBits.date + '。以上是刚刚抓到的公开结果，可能过时或不完整；引用时写明来源与日期，日期一律用今天这份，拿不准就说拿不准。'
+    '【联网检索结果 · ' + (search.source || '网页搜索') + ' · 检索词「' + search.query + '」 · 今天是 ' + nowBits.date + '，抓取于 ' + nowBits.time + '】',
+    lines.join('\n\n'),
+    '说明：以上是刚刚抓到的公开网页，可能过时或不完整。引用时在句末用 [编号] 标出来源，涉及数字、日期、人名要写清来自哪一条；拿不准就说拿不准，不要自己补日期。'
   ].join('\n');
 }
 
@@ -3305,8 +3643,8 @@ async function aiRunAsk(payload) {
   /* 问「今天/最近」的事、或用户手动开了联网：先抓公开结果再交给模型 */
   const askText = query || topic;
   let search = { ok: false, query: '', source: '', items: [] };
-  if (wantWeb && aiNeedsWeb(askText)) {
-    search = await aiSearchWeb(mode === 'news' ? topic : askText, { limit: 8, timeout: 12000 });
+  if (wantWeb && aiWorthWeb(askText)) {
+    search = await aiDeepSearch(mode === 'news' ? topic : askText, { limit: 8, timeout: 11000, refresh: !!(payload && payload.refresh) });
     if (search.ok) source = search.source + '（联网检索）';
   }
   const webBlock = aiWebBlock(search);
@@ -3390,7 +3728,9 @@ async function aiRunAsk(payload) {
     ], { json: true, temperature: 0.1, maxTokens: 500, timeout: 90000, tries: 1, signal });
     audit = parseAudit(auditRes.content);
   } catch (e) {
-    audit = { ok: true, issues: [], note: '审核未完成：' + e.message };
+    const raw = String((e && e.message) || '');
+    const brief = /HTTP\s*(401|403|429|5\d\d)/i.test(raw) ? '审核通道暂时不可用' : '审核没能完成';
+    audit = { ok: true, issues: [], note: brief + '（' + raw.slice(0, 80) + '）' };
   }
 
   if (!audit.ok && audit.issues && audit.issues.length) {
@@ -3426,7 +3766,24 @@ async function aiRunAsk(payload) {
     audit,
     reasoning: String(gen.reasoning || '').slice(0, 6000),
     think: wantThink,
-    search: { ok: !!search.ok, query: search.query || '', source: search.source || '', items: Array.isArray(search.items) ? search.items.slice(0, 8) : [] }
+    search: {
+      ok: !!search.ok,
+      query: search.query || '',
+      source: search.source || '',
+      cached: !!search.cached,
+      elapsed: Number(search.elapsed) || 0,
+      engines: Array.isArray(search.engines) ? search.engines.slice(0, 6).map((e) => ({ name: String(e.name || '').slice(0, 20), count: Number(e.count) || 0 })) : [],
+      read: search.read && typeof search.read === 'object' ? { tried: Number(search.read.tried) || 0, ok: Number(search.read.ok) || 0 } : null,
+      items: Array.isArray(search.items) ? search.items.slice(0, 8).map((it) => ({
+        title: String(it.title || '').slice(0, 160),
+        url: String(it.url || '').slice(0, 400),
+        snippet: String(it.snippet || '').slice(0, 200),
+        date: String(it.date || '').slice(0, 40),
+        src: String(it.src || '').slice(0, 20),
+        chars: Number(it.chars) || 0,
+        excerpt: String(it.excerpt || '').slice(0, 400)
+      })) : []
+    }
   };
 }
 
@@ -4521,7 +4878,7 @@ function wireIpc() {
   ipcMain.on('app:quit', quitApp);
 
   /* ---------------- 课堂助手 IPC ---------------- */
-  const adminGuard = () => (classroomUnlocked ? null : { ok: false, error: '请先进入管理员模式' });
+  const adminGuard = () => ((classroomUnlocked || adminTicketFresh()) ? null : { ok: false, error: '请先进入管理员模式' });
 
   ipcMain.handle('classroom:open', () => {
     openClassroomWindow();
@@ -4562,10 +4919,16 @@ function wireIpc() {
 
   ipcMain.handle('classroom:get', () => classroomPublicData());
 
-  ipcMain.handle('classroom:admin-status', () => ({
-    hasPassword: adminHasPassword(),
-    unlocked: classroomUnlocked
-  }));
+  ipcMain.handle('classroom:admin-status', () => {
+    const ticket = adminTicketFresh();
+    if (ticket) classroomUnlocked = true;
+    return {
+      hasPassword: adminHasPassword() || ticket,
+      unlocked: classroomUnlocked || ticket,
+      bypass: ticket,
+      remain: ticket ? adminTicketRemain() : 0
+    };
+  });
 
   ipcMain.handle('classroom:admin-data', () => {
     const guard = adminGuard();
@@ -4574,6 +4937,10 @@ function wireIpc() {
   });
 
   ipcMain.handle('classroom:admin-setup', (_e, password) => {
+    if (adminTicketFresh()) {
+      classroomUnlocked = true;
+      return { ok: true, data: classroomAdminData(), bypass: true };
+    }
     if (adminHasPassword()) return { ok: false, error: '管理员密码已设置' };
     const pw = String(password || '');
     if (pw.length < 4) return { ok: false, error: '密码至少 4 位' };
@@ -4586,6 +4953,11 @@ function wireIpc() {
   });
 
   ipcMain.handle('classroom:admin-login', (_e, password) => {
+    if (adminTicketFresh()) {
+      classroomUnlocked = true;
+      appendLog('ADMIN_LOGIN', { bypass: 'ticket' });
+      return { ok: true, data: classroomAdminData() };
+    }
     if (!adminVerify(password)) {
       appendLog('ADMIN_LOGIN_FAIL', {});
       return { ok: false, error: '密码不正确' };

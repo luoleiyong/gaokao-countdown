@@ -3713,7 +3713,7 @@ function buildAiAssistReason(m) {
   det.appendChild(aiAssistEl('div', 'ai-reason__body', shown));
   return det;
 }
-/* 来源列表：默认收起，只显示「域名 · 标题」，不展示完整长链接 */
+/* 来源列表：默认收起，展开后给出「域名 · 标题 + 摘要」，并显示检索引擎与耗时 */
 function buildAiAssistSearch(m, idx) {
   const search = m && m.search;
   if (!search || typeof search !== 'object' || search.ok === false) return null;
@@ -3725,21 +3725,31 @@ function buildAiAssistSearch(m, idx) {
     items.push({
       url: url,
       title: String(it.title || '').slice(0, 160) || url,
-      date: String(it.date || '').slice(0, 40)
+      date: String(it.date || '').slice(0, 40),
+      src: String(it.src || '').slice(0, 20),
+      excerpt: String(it.excerpt || '').slice(0, 240)
     });
   });
   if (!items.length) return null;
   const list = items.slice(0, AI_ASSIST_SRC_MAX);
+  const engines = (Array.isArray(search.engines) ? search.engines : []).map((e) => String((e && e.name) || '').trim()).filter(Boolean);
+  const read = search.read && typeof search.read === 'object' ? search.read : null;
   const box = aiAssistEl('div', 'ai-src');
   const listId = 'aiAssistSrc' + idx;
   const head = aiAssistEl('button', 'ai-src__head');
   head.type = 'button';
   head.setAttribute('aria-expanded', 'false');
   head.setAttribute('aria-controls', listId);
-  head.appendChild(aiAssistEl('span', 'ai-src__title', '已联网检索 ' + list.length + ' 条'));
+  const label = '已联网检索 ' + list.length + ' 条' + (engines.length ? ' · ' + engines.join(' / ') : '');
+  head.appendChild(aiAssistEl('span', 'ai-src__title', label));
+  if (read && read.ok) head.appendChild(aiAssistEl('span', 'ai-src__read', '读过 ' + read.ok + ' 篇'));
   const caret = aiAssistEl('span', 'ai-src__caret', '展开');
   head.appendChild(caret);
-  if (search.query) head.title = '检索词：' + search.query;
+  const tip = ['检索词：' + (search.query || '')];
+  if (search.elapsed) tip.push('耗时 ' + search.elapsed + ' 秒');
+  if (search.cached) tip.push('本次复用了刚才的结果');
+  if (read && read.tried) tip.push('抓正文 ' + read.ok + '/' + read.tried);
+  head.title = tip.join(' · ');
   const panel = aiAssistEl('div', 'ai-src__list');
   panel.id = listId;
   panel.hidden = true;
@@ -3751,12 +3761,13 @@ function buildAiAssistSearch(m, idx) {
     a.rel = 'noopener noreferrer';
     a.title = it.title;
     const row = aiAssistEl('span', 'ai-src__row');
-    row.appendChild(aiAssistEl('span', 'ai-src__host', host || '来源'));
+    row.appendChild(aiAssistEl('span', 'ai-src__host', host || it.src || '来源'));
     if (it.title) {
       row.appendChild(aiAssistEl('span', 'ai-src__dot', '·'));
       row.appendChild(aiAssistEl('span', 'ai-src__name', it.title));
     }
     a.appendChild(row);
+    if (it.excerpt) a.appendChild(aiAssistEl('span', 'ai-src__excerpt', it.excerpt));
     if (it.date) a.appendChild(aiAssistEl('span', 'ai-src__date', it.date));
     panel.appendChild(a);
   });

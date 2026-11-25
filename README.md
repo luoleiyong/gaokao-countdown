@@ -204,6 +204,44 @@ npm start
 
 密码只保存在本机配置文件中（加盐哈希），不会上传。
 
+### 管理员免密工具（admin-tool）
+
+仓库里的 `admin-tool/` 是一个独立的本地小工具，用来临时跳过管理员密码，方便自己的机器上快速改名单、改权重或做调试。
+
+| 文件 | 作用 |
+|---|---|
+| `admin-tool/admin-unlock-ui.js` | 图形界面版：启动一个只监听 127.0.0.1 的本地页面，按钮式开启 / 收回免密、改管理员密码 |
+| `admin-tool/admin-unlock-ui.html` | 上面那个页面的界面文件（与 js 放在同一目录） |
+| `admin-tool/admin-unlock-ui.cmd` | 双击启动入口：有 Node.js 就用 Node，没有就用已打包的应用以 `ELECTRON_RUN_AS_NODE` 方式运行同一脚本 |
+| `admin-tool/admin-unlock.js` | 命令行版：默认 1 分钟，`--minutes N` 指定时长、`--status` 看剩余、`--lock` 立即收回、`--reset-password 新密码` 直接改管理员密码 |
+| `admin-tool/admin-unlock-core.js` | 两个版本共用的读写逻辑 |
+
+用法：
+
+```bash
+# 界面版（会自动打开浏览器）
+node admin-tool/admin-unlock-ui.js
+
+# 命令行版：默认开 1 分钟免密
+node admin-tool/admin-unlock.js
+
+# 想开久一点就自己指定分钟数
+node admin-tool/admin-unlock.js --minutes 30
+```
+
+Windows 上直接双击 `admin-tool/admin-unlock-ui.cmd` 也可以，不需要手动敲命令。
+
+原理与代码位置：
+
+- 工具往 `%APPDATA%\GaokaoCountdown\admin-unlock.json` 写一张带 `expires` 的票据
+- 主进程读票据并决定是否放行：`main.js:20`（`ADMIN_TICKET_FILE`）、`main.js:803`（`adminTicketFresh`）、`main.js:4881`（`adminGuard`）
+- 管理员入口三处判定：`main.js:4922`（`classroom:admin-status`）、`main.js:4940`（`classroom:admin-login`）、`main.js:4956`（`classroom:admin-setup`）
+- 票据过期或被 `--lock` 收回后，进入管理员模式立刻恢复密码验证，不需要重启应用
+
+票据默认只开 1 分钟：够进管理员面板改完一次设置，超时自动恢复密码验证。
+
+这个目录不会被打包进发布版（`package.json` 的 `build` 没有把它列进 `files` 或 `extraResources`），只在本机仓库里使用；票据文件同样只在本机，带过期时间。
+
 ### 全局快捷键
 
 | 快捷键 | 功能 |
@@ -281,6 +319,12 @@ gaokao-countdown/
 │   ├── signs.js            幸运签签池
 │   ├── solar-terms.js      二十四节气
 │   └── sound.js            抽签与点名音效
+├── admin-tool/             管理员免密小工具（界面版 + 命令行版，不打包进发布版）
+│   ├── admin-unlock-ui.cmd  双击启动入口
+│   ├── admin-unlock-ui.js   本地页面服务（127.0.0.1）
+│   ├── admin-unlock-ui.html 工具界面
+│   ├── admin-unlock.js      命令行版
+│   └── admin-unlock-core.js 票据与密码读写逻辑
 ├── update/version.json     版本清单（CDN 兜底更新源）
 ├── build/
 │   ├── icon.png            应用图标

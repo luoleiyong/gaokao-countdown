@@ -2624,6 +2624,15 @@ body[data-skin="bamboo"] .logs{background:rgba(255,255,255,.55);color:var(--dim)
   overflow:hidden;text-overflow:ellipsis;word-break:break-word;
 }
 .ai-src__date{font-size:10px;color:var(--dim)}
+.ai-src__read{
+  flex:none;font-size:10px;color:var(--faint);
+  padding-left:6px;border-left:1px solid var(--line);
+}
+.ai-src__excerpt{
+  font-size:10.5px;line-height:1.5;color:var(--dim);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;word-break:break-word;
+}
 
 /* 生成中 */
 .ai-msg.is-typing .ai-msg__bubble{
@@ -2706,12 +2715,13 @@ body[data-skin="bamboo"] .logs{background:rgba(255,255,255,.55);color:var(--dim)
 }
 .ai-md hr{border:0;border-top:1px solid var(--line);margin:9px 0}
 .ai-md table{
-  width:100%;border-collapse:collapse;margin:6px 0 8px;
+  display:block;width:100%;max-width:100%;overflow-x:auto;
+  border-collapse:collapse;margin:6px 0 8px;
   font-size:11.5px;
 }
 .ai-md th,.ai-md td{
   border:1px solid var(--line);padding:4px 7px;text-align:left;
-  vertical-align:top;word-break:break-word;
+  vertical-align:top;white-space:nowrap;
 }
 .ai-md th{
   background:color-mix(in srgb, var(--gold) 14%, transparent);

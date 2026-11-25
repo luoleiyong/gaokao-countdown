@@ -951,6 +951,15 @@ select.ai-field__input{padding-right:4px}
   overflow:hidden;overflow-wrap:anywhere;
 }
 .ai-src__item-meta{font-size:10.5px;color:var(--faint)}
+.ai-src__read{
+  flex:none;font-size:10px;color:var(--faint);
+  padding-left:6px;border-left:1px solid var(--line);
+}
+.ai-src__excerpt{
+  font-size:10.5px;line-height:1.5;color:var(--faint);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;overflow-wrap:anywhere;
+}
 
 /* 联网未命中：只在 meta 行给一行弱色提示 */
 .ai-msg__netmiss{color:var(--faint);margin-left:2px}

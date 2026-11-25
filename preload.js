@@ -106,6 +106,12 @@ contextBridge.exposeInMainWorld('gaokao', {
   aiAsk: (payload) => ipcRenderer.invoke('ai:ask', payload),
   aiCancel: () => ipcRenderer.invoke('ai:cancel'),
 
+  /* 每日热点自动化：卡片读取、手动刷新、定时设置 */
+  newsBrief: () => ipcRenderer.invoke('news:brief'),
+  newsRefresh: () => ipcRenderer.invoke('news:refresh'),
+  newsConfig: (patch) => ipcRenderer.invoke('news:config', patch),
+  onNewsUpdated: (cb) => ipcRenderer.on('news:updated', (_e, data) => cb(data)),
+
   /* 测试版控制面板 */
   openTestPanel: () => ipcRenderer.invoke('test:open'),
   closeTestPanel: () => ipcRenderer.invoke('test:close'),

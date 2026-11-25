@@ -4,7 +4,6 @@
  *   node admin-tool\admin-unlock.js --minutes 10    指定分钟数
  *   node admin-tool\admin-unlock.js --status        看剩余时间
  *   node admin-tool\admin-unlock.js --lock          立即收回
- *   node admin-tool\admin-unlock.js --reset-password 1234   改管理员密码（需重启程序）
  */
 const core = require('./admin-unlock-core.js');
 const argv = process.argv.slice(2);
@@ -24,13 +23,6 @@ if (has('lock')) {
   process.exit(0);
 }
 
-const pw = val('reset-password', '');
-if (pw) {
-  if (String(pw).length < 4) { console.error('密码至少 4 位。'); process.exit(2); }
-  core.resetPassword(pw);
-  console.log('管理员密码已改为新密码，重启程序后生效。');
-  process.exit(0);
-}
 
 const minutes = Number(val('minutes', 1)) || 1;
 const t = core.writeTicket(minutes);

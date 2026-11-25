@@ -3,7 +3,6 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
@@ -94,53 +93,8 @@ namespace GaokaoAdminTool
             return "今日权重额度：已用于「" + name + "」，其他学生权重今日锁定";
         }
 
-        public static string Hex(byte[] data)
-        {
-            StringBuilder sb = new StringBuilder(data.Length * 2);
-            for (int i = 0; i < data.Length; i++) sb.Append(data[i].ToString("x2"));
-            return sb.ToString();
-        }
 
-        public static string Sha256Hex(string text)
-        {
-            using (SHA256 sha = SHA256.Create())
-            {
-                byte[] bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(text));
-                return Hex(bytes);
-            }
-        }
 
-        public static string SetPassword(string pw)
-        {
-            if (pw == null || pw.Length < 4) return "密码至少 4 位";
-            if (!File.Exists(StoreFile)) return "没找到 store.json，请先启动一次主程序";
-            try
-            {
-                byte[] saltBytes = new byte[16];
-                using (RandomNumberGenerator rng = RandomNumberGenerator.Create()) { rng.GetBytes(saltBytes); }
-                string salt = Hex(saltBytes);
-                string hash = Sha256Hex(salt + "|" + pw);
-                string text = File.ReadAllText(StoreFile, Encoding.UTF8);
-                if (Regex.IsMatch(text, "\"passwordSalt\""))
-                {
-                    text = Regex.Replace(text, "\"passwordSalt\"\\s*:\\s*\"[^\"]*\"", "\"passwordSalt\":\"" + salt + "\"");
-                    text = Regex.Replace(text, "\"passwordHash\"\\s*:\\s*\"[^\"]*\"", "\"passwordHash\":\"" + hash + "\"");
-                }
-                else
-                {
-                    Match m = Regex.Match(text, "\"classroom\"\\s*:\\s*\\{");
-                    if (!m.Success) return "store.json 结构不认识，没有 classroom 段";
-                    text = text.Insert(m.Index + m.Length,
-                        "\"passwordSalt\":\"" + salt + "\",\"passwordHash\":\"" + hash + "\",");
-                }
-                File.WriteAllText(StoreFile, text, new UTF8Encoding(false));
-                return "密码已更新，请重启主程序后生效";
-            }
-            catch (Exception ex)
-            {
-                return "改密码失败：" + ex.Message;
-            }
-        }
 
         public static string FindApp()
         {
@@ -200,8 +154,6 @@ namespace GaokaoAdminTool
         private Label lblQuota;
         private Label lblTicketPath;
         private NumericUpDown numMinutes;
-        private TextBox txtPw1;
-        private TextBox txtPw2;
         private TextBox txtLog;
         private Timer timer;
         private bool autoLaunched;
@@ -331,33 +283,9 @@ namespace GaokaoAdminTool
                 Log(ok ? "已收回免密票据。" : "收回失败，请检查票据文件是否被占用。");
                 RefreshState();
             };
-            GroupBox g4 = Group("改管理员密码", 20, 484, 620, 110);
-            txtPw1 = new TextBox();
-            txtPw1.SetBounds(16, 32, 170, 28);
-            txtPw1.UseSystemPasswordChar = true;
-            txtPw1.PasswordChar = '*';
-            g4.Controls.Add(txtPw1);
-            txtPw2 = new TextBox();
-            txtPw2.SetBounds(196, 32, 170, 28);
-            txtPw2.UseSystemPasswordChar = true;
-            txtPw2.PasswordChar = '*';
-            g4.Controls.Add(txtPw2);
-            Button bPw = Btn(g4, "修改密码", 376, 30, 120, 32, false);
-            Label l4 = Lbl(g4, "不需要旧密码，两次输入一致即可；改完请重启主程序。", 16, 74, 560, 22, 8.5F, false);
-            l4.ForeColor = Dim;
-            bPw.Click += delegate
-            {
-                string a = txtPw1.Text;
-                string b = txtPw2.Text;
-                if (a.Length < 4) { Log("密码至少 4 位。"); return; }
-                if (a != b) { Log("两次输入的密码不一致。"); return; }
-                Log(Core.SetPassword(a));
-                txtPw1.Text = "";
-                txtPw2.Text = "";
-            };
 
             txtLog = new TextBox();
-            txtLog.SetBounds(20, 604, 620, 80);
+            txtLog.SetBounds(20, 484, 620, 160);
             txtLog.Multiline = true;
             txtLog.ReadOnly = true;
             txtLog.ScrollBars = ScrollBars.Vertical;
@@ -404,7 +332,6 @@ namespace GaokaoAdminTool
             string mode = "";
             int minutes = 1;
             string outFile = "";
-            string pw = "";
             for (int i = 0; i < args.Length; i++)
             {
                 string a = args[i].ToLowerInvariant();
@@ -419,7 +346,6 @@ namespace GaokaoAdminTool
                 else if (a == "--status") mode = "status";
                 else if (a == "--open") mode = (mode == "" ? "open" : mode + "+open");
                 else if (a == "--out" && i + 1 < args.Length) { outFile = args[i + 1]; i++; }
-                else if (a == "--set-password" && i + 1 < args.Length) { pw = args[i + 1]; i++; mode = "password"; }
             }
 
             if (mode.Length > 0)
@@ -436,11 +362,6 @@ namespace GaokaoAdminTool
                 {
                     sb.AppendLine("action=lock");
                     sb.AppendLine("ok=" + (Core.DropTicket() ? "1" : "0"));
-                }
-                if (mode == "password")
-                {
-                    sb.AppendLine("action=password");
-                    sb.AppendLine("result=" + Core.SetPassword(pw));
                 }
                 sb.AppendLine("ticket_remain=" + Core.TicketRemain());
                 sb.AppendLine("quota_name=" + Core.QuotaName());

@@ -199,7 +199,15 @@ const STORE_DEFAULTS = {
   aiWeb: true,
   aiTopic: '每日热点',
   aiNewsDate: '',
-  aiNewsCache: null
+  aiNewsCache: null,
+  /* 每日热点自动化：默认每天 08:00 抓一次，主界面卡片显示前 4 条 */
+  newsAutoEnabled: true,
+  newsAutoTime: '08:00',
+  newsAutoDate: '',
+  newsAutoItems: [],
+  newsAutoSources: [],
+  newsAutoError: '',
+  newsAutoAt: 0
 };
 
 let win = null;
@@ -944,6 +952,19 @@ function loadStore() {
       : '每日热点';
     merged.aiNewsDate = typeof merged.aiNewsDate === 'string' ? merged.aiNewsDate : '';
     merged.aiNewsCache = merged.aiNewsCache && typeof merged.aiNewsCache === 'object' ? merged.aiNewsCache : null;
+    // 每日热点自动化：字段缺失时按默认开启、08:00 处理，旧数据升级后直接可用
+    merged.newsAutoEnabled = data.newsAutoEnabled !== false;
+    merged.newsAutoTime = normalizeNewsTime(data.newsAutoTime);
+    merged.newsAutoDate = typeof data.newsAutoDate === 'string' ? data.newsAutoDate.slice(0, 10) : '';
+    merged.newsAutoItems = normalizeNewsItems(data.newsAutoItems);
+    merged.newsAutoSources = Array.isArray(data.newsAutoSources)
+      ? data.newsAutoSources
+        .filter((s) => s && typeof s === 'object')
+        .map((s) => ({ name: String(s.name || '').slice(0, 20), count: Number(s.count) || 0 }))
+        .slice(0, 8)
+      : [];
+    merged.newsAutoError = typeof data.newsAutoError === 'string' ? data.newsAutoError.slice(0, 200) : '';
+    merged.newsAutoAt = Number(data.newsAutoAt) || 0;
     return merged;
   } catch {
     // 文件损坏时先留一份原件，避免用户数据被直接覆盖
@@ -1032,6 +1053,8 @@ const LOG_LABELS = {
   DATA_EXPORT: '导出数据',
   DATA_IMPORT: '导入数据',
   EVENT_SAVE: '保存重要日子',
+  NEWS_AUTO: '自动抓取每日热点',
+  NEWS_CONFIG: '每日热点设置',
   GROUP_DRAW: '随机分组',
   TIMER_DONE: '课堂计时结束',
   TIMER_BG: '更换计时背景',
@@ -3153,6 +3176,153 @@ async function aiHotNews(force) {
 }
 
 
+
+/* ---------------- 每日热点自动化：到点抓取 + 主界面卡片 ---------------- */
+/* 时间只接受 HH:mm，非法值一律回落 08:00，避免坏数据把定时器卡死 */
+function normalizeNewsTime(v) {
+  const s = String(v == null ? '' : v).trim();
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(s) ? s : '08:00';
+}
+
+/* 卡片只认这三条字段，顺手去重、截断，避免把大对象塞进 store */
+function normalizeNewsItems(input) {
+  const list = Array.isArray(input) ? input : [];
+  const seen = new Set();
+  const out = [];
+  list.forEach((it) => {
+    if (!it || typeof it !== 'object') return;
+    const title = String(it.title || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    if (!title || seen.has(title)) return;
+    seen.add(title);
+    const url = String(it.url || '').trim().slice(0, 400);
+    out.push({
+      title,
+      source: String(it.source || '').trim().slice(0, 20),
+      url: /^https?:\/\//i.test(url) ? url : ''
+    });
+  });
+  return out.slice(0, 12);
+}
+
+/* 四路公开热榜并行抓一次，返回结构化条目；全部失败时退回新浪滚动 */
+async function newsFetchItems() {
+  const jobs = [
+    { name: '今日头条', p: aiToutiaoHotItems(10, 9000) },
+    { name: '百度热搜', p: aiBaiduHotItems(10, 9000) },
+    { name: '知乎日报', p: aiZhihuDailyItems(5, 9000) },
+    { name: '人民网', p: aiRssSourceItems(AI_RSS_FEEDS[0], 5, 9000) }
+  ];
+  const settled = await Promise.allSettled(jobs.map((j) => j.p));
+  const groups = [];
+  const sources = [];
+  let error = '';
+  settled.forEach((res, i) => {
+    const name = jobs[i].name;
+    if (res.status === 'fulfilled' && Array.isArray(res.value) && res.value.length) {
+      sources.push({ name, count: res.value.length });
+      groups.push({ name, list: res.value });
+    } else if (res.status === 'rejected' && !error) {
+      error = String((res.reason && res.reason.message) || res.reason).slice(0, 120);
+    }
+  });
+  /* 按来源轮流取，前 4 条不会全挤在同一个热榜里 */
+  const items = [];
+  for (let round = 0; round < 12; round++) {
+    let added = false;
+    groups.forEach((g) => {
+      const it = g.list[round];
+      if (!it) return;
+      items.push({ title: it.title, source: g.name, url: it.url });
+      added = true;
+    });
+    if (!added) break;
+  }
+  if (!items.length) {
+    try {
+      const raw = await fetchText(AI_HOT_URL, 10000);
+      let parsed = null;
+      try { parsed = JSON.parse(raw); } catch { parsed = null; }
+      const rows = parsed && parsed.result && Array.isArray(parsed.result.data) ? parsed.result.data : [];
+      rows.slice(0, 12).forEach((it) => {
+        const title = String((it && (it.title || it.stitle)) || '').trim();
+        if (title) items.push({ title, source: '新浪滚动', url: String((it && it.url) || '').trim() });
+      });
+      if (items.length) sources.push({ name: '新浪滚动', count: items.length });
+    } catch (e) {
+      if (!error) error = e.message;
+    }
+  }
+  return { items: normalizeNewsItems(items), sources, error };
+}
+
+/* 卡片要的摘要：启用状态、抓取时间、条目与失败原因 */
+function newsBrief() {
+  const items = Array.isArray(store.newsAutoItems) ? store.newsAutoItems : [];
+  return {
+    enabled: store.newsAutoEnabled !== false,
+    time: normalizeNewsTime(store.newsAutoTime),
+    date: store.newsAutoDate || '',
+    today: dateKey(),
+    items: items.slice(0, 12),
+    sources: Array.isArray(store.newsAutoSources) ? store.newsAutoSources : [],
+    error: store.newsAutoError || '',
+    at: Number(store.newsAutoAt) || 0
+  };
+}
+
+function newsBroadcast() {
+  const payload = newsBrief();
+  BrowserWindow.getAllWindows().forEach((w) => {
+    try {
+      if (!w.isDestroyed()) w.webContents.send('news:updated', payload);
+    } catch { /* 忽略 */ }
+  });
+}
+
+/* 抓一次写进 store；force=true 表示用户手动刷新，忽略「今天已经抓过」 */
+async function newsRefresh(force) {
+  const today = dateKey();
+  if (!force && store.newsAutoDate === today && Array.isArray(store.newsAutoItems) && store.newsAutoItems.length) {
+    return newsBrief();
+  }
+  const out = await newsFetchItems();
+  if (out.items.length) {
+    store.newsAutoDate = today;
+    store.newsAutoItems = out.items;
+    store.newsAutoSources = out.sources;
+    store.newsAutoError = '';
+  } else {
+    store.newsAutoError = out.error || '暂未获取到今日热点';
+  }
+  store.newsAutoAt = Date.now();
+  saveStore();
+  appendLog('NEWS_AUTO', {
+    force: !!force, date: store.newsAutoDate, count: out.items.length,
+    ok: out.items.length > 0, error: store.newsAutoError
+  });
+  newsBroadcast();
+  return newsBrief();
+}
+
+/* 每 60 秒看一次表：到点且今天还没抓过就抓；晚开机当天的补抓也靠它 */
+let newsTimer = null;
+function newsTick() {
+  if (store.newsAutoEnabled === false) return;
+  const today = dateKey();
+  if (store.newsAutoDate === today) return;
+  const now = new Date();
+  const hhmm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+  if (hhmm < normalizeNewsTime(store.newsAutoTime)) return;
+  newsRefresh(true).catch(() => { /* 失败原因已写进 store，卡片上会显示 */ });
+}
+
+function startNewsScheduler() {
+  if (newsTimer) clearInterval(newsTimer);
+  /* 启动 6 秒后先补一次，避免开机晚于设定时间就整天没内容 */
+  setTimeout(() => { try { newsTick(); } catch { /* 忽略 */ } }, 6000);
+  newsTimer = setInterval(() => { try { newsTick(); } catch { /* 忽略 */ } }, 60 * 1000);
+}
+
 /* ---------------- 联网检索：Bing RSS 主通道 + 百度热搜榜 ---------------- */
 function aiStripTags(s) {
   return String(s || '')
@@ -3990,6 +4160,7 @@ function wireIpc() {
       aiWeb: store.aiWeb !== false,
       aiProxy: store.aiProxy || '',
       aiCustomModels: normalizeModelNames(store.aiCustomModels),
+      news: newsBrief(),
       aiLoginUrl: aiLoginUrlOf(aiProviderOf(store)),
       aiKeyUrl: aiProviderOf(store).keyUrl || '',
       aiAuthUrl: aiAuthUrlOf(aiProviderOf(store)),
@@ -4040,6 +4211,8 @@ function wireIpc() {
     if (typeof patch.updateAutoCheck === 'boolean') store.updateAutoCheck = patch.updateAutoCheck;
     if (typeof patch.updateAutoDownload === 'boolean') store.updateAutoDownload = patch.updateAutoDownload;
     if (typeof patch.backupAuto === 'boolean') store.backupAuto = patch.backupAuto;
+    if (typeof patch.newsAutoEnabled === 'boolean') store.newsAutoEnabled = patch.newsAutoEnabled;
+    if (typeof patch.newsAutoTime === 'string') store.newsAutoTime = normalizeNewsTime(patch.newsAutoTime);
     if (typeof patch.backupDir === 'string') {
       const raw = patch.backupDir.trim();
       if (!raw) {
@@ -4910,6 +5083,25 @@ function wireIpc() {
     }
   });
 
+  /* 每日热点卡片：读取缓存 / 手动刷新 / 改时间与开关 */
+  ipcMain.handle('news:brief', () => ({ ok: true, ...newsBrief() }));
+  ipcMain.handle('news:refresh', async () => {
+    try {
+      const data = await newsRefresh(true);
+      return { ok: true, ...data, error: data.items.length ? '' : (data.error || '暂未获取到今日热点') };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+  ipcMain.handle('news:config', (_e, patch) => {
+    const p = patch && typeof patch === 'object' ? patch : {};
+    if (typeof p.enabled === 'boolean') store.newsAutoEnabled = p.enabled;
+    if (typeof p.time === 'string') store.newsAutoTime = normalizeNewsTime(p.time);
+    saveStore();
+    appendLog('NEWS_CONFIG', { enabled: store.newsAutoEnabled !== false, time: store.newsAutoTime });
+    return { ok: true, enabled: store.newsAutoEnabled !== false, time: store.newsAutoTime };
+  });
+
   /* AI 对话框主入口：知识点 / 每日热点 / 自定义提问，均带审核自查 */
   ipcMain.handle('ai:ask', async (_e, payload) => {
     try {
@@ -5485,6 +5677,7 @@ if (!gotLock) {
     createWindow();
     createTray();
     wireIpc();
+    startNewsScheduler();
     registerGlobalShortcuts();
     if (isTestBuildApp()) {
       setTimeout(() => openTestPanel(), 1600);

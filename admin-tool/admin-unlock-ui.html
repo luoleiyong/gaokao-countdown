@@ -97,15 +97,6 @@
     </div>
   </div>
 
-  <div class="card">
-    <h2>直接改管理员密码</h2>
-    <div class="row">
-      <input id="pw1" type="password" placeholder="新密码" />
-      <input id="pw2" type="password" placeholder="再输一次" />
-      <button id="reset">修改密码</button>
-    </div>
-    <div class="hint">不需要知道旧密码。改完要重启应用才生效。</div>
-  </div>
 
   <div class="card">
     <h2>操作记录</h2>
@@ -118,6 +109,7 @@
       <li>票据写在 <span id="dirInline"></span>，带过期时间，应用每次进入管理员都会重新读取。</li>
       <li>页面只监听 127.0.0.1，其它网页无法跨站调用这些接口。</li>
       <li>关掉这个页面或命令行窗口，工具即停止；已经开启的免密继续有效直到过期。</li>
+      <li>本工具只负责免密与收回，不提供修改管理员密码的功能。</li>
     </ul>
   </div>
 </div>
@@ -142,8 +134,8 @@ function getStatus(){
     dot.className = 'dot ' + (d.valid ? 'on' : 'off');
     state.textContent = d.valid ? '免密已开启，剩余 ' + fmt(d.remain) : '未开启免密';
     detail.textContent = d.valid
-      ? '到期时间 ' + new Date(d.expires).toLocaleString() + '　·　' + (d.hasPassword ? '管理员密码已设置' : '管理员密码未设置')
-      : '进入管理员模式会要求输入密码' + (d.hasPassword ? '' : '（当前尚未设置密码）');
+      ? '到期时间 ' + new Date(d.expires).toLocaleString()
+      : '进入管理员模式会要求输入密码';
     document.getElementById('filePath').textContent = '票据文件：' + d.file;
     document.getElementById('dirInline').textContent = d.dir;
   });
@@ -170,16 +162,6 @@ document.getElementById('lock').onclick = function(){
   post('/api/lock').then(function(d){
     log(d.removed ? '已收回免密，现在进入管理员需要密码。' : '本来就没有免密票据。');
     getStatus();
-  });
-};
-document.getElementById('reset').onclick = function(){
-  var a = document.getElementById('pw1').value, b = document.getElementById('pw2').value;
-  if (a.length < 4) { log('密码至少 4 位。'); return; }
-  if (a !== b) { log('两次输入的密码不一致。'); return; }
-  post('/api/reset-password', { password: a }).then(function(d){
-    log(d.ok ? '管理员密码已修改，重启应用后生效。' : ('失败：' + d.error));
-    document.getElementById('pw1').value = '';
-    document.getElementById('pw2').value = '';
   });
 };
 document.getElementById('refresh').onclick = function(){ getStatus(); log('已刷新状态。'); };

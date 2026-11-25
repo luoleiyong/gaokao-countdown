@@ -1,5 +1,5 @@
 {
-  "version": "2.9.5",
-  "notes": "修复了一些已知问题",
+  "version": "3.0.0",
+  "notes": "新增：每天 08:00 自动抓取每日热点，主界面卡片显示前 4 条，时间与开关都可在设置里改。",
   "url": "https://github.com/luoleiyong/gaokao-countdown/releases/latest"
 }

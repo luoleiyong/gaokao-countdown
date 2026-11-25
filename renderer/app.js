@@ -104,7 +104,9 @@ const state = {
   aiTesting: false,
   /* AI 助手抽屉的两个开关：初值 true，打开抽屉时按 aiConfig() 校准 */
   aiThink: true,
-  aiWeb: true
+  aiWeb: true,
+  /* 每日热点卡片：默认每天 08:00 自动抓取 */
+  news: { enabled: true, time: '08:00', date: '', items: [], sources: [], error: '', at: 0 }
 };
 
 const bridge = window.gaokao || createMockBridge();
@@ -243,6 +245,10 @@ async function boot() {
   state.aiAuthUrl = s.aiAuthUrl || '';
   state.aiReady = s.aiReady !== false;
   state.aiReadyError = s.aiReadyError || '';
+  state.news = Object.assign(
+    { enabled: true, time: '08:00', date: '', items: [], sources: [], error: '', at: 0 },
+    s.news && typeof s.news === 'object' ? s.news : {}
+  );
   state.debug = !!s.debugMode;
   state.onboarded = !!s.onboarded;
   state.onboardAutoLaunch = state.autoLaunch;
@@ -310,6 +316,14 @@ async function boot() {
     state.updateDownload.phase = 'error';
     renderUpdateUI();
   });
+  /* 主进程定时抓完热点会推一次，卡片跟着刷新，不需要用户点 */
+  if (typeof bridge.onNewsUpdated === 'function') {
+    bridge.onNewsUpdated((data) => {
+      if (!data) return;
+      state.news = Object.assign({}, state.news, data);
+      renderNewsCard();
+    });
+  }
 
   setInterval(tick, 1000);
 
@@ -1409,6 +1423,84 @@ function petFreqDelay(base) {
   return Math.max(8000, Math.round(base * petFreqMult()));
 }
 
+
+/* ---------------- 渲染：每日热点卡片 ---------------- */
+const NEWS_CARD_LIMIT = 4;
+
+function newsCardMeta() {
+  const n = state.news || {};
+  if (n.enabled === false) return '自动抓取已关闭';
+  if (n.date && n.date === dateKey()) {
+    const at = Number(n.at) || 0;
+    if (at) {
+      const d = new Date(at);
+      return `今日 ${pad2(d.getHours())}:${pad2(d.getMinutes())} 更新`;
+    }
+    return '今日已更新';
+  }
+  return `每天 ${n.time || '08:00'} 自动更新`;
+}
+
+function renderNewsCard() {
+  const card = $('newsCard');
+  if (!card) return;
+  const n = state.news || {};
+  const items = Array.isArray(n.items) ? n.items : [];
+  card.hidden = n.enabled === false && !items.length;
+  const meta = $('newsCardMeta');
+  if (meta) meta.textContent = newsCardMeta();
+  const box = $('newsList');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!items.length) {
+    const hint = document.createElement('span');
+    hint.className = 'news-card__empty';
+    hint.textContent = n.error
+      ? `今天的热点还没取到：${n.error}`
+      : `今天 ${n.time || '08:00'} 自动抓取，稍等一下`;
+    box.appendChild(hint);
+  } else {
+    items.slice(0, NEWS_CARD_LIMIT).forEach((it, i) => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'news-row';
+      row.innerHTML = `<i>${i + 1}</i><b>${escapeHtml(it.title)}</b>`;
+      const tag = it.source ? it.source + ' · ' : '';
+      row.title = it.url ? `${tag}${it.title}（点击用浏览器打开）` : tag + it.title;
+      if (it.url) row.addEventListener('click', () => bridge.openExternal(it.url));
+      box.appendChild(row);
+    });
+  }
+  const foot = $('newsCardFoot');
+  if (foot) {
+    const names = (Array.isArray(n.sources) ? n.sources : []).map((s) => s.name).filter(Boolean);
+    if (items.length && names.length) {
+      foot.textContent = `共 ${items.length} 条 · 来源 ${names.join(' / ')}`;
+    } else if (items.length) {
+      foot.textContent = `共 ${items.length} 条 · 点标题用浏览器打开`;
+    } else {
+      foot.textContent = `每天 ${n.time || '08:00'} 抓取 · 点标题用浏览器打开`;
+    }
+  }
+}
+
+function syncNewsAutoUI() {
+  const on = !(state.news && state.news.enabled === false);
+  const time = (state.news && state.news.time) || '08:00';
+  const sw = $('switchNewsAuto');
+  if (sw) {
+    sw.classList.toggle('on', on);
+    sw.setAttribute('aria-pressed', String(on));
+  }
+  const label = $('newsAutoStatus');
+  if (label) label.textContent = on ? `每天 ${time}` : '已关闭';
+  const input = $('inputNewsTime');
+  if (input) {
+    input.value = time;
+    input.disabled = !on;
+  }
+}
+
 function renderAll() {
   state.lastDays = null;
   state.lastCourseKey = '';
@@ -1417,6 +1509,7 @@ function renderAll() {
   renderToday();
   renderHistory();
   renderEvents();
+  renderNewsCard();
   renderPet();
 }
 
@@ -2581,6 +2674,7 @@ function openSettings() {
   renderSkinGrid();
   renderSubjectGrid();
   renderAiPanel();
+  syncNewsAutoUI();
   loadAiConfig();
   $('settings').hidden = false;
 }
@@ -5271,6 +5365,58 @@ function bindEvents() {
     el.addEventListener('click', closeEventsModal);
   });
 
+  // 每日热点：开关与抓取时间
+  syncNewsAutoUI();
+  $('switchNewsAuto').addEventListener('click', async () => {
+    const next = !(state.news && state.news.enabled !== false);
+    state.news = Object.assign({}, state.news, { enabled: next });
+    syncNewsAutoUI();
+    renderNewsCard();
+    try {
+      const res = await bridge.newsConfig({ enabled: next });
+      if (res && res.ok) state.news.enabled = res.enabled !== false;
+    } catch (e) { /* 忽略，界面已先切 */ }
+    toast(next ? `已开启，每天 ${(state.news && state.news.time) || '08:00'} 自动抓取热点` : '已关闭每天自动抓取热点');
+  });
+  $('inputNewsTime').addEventListener('change', async (e) => {
+    const v = String(e.target.value || '').trim();
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(v)) {
+      e.target.value = (state.news && state.news.time) || '08:00';
+      return toast('请选择有效的时间');
+    }
+    state.news = Object.assign({}, state.news, { time: v });
+    syncNewsAutoUI();
+    renderNewsCard();
+    try {
+      const res = await bridge.newsConfig({ time: v });
+      if (res && res.ok) state.news.time = res.time || v;
+    } catch (err) { /* 忽略 */ }
+    toast('已改为每天 ' + v + ' 抓取热点');
+  });
+  $('btnNewsRefresh').addEventListener('click', async () => {
+    const btn = $('btnNewsRefresh');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = '抓取中';
+    try {
+      const res = await bridge.newsRefresh();
+      if (res && res.ok) {
+        state.news = Object.assign({}, state.news, res);
+        renderNewsCard();
+        const n = Array.isArray(res.items) ? res.items.length : 0;
+        toast(n ? `已更新 ${n} 条今日热点` : '暂未获取到今日热点');
+      } else {
+        renderNewsCard();
+        toast((res && res.error) || '抓取失败，请稍后再试');
+      }
+    } catch (e) {
+      toast('抓取失败，请稍后再试');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '刷新';
+    }
+  });
+
   // 数据与备份
   $('switchBackup').classList.toggle('on', state.backupAuto);
   $('switchBackup').setAttribute('aria-pressed', String(state.backupAuto));
@@ -5521,6 +5667,10 @@ function createMockBridge() {
     aiTest: async () => ({ ok: false, error: '浏览器预览模式不支持真实调用' }),
     aiListModels: async () => ({ ok: false, error: '浏览器预览模式不支持获取模型列表' }),
     aiHot: async () => ({ ok: true, date: dateKey(), count: 0, text: '（浏览器预览模式不联网取热点）', error: '' }),
+    newsBrief: async () => ({ ok: true, enabled: true, time: '08:00', date: '', today: dateKey(), items: [], sources: [], error: '', at: 0 }),
+    newsRefresh: async () => ({ ok: false, error: '浏览器预览模式不联网取热点' }),
+    newsConfig: async () => ({ ok: true, enabled: true, time: '08:00' }),
+    onNewsUpdated: () => {},
     aiAsk: async () => ({ ok: false, error: '浏览器预览模式不支持真实调用' })
   };
 }

@@ -48,7 +48,6 @@ var server = http.createServer(async function (req, res) {
   }
   if (req.method === 'GET' && u.pathname === '/api/status') {
     var s = core.readStatus();
-    s.hasPassword = core.hasPassword();
     return send(res, 200, s);
   }
   if (req.method === 'POST') {
@@ -59,12 +58,6 @@ var server = http.createServer(async function (req, res) {
       return send(res, 200, { ok: true, minutes: t.minutes, expires: t.data.expires });
     }
     if (u.pathname === '/api/lock') return send(res, 200, { ok: true, removed: core.dropTicket() });
-    if (u.pathname === '/api/reset-password') {
-      var pw = String(body.password || '');
-      if (pw.length < 4) return send(res, 200, { ok: false, error: '密码至少 4 位' });
-      core.resetPassword(pw);
-      return send(res, 200, { ok: true });
-    }
   }
   send(res, 404, { ok: false, error: 'not found' });
 });

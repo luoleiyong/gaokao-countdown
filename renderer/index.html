@@ -90,6 +90,16 @@
           <div class="events-card__list" id="eventsList"></div>
         </section>
 
+        <section class="news-card" id="newsCard" hidden>
+          <div class="news-card__head">
+            <span class="news-card__title">每日热点</span>
+            <span class="news-card__meta" id="newsCardMeta">每天 08:00 自动更新</span>
+            <button class="news-card__act" id="btnNewsRefresh" title="立即抓取今日热点">刷新</button>
+          </div>
+          <div class="news-card__list" id="newsList"></div>
+          <div class="news-card__foot" id="newsCardFoot">每天到点自动抓取，卡片显示前 4 条</div>
+        </section>
+
         <div class="milestone" id="milestone" hidden></div>
       </section>
 
@@ -497,6 +507,20 @@
           </div>
           <button class="btn-ghost btn-wide setting-action" id="btnAiAssistantSide">打开 AI 助手</button>
           <p class="hint">默认用 Kilo 免费池，无需密钥；也可换成智谱 GLM 等供应商，密钥只保存在本机。</p>
+        </section>
+
+        <section class="setting">
+          <label class="setting__label">每日热点 <span class="setting__value" id="newsAutoStatus">每天 08:00</span></label>
+          <div class="update-pref">
+            <div>
+              <b>每天自动抓取</b>
+              <span>到点抓公开热榜，卡片显示前 4 条</span>
+            </div>
+            <button class="switch" id="switchNewsAuto" aria-pressed="true"><i></i></button>
+          </div>
+          <label class="setting__label">抓取时间</label>
+          <input type="time" id="inputNewsTime" class="input" value="08:00" />
+          <p class="hint">当天更晚打开软件会自动补抓；关闭自动抓取后，卡片仍保留上次的内容。</p>
         </section>
 
         <section class="setting">

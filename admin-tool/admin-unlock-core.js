@@ -1,11 +1,10 @@
 /* 管理员免密工具 · 共用逻辑
- * 只读写 %APPDATA%\GaokaoCountdown 下的 admin-unlock.json 与 store.json，
+ * 只读写 %APPDATA%\GaokaoCountdown 下的 admin-unlock.json，
  * 不依赖 Electron，Node 8+ 可直接运行。
  */
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const crypto = require('crypto');
 
 const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
 const dir = process.env.GK_USER_DIR || path.join(appData, 'GaokaoCountdown');
@@ -45,25 +44,6 @@ function dropTicket() {
   try { fs.unlinkSync(ticketFile); return true; } catch (e) { return false; }
 }
 
-function resetPassword(pw) {
-  let store = {};
-  try { store = JSON.parse(fs.readFileSync(storeFile, 'utf8')); } catch (e) { store = {}; }
-  if (!store.classroom || typeof store.classroom !== 'object') store.classroom = {};
-  const salt = crypto.randomBytes(16).toString('hex');
-  store.classroom.passwordSalt = salt;
-  store.classroom.passwordHash = crypto.createHash('sha256').update(salt + '|' + String(pw)).digest('hex');
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(storeFile, JSON.stringify(store, null, 2), 'utf8');
-  return true;
-}
-
-function hasPassword() {
-  try {
-    const store = JSON.parse(fs.readFileSync(storeFile, 'utf8'));
-    return !!(store.classroom && store.classroom.passwordHash);
-  } catch (e) { return false; }
-}
-
 module.exports = {
   dir: dir,
   ticketFile: ticketFile,
@@ -71,7 +51,5 @@ module.exports = {
   readTicket: readTicket,
   readStatus: readStatus,
   writeTicket: writeTicket,
-  dropTicket: dropTicket,
-  resetPassword: resetPassword,
-  hasPassword: hasPassword
+  dropTicket: dropTicket
 };

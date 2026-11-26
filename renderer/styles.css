@@ -263,6 +263,8 @@ input{font-family:inherit}
   gap:28px;
   padding:10px 32px 12px;
 }
+/* 字号调大后内容会变高，主区允许滚动，标准档保持原样 */
+body[data-ui-big="1"] .main{overflow-y:auto;overflow-x:hidden;align-content:start}
 
 /* 倒计时 */
 .countdown{
@@ -711,7 +713,7 @@ body[data-skin="bamboo"] .ai-select option{background:#fffaf0;color:#3a2e1f}
 
 /* 天气详情弹窗 */
 .modal__box.weather-box{
-  width:min(520px,92vw);max-height:88vh;overflow-y:auto;
+  width:min(520px,92vw);max-height:calc(100% - 24px);overflow-y:auto;
   align-items:stretch;
   padding:22px 24px 18px;
 }
@@ -1373,10 +1375,11 @@ body[data-skin="bamboo"] .today-card__foot span[data-all="1"]{color:var(--gold-d
   background:linear-gradient(160deg,rgba(34,47,40,.97),rgba(19,29,25,.97));
   color:#f2efe9;font-size:10.5px;line-height:1.55;letter-spacing:.03em;
   box-shadow:0 6px 18px rgba(0,0,0,.4);
+  transition:left 1s linear;
   animation:bubble-in .22s ease both;
 }
 .pet-fish__bubble::before{
-  content:"";position:absolute;top:-5px;left:16px;
+  content:"";position:absolute;top:-5px;left:var(--bubble-tail,16px);
   width:8px;height:8px;transform:rotate(45deg);
   background:rgba(32,44,38,.97);
   border-left:1px solid rgba(217,182,74,.45);
@@ -1828,6 +1831,16 @@ body[data-skin="bamboo"] .input{color-scheme:light;background:rgba(255,255,255,.
 }
 .freq-opt:hover{border-color:var(--line-strong);color:var(--text)}
 .freq-opt.on{border-color:var(--gold);color:var(--gold);background:var(--gold-soft)}
+/* 界面字号：整块主界面按档位缩放，字号与间距一起放大 */
+body[data-mode="panel"] .app{zoom:var(--ui-scale,1)}
+.font-preview{
+  margin-top:8px;padding:10px 12px;border-radius:10px;
+  border:1px dashed var(--line-strong);
+  background:rgba(255,255,255,.03);
+  display:flex;flex-direction:column;gap:3px;
+}
+.font-preview b{font-size:14px;font-weight:500;color:var(--text);letter-spacing:.04em}
+.font-preview span{font-size:11.5px;line-height:1.6;color:var(--dim);letter-spacing:.02em}
 .skin-opt{
   display:flex;align-items:center;gap:9px;
   padding:9px 10px;border-radius:9px;
@@ -2174,6 +2187,60 @@ body[data-skin="bamboo"] .logs{background:rgba(255,255,255,.55);color:var(--dim)
 .news-row:hover b{color:var(--gold)}
 .news-card__foot{margin-top:5px;font-size:10.5px;color:var(--faint);letter-spacing:.04em}
 .news-card__empty{font-size:11.5px;color:var(--faint);letter-spacing:.06em}
+.news-card{cursor:pointer;transition:border-color .16s,background .16s}
+.news-card:hover{border-color:color-mix(in srgb,var(--gold) 40%,var(--line))}
+.news-card:focus-visible{outline:1px solid var(--gold);outline-offset:2px}
+
+/* 每日热点详情弹窗：趋势点评 + 5-8 条要闻 + 自动化任务 */
+.modal__box.news-box{
+  width:min(620px,94vw);max-height:calc(100% - 24px);overflow:hidden;
+  display:flex;flex-direction:column;gap:14px;
+  align-items:stretch;padding:22px 24px 18px;
+}
+.news-box__head{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:14px;
+  padding-bottom:12px;border-bottom:1px dashed var(--line);flex:none;
+}
+.news-box__title{display:flex;flex-direction:column;gap:5px;min-width:0}
+.news-box__name{font-family:var(--font-title);font-size:22px;letter-spacing:.1em;color:var(--gold)}
+.news-box__meta{font-size:11.5px;letter-spacing:.06em;color:var(--faint)}
+.news-box__acts{display:flex;align-items:center;gap:8px;flex:none}
+.news-box__body{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:10px}
+.news-box__trend{
+  padding:11px 13px;border-radius:10px;
+  background:var(--gold-soft);
+  border:1px solid color-mix(in srgb,var(--gold) 26%,transparent);
+  font-size:12.5px;line-height:1.7;color:var(--dim);letter-spacing:.02em;
+}
+.news-box__trend::before{
+  content:"今日趋势点评";display:block;
+  font-size:10.5px;letter-spacing:.2em;color:var(--gold);margin-bottom:5px;
+}
+.news-box__list{display:flex;flex-direction:column;gap:10px}
+.news-item{display:flex;gap:9px;padding-bottom:9px;border-bottom:1px dashed var(--line)}
+.news-item:last-child{border-bottom:none;padding-bottom:0}
+.news-item__no{
+  flex:none;width:18px;font-size:11px;color:var(--gold);
+  font-variant-numeric:tabular-nums;line-height:1.7;
+}
+.news-item__main{min-width:0;display:flex;flex-direction:column;gap:3px}
+.news-item__title{
+  font-size:13px;line-height:1.55;font-weight:500;color:var(--text);
+  text-align:left;background:none;border:none;padding:0;cursor:pointer;letter-spacing:.02em;
+}
+.news-item__title:hover{color:var(--gold)}
+.news-item__sum{font-size:11.5px;line-height:1.6;color:var(--dim)}
+.news-item__meta{font-size:10.5px;color:var(--faint);letter-spacing:.04em}
+.news-box__empty{font-size:11.5px;color:var(--faint);letter-spacing:.06em}
+.news-box__auto{
+  flex:none;border-top:1px dashed var(--line);padding-top:12px;
+  display:flex;flex-direction:column;gap:8px;
+}
+.news-box__auto-head{font-size:10.5px;letter-spacing:.22em;color:var(--gold)}
+.news-box__auto-row{display:flex;align-items:center;gap:10px}
+.news-box__auto-row .setting__label{margin:0;flex:none}
+.news-box__auto-row .input{flex:1}
+.news-box .hint{margin-top:0}
 @media (max-height:700px){
   .news-card{margin-top:8px;padding:8px 12px 8px}
   .news-card__list{margin-top:5px;gap:3px}
@@ -2345,6 +2412,26 @@ body[data-skin="bamboo"] .logs{background:rgba(255,255,255,.55);color:var(--dim)
 }
 @keyframes ai-veil-in{from{opacity:0}to{opacity:1}}
 @keyframes ai-drawer-in{from{transform:translateX(26px);opacity:0}to{transform:none;opacity:1}}
+
+/* 放大：右侧抽屉变成居中大对话框，接近知识签里的 AI 检索界面 */
+.ai-drawer.is-expanded .ai-drawer__backdrop{
+  background:color-mix(in srgb, var(--bg-deep) 74%, transparent);
+}
+.ai-drawer.is-expanded .ai-drawer__panel{
+  top:50%;left:50%;right:auto;bottom:auto;
+  width:min(1040px,94vw);height:min(calc(100% - 48px),820px);
+  transform:translate(-50%,-50%);
+  border:1px solid var(--line-strong);
+  border-radius:18px;
+  animation:ai-expand-in .2s cubic-bezier(.22,.7,.3,1) both;
+}
+@keyframes ai-expand-in{
+  from{opacity:0;transform:translate(-50%,-50%) scale(.975)}
+  to{opacity:1;transform:translate(-50%,-50%) scale(1)}
+}
+.ai-drawer.is-expanded .ai-drawer__body{padding:16px 22px}
+.ai-drawer.is-expanded .ai-msg{max-width:min(760px,100%)}
+.ai-drawer.is-expanded .ai-drawer__foot{padding:10px 22px 16px}
 
 .ai-drawer__head{
   display:flex;align-items:center;gap:10px;
@@ -2599,6 +2686,11 @@ body[data-skin="bamboo"] .logs{background:rgba(255,255,255,.55);color:var(--dim)
   padding:0 2px;opacity:.62;transition:opacity .15s;
 }
 .ai-msg:hover .ai-msg__acts,.ai-msg__acts:focus-within{opacity:1}
+.ai-msg__time{
+  margin-left:auto;padding:0 2px;
+  font-size:10.5px;letter-spacing:.03em;color:var(--faint);
+  font-variant-numeric:tabular-nums;white-space:nowrap;
+}
 .ai-msg__act{
   border:0;background:transparent;color:var(--faint);
   font-family:var(--font-ui);font-size:11px;line-height:1;

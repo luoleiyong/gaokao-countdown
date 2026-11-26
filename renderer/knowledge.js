@@ -2367,6 +2367,7 @@ function friendlyAiError(raw) {
 }
 
 function bindAi() {
+  /* AI 检索入口已移到主界面 AI 助手，知识签不再提供入口 */
   var btn = $('kAi');
   if (btn) btn.addEventListener('click', openAiModal);
   var modal = $('aiModal');

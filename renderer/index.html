@@ -90,7 +90,7 @@
           <div class="events-card__list" id="eventsList"></div>
         </section>
 
-        <section class="news-card" id="newsCard" hidden>
+        <section class="news-card" id="newsCard" hidden role="button" tabindex="0" title="点击查看全部热点与自动化任务">
           <div class="news-card__head">
             <span class="news-card__title">每日热点</span>
             <span class="news-card__meta" id="newsCardMeta">每天 08:00 自动更新</span>
@@ -315,6 +315,44 @@
     </div>
   </div>
 
+  <!-- ======================= 每日热点详情 + 自动化任务 ======================= -->
+  <div class="modal" id="newsModal" hidden>
+    <div class="modal__backdrop" data-close="news"></div>
+    <div class="modal__box news-box" role="dialog" aria-modal="true" aria-labelledby="newsBoxTitle">
+      <div class="news-box__head">
+        <div class="news-box__title">
+          <span class="news-box__name" id="newsBoxTitle">每日热点</span>
+          <span class="news-box__meta" id="newsBoxMeta">每天 08:00 自动更新</span>
+        </div>
+        <div class="news-box__acts">
+          <button class="btn-ghost btn-small" id="btnNewsRefreshDetail">立即更新</button>
+          <button class="win-btn" id="btnNewsClose" title="关闭">×</button>
+        </div>
+      </div>
+      <div class="news-box__body">
+        <div class="news-box__trend" id="newsBoxTrend" hidden></div>
+        <div class="news-box__list" id="newsBoxList"></div>
+        <p class="news-box__empty" id="newsBoxEmpty" hidden></p>
+      </div>
+      <div class="news-box__auto">
+        <div class="news-box__auto-head">自动化任务</div>
+        <div class="update-pref">
+          <div>
+            <b>每天自动抓取</b>
+            <span>到点抓公开热榜与国内外要闻，卡片展示前 4 条</span>
+          </div>
+          <button class="switch" id="switchNewsAuto" aria-pressed="true"><i></i></button>
+        </div>
+        <div class="news-box__auto-row">
+          <label class="setting__label" for="inputNewsTime">抓取时间</label>
+          <input type="time" id="inputNewsTime" class="input" value="08:00" />
+        </div>
+        <p class="hint" id="newsAutoStatus">每天 08:00</p>
+        <p class="hint">当天更晚打开软件会自动补抓；关闭自动抓取后，仍保留上次的内容。</p>
+      </div>
+    </div>
+  </div>
+
   <!-- ======================= 更新内容 ======================= -->
   <div class="modal" id="updateNotesModal" hidden>
     <div class="modal__backdrop" data-close="updateNotes"></div>
@@ -479,6 +517,21 @@
         </section>
 
         <section class="setting">
+          <label class="setting__label">界面字号 <span class="setting__value" id="fontScaleLabel">标准</span></label>
+          <div class="freq-grid" id="fontScaleGrid">
+            <button class="freq-opt" data-font="0.9">小</button>
+            <button class="freq-opt on" data-font="1">标准</button>
+            <button class="freq-opt" data-font="1.15">大</button>
+            <button class="freq-opt" data-font="1.3">特大</button>
+          </div>
+          <div class="font-preview" id="fontPreview">
+            <b>距离高考还有 193 天</b>
+            <span>调大后整个界面一起放大，内容放不下时主界面可以上下滚动。</span>
+          </div>
+          <p class="hint">只影响主界面；课堂助手的字号在它的「外观与背景」里单独调整。</p>
+        </section>
+
+        <section class="setting">
           <label class="setting__label">桌面宠物</label>
           <button class="btn-ghost btn-wide" id="btnEnterPet">进入桌面宠物模式</button>
           <p class="hint">宠物贴在桌面层，打开其他程序时不会挡在最前面。</p>
@@ -507,20 +560,6 @@
           </div>
           <button class="btn-ghost btn-wide setting-action" id="btnAiAssistantSide">打开 AI 助手</button>
           <p class="hint">默认用 Kilo 免费池，无需密钥；也可换成智谱 GLM 等供应商，密钥只保存在本机。</p>
-        </section>
-
-        <section class="setting">
-          <label class="setting__label">每日热点 <span class="setting__value" id="newsAutoStatus">每天 08:00</span></label>
-          <div class="update-pref">
-            <div>
-              <b>每天自动抓取</b>
-              <span>到点抓公开热榜，卡片显示前 4 条</span>
-            </div>
-            <button class="switch" id="switchNewsAuto" aria-pressed="true"><i></i></button>
-          </div>
-          <label class="setting__label">抓取时间</label>
-          <input type="time" id="inputNewsTime" class="input" value="08:00" />
-          <p class="hint">当天更晚打开软件会自动补抓；关闭自动抓取后，卡片仍保留上次的内容。</p>
         </section>
 
         <section class="setting">
@@ -794,6 +833,11 @@
               <button class="ai-models__cfg" id="btnAiAssistModelCfg" type="button">模型与密钥配置…</button>
             </div>
           </div>
+          <button class="win-btn" id="btnAiAssistExpand" type="button" title="放大对话窗口" aria-label="放大对话窗口" aria-pressed="false">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 4H4v5"/><path d="M15 4h5v5"/><path d="M9 20H4v-5"/><path d="M15 20h5v-5"/>
+            </svg>
+          </button>
           <button class="win-btn" id="btnAiAssistNew" type="button" title="新建对话" aria-label="新建对话">＋</button>
           <button class="win-btn" id="btnAiAssistList" type="button" title="会话列表" aria-label="会话列表" aria-expanded="false" aria-controls="aiAssistSessions">☰</button>
           <button class="win-btn" id="btnAiAssistClose" type="button" title="关闭" aria-label="关闭 AI 助手">×</button>

@@ -139,7 +139,9 @@ function aiLoginUrlOf(provider) {
 /* 联网热点：新浪滚动公开接口，失败时自动退回模型生成并如实标注来源 */
 const AI_HOT_URL = 'https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2510&k=&num=20&page=1';
 /* 联网检索：Bing RSS 与百度热搜都是公开只读接口，不需要密钥 */
-const AI_SEARCH_RSS = 'https://cn.bing.com/search?format=rss&count=10&q=';
+const AI_SEARCH_RSS = 'https://cn.bing.com/search?format=rss&count=10&mkt=zh-CN&setlang=zh-hans&cc=CN&q=';
+const AI_SEARCH_RSS_EN = 'https://cn.bing.com/search?format=rss&count=10&mkt=en-US&setlang=en&q=';
+const AI_NEWS_RSS = 'https://cn.bing.com/news/search?format=rss&mkt=zh-CN&setlang=zh-hans&q=';
 const AI_BAIDU_HOT = 'https://top.baidu.com/api/board?platform=wise&tab=realtime';
 /* 联网多源：今日头条热榜 / 知乎日报 / 权威 RSS（人民网、新华网、中新网）/ 科技媒体（IT之家、Solidot） */
 const AI_TOUTIAO_HOT = 'https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc';
@@ -149,7 +151,11 @@ const AI_RSS_FEEDS = [
   { name: '新华网', url: 'http://www.xinhuanet.com/politics/news_politics.xml', kind: 'politics' },
   { name: '中新网', url: 'https://www.chinanews.com.cn/rss/scroll-news.xml', kind: 'society' },
   { name: 'IT之家', url: 'https://www.ithome.com/rss/', kind: 'tech' },
-  { name: 'Solidot', url: 'https://www.solidot.org/index.rss', kind: 'tech' }
+  { name: 'Solidot', url: 'https://www.solidot.org/index.rss', kind: 'tech' },
+  { name: '36氪', url: 'https://36kr.com/feed', kind: 'tech' },
+  { name: '机器之心', url: 'https://www.jiqizhixin.com/rss', kind: 'tech' },
+  { name: '量子位', url: 'https://www.qbitai.com/feed', kind: 'tech' },
+  { name: '少数派', url: 'https://sspai.com/feed', kind: 'life' }
 ];
 const AI_SEARCH_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 const STORE_DEFAULTS = {
@@ -157,6 +163,8 @@ const STORE_DEFAULTS = {
   skin: 'board',
   petScale: 1,
   petFreq: 'slow',
+  /* 主界面整体字号：1 为标准，用户可在设置 → 界面字号里调 */
+  uiFontScale: 1,
   autoLaunch: false,
   debugMode: false,
   onboarded: false,
@@ -206,6 +214,7 @@ const STORE_DEFAULTS = {
   newsAutoDate: '',
   newsAutoItems: [],
   newsAutoSources: [],
+  newsAutoTrend: '',
   newsAutoError: '',
   newsAutoAt: 0
 };
@@ -911,6 +920,7 @@ function loadStore() {
       : [];
     merged.pendingInstallUpdate = typeof data.pendingInstallUpdate === 'string' ? data.pendingInstallUpdate : '';
     merged.petFreq = ['quiet', 'slow', 'fast', 'ultra'].includes(merged.petFreq) ? merged.petFreq : 'slow';
+    merged.uiFontScale = normalizeUiFontScale(merged.uiFontScale);
     merged.updateAutoCheck = merged.updateAutoCheck !== false;
     merged.updateAutoDownload = merged.updateAutoDownload !== false;
     merged.events = normalizeEvents(data.events);
@@ -963,6 +973,7 @@ function loadStore() {
         .map((s) => ({ name: String(s.name || '').slice(0, 20), count: Number(s.count) || 0 }))
         .slice(0, 8)
       : [];
+    merged.newsAutoTrend = typeof data.newsAutoTrend === 'string' ? data.newsAutoTrend.slice(0, 400) : '';
     merged.newsAutoError = typeof data.newsAutoError === 'string' ? data.newsAutoError.slice(0, 200) : '';
     merged.newsAutoAt = Number(data.newsAutoAt) || 0;
     return merged;
@@ -1175,6 +1186,19 @@ function clampScale(v) {
   const n = Number(v);
   if (!Number.isFinite(n)) return 1;
   return Math.min(1.6, Math.max(0.8, Math.round(n * 10) / 10));
+}
+/* 主界面字号档位：0.9 / 1 / 1.15 / 1.3，非法值回到标准档 */
+function normalizeUiFontScale(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 1;
+  const steps = [0.9, 1, 1.15, 1.3];
+  let best = 1;
+  let gap = Infinity;
+  steps.forEach((s) => {
+    const d = Math.abs(s - n);
+    if (d < gap) { gap = d; best = s; }
+  });
+  return best;
 }
 
 /* ---------------- 天气 / 版本网络功能 ---------------- */
@@ -1792,15 +1816,25 @@ function openTestPanel() {
 }
 
 /* ---------------- 窗口 ---------------- */
+/* 主窗口尺寸随界面字号放大：CSS 视口保持约 1160×740，字号调大时窗口同步变大 */
+function panelTargetSize() {
+  const area = screen.getPrimaryDisplay().workArea;
+  const s = normalizeUiFontScale(store.uiFontScale);
+  return {
+    width: Math.min(Math.round(1160 * s), area.width - 40),
+    height: Math.min(Math.round(740 * s), area.height - 40)
+  };
+}
 function createWindow() {
   const area = screen.getPrimaryDisplay().workArea;
-  let w = Math.min(1160, area.width - 48);
-  let h = Math.min(740, area.height - 48);
+  const target = panelTargetSize();
+  let w = target.width;
+  let h = target.height;
   let x = Math.round(area.x + (area.width - w) / 2);
   let y = Math.round(area.y + (area.height - h) / 2);
   if (store.panelBounds && Number.isFinite(store.panelBounds.width)) {
-    w = Math.max(980, Math.min(store.panelBounds.width, area.width));
-    h = Math.max(640, Math.min(store.panelBounds.height, area.height));
+    w = Math.max(target.width, Math.min(store.panelBounds.width, area.width));
+    h = Math.max(target.height, Math.min(store.panelBounds.height, area.height));
     x = Math.min(Math.max(area.x, store.panelBounds.x), area.x + area.width - w);
     y = Math.min(Math.max(area.y, store.panelBounds.y), area.y + area.height - h);
   }
@@ -1937,10 +1971,13 @@ function applyPetMode(on) {
     try { win.setMinimizable(false); } catch { /* 忽略 */ }
     win.setMinimumSize(980, 640);
     const area = screen.getPrimaryDisplay().workArea;
-    const b = panelBounds || { x: area.x + 40, y: area.y + 40, width: Math.min(1160, area.width - 48), height: Math.min(740, area.height - 48) };
-    const width = Math.max(980, Math.min(b.width, area.width));
-    const height = Math.max(640, Math.min(b.height, area.height));
-    win.setBounds({ x: b.x, y: b.y, width, height });
+    const t = panelTargetSize();
+    const b = panelBounds || { x: area.x + 40, y: area.y + 40, width: t.width, height: t.height };
+    const width = Math.max(t.width, Math.min(b.width, area.width));
+    const height = Math.max(t.height, Math.min(b.height, area.height));
+    const x = Math.min(Math.max(area.x, b.x), area.x + area.width - width);
+    const y = Math.min(Math.max(area.y, b.y), area.y + area.height - height);
+    win.setBounds({ x, y, width, height });
     win.show();
     win.focus();
     win.webContents.send('mode:changed', { mode, scale: petScale });
@@ -1974,6 +2011,22 @@ function setSkin(id) {
   if (win && !win.isDestroyed()) win.webContents.send('skin:changed', { skin: id });
   appendLog('SETTINGS', { skin: id });
   return id;
+}
+
+/* 改字号时同步改窗口：CSS 视口保持约 1160×740，最大字号下热点卡片不会被裁 */
+function resizePanelForFont() {
+  if (!win || win.isDestroyed() || mode !== 'panel') return;
+  const area = screen.getPrimaryDisplay().workArea;
+  const t = panelTargetSize();
+  const b = win.getBounds();
+  const width = Math.min(t.width, area.width);
+  const height = Math.min(t.height, area.height);
+  if (width === b.width && height === b.height) return;
+  const x = Math.min(Math.max(area.x, Math.round(b.x + (b.width - width) / 2)), area.x + area.width - width);
+  const y = Math.min(Math.max(area.y, Math.round(b.y + (b.height - height) / 2)), area.y + area.height - height);
+  win.setBounds({ x, y, width, height });
+  store.panelBounds = win.getBounds();
+  saveStore();
 }
 
 /* 关闭 Windows DWM 给窗口的非客户区渲染（阴影/边线） */
@@ -3184,7 +3237,7 @@ function normalizeNewsTime(v) {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(s) ? s : '08:00';
 }
 
-/* 卡片只认这三条字段，顺手去重、截断，避免把大对象塞进 store */
+/* 卡片只认这几条字段，顺手去重、截断，避免把大对象塞进 store */
 function normalizeNewsItems(input) {
   const list = Array.isArray(input) ? input : [];
   const seen = new Set();
@@ -3195,65 +3248,121 @@ function normalizeNewsItems(input) {
     if (!title || seen.has(title)) return;
     seen.add(title);
     const url = String(it.url || '').trim().slice(0, 400);
+    const summary = String(it.summary || '').replace(/\s+/g, ' ').trim().slice(0, 160);
     out.push({
       title,
-      source: String(it.source || '').trim().slice(0, 20),
+      source: String(it.source || it.src || '').trim().slice(0, 20),
+      summary,
+      date: String(it.date || '').trim().slice(0, 20),
       url: /^https?:\/\//i.test(url) ? url : ''
     });
   });
   return out.slice(0, 12);
 }
 
-/* 四路公开热榜并行抓一次，返回结构化条目；全部失败时退回新浪滚动 */
+/* 重要度打分：权威源 > 热榜，关键词命中加分，越靠前分越高 */
+const NEWS_IMPORTANT_RE = /重大|突发|紧急|国务院|中央|全国|外交|国际|战争|冲突|政策|发布|通报|事故|灾害|高考|教育|开学|考试|录取|分数线|经济|就业|物价|医保|社保|航天|科技|芯片|人工智能/;
+function newsScoreOf(it, sourceRank, index) {
+  const text = String((it && it.title) || '');
+  let score = (sourceRank || 1) * 10 - index;
+  if (NEWS_IMPORTANT_RE.test(text)) score += 14;
+  if (/国际|全球|海外|联合国|美国|欧洲|俄|乌|中东|日韩|东盟/i.test(text)) score += 6;
+  if (text.length >= 8 && text.length <= 40) score += 2;
+  return score;
+}
+
+/* 多路公开源并行抓一次，按重要度排序；全部失败时退回新浪滚动 */
 async function newsFetchItems() {
   const jobs = [
-    { name: '今日头条', p: aiToutiaoHotItems(10, 9000) },
-    { name: '百度热搜', p: aiBaiduHotItems(10, 9000) },
-    { name: '知乎日报', p: aiZhihuDailyItems(5, 9000) },
-    { name: '人民网', p: aiRssSourceItems(AI_RSS_FEEDS[0], 5, 9000) }
+    { name: '今日头条', rank: 2, p: aiToutiaoHotItems(10, 9000) },
+    { name: '百度热搜', rank: 2, p: aiBaiduHotItems(10, 9000) },
+    { name: '知乎日报', rank: 1, p: aiZhihuDailyItems(5, 9000) },
+    { name: '人民网', rank: 3, p: aiRssSourceItems(AI_RSS_FEEDS[0], 6, 9000) },
+    { name: '新华网', rank: 3, p: aiRssSourceItems(AI_RSS_FEEDS[1], 6, 9000) },
+    { name: '中新网', rank: 3, p: aiRssSourceItems(AI_RSS_FEEDS[2], 6, 9000) },
+    { name: 'Bing 资讯', rank: 2, p: aiBingNewsItems('国内外 重大新闻', 8, 9000) },
+    { name: 'Bing 资讯', rank: 2, p: aiBingNewsItems('国际 要闻', 6, 9000) }
   ];
   const settled = await Promise.allSettled(jobs.map((j) => j.p));
-  const groups = [];
+  const candidates = [];
   const sources = [];
   let error = '';
   settled.forEach((res, i) => {
     const name = jobs[i].name;
     if (res.status === 'fulfilled' && Array.isArray(res.value) && res.value.length) {
-      sources.push({ name, count: res.value.length });
-      groups.push({ name, list: res.value });
+      const exist = sources.find((s) => s.name === name);
+      if (exist) exist.count += res.value.length;
+      else sources.push({ name, count: res.value.length });
+      res.value.forEach((it, idx) => {
+        candidates.push({
+          title: it.title,
+          source: name,
+          summary: it.snippet || it.summary || '',
+          date: it.date || '',
+          url: it.url,
+          score: newsScoreOf(it, jobs[i].rank, idx)
+        });
+      });
     } else if (res.status === 'rejected' && !error) {
       error = String((res.reason && res.reason.message) || res.reason).slice(0, 120);
     }
   });
-  /* 按来源轮流取，前 4 条不会全挤在同一个热榜里 */
-  const items = [];
-  for (let round = 0; round < 12; round++) {
-    let added = false;
-    groups.forEach((g) => {
-      const it = g.list[round];
-      if (!it) return;
-      items.push({ title: it.title, source: g.name, url: it.url });
-      added = true;
-    });
-    if (!added) break;
-  }
-  if (!items.length) {
+  if (!candidates.length) {
     try {
       const raw = await fetchText(AI_HOT_URL, 10000);
       let parsed = null;
       try { parsed = JSON.parse(raw); } catch { parsed = null; }
       const rows = parsed && parsed.result && Array.isArray(parsed.result.data) ? parsed.result.data : [];
-      rows.slice(0, 12).forEach((it) => {
+      rows.slice(0, 12).forEach((it, idx) => {
         const title = String((it && (it.title || it.stitle)) || '').trim();
-        if (title) items.push({ title, source: '新浪滚动', url: String((it && it.url) || '').trim() });
+        if (title) {
+          candidates.push({
+            title, source: '新浪滚动', summary: '', date: '', url: String((it && it.url) || '').trim(),
+            score: newsScoreOf({ title }, 2, idx)
+          });
+        }
       });
-      if (items.length) sources.push({ name: '新浪滚动', count: items.length });
+      if (candidates.length) sources.push({ name: '新浪滚动', count: candidates.length });
     } catch (e) {
       if (!error) error = e.message;
     }
   }
-  return { items: normalizeNewsItems(items), sources, error };
+  /* 先按分数排序，再做标题去重，最后取前 8 条 */
+  const seen = new Set();
+  const items = [];
+  candidates
+    .sort((a, b) => b.score - a.score)
+    .forEach((it) => {
+      const key = String(it.title).replace(/[\s,.!?，。！？、：；「」（）【】"'“”·\-—|:;]/g, '').slice(0, 16);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      items.push(it);
+    });
+  return { items: normalizeNewsItems(items.slice(0, 8)), sources, error };
 }
+
+/* 今日趋势点评：优先让模型写 2-3 句；模型不可用时用来源与关键词拼一句兜底 */
+async function newsTrendOf(items) {
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) return '';
+  const titles = list.map((it, i) => `${i + 1}. ${it.title}（${it.source || '公开热榜'}）`).join('\n');
+  if (store.aiEnabled !== false && aiConfigReady(store).ok) {
+    try {
+      const res = await aiChat([
+        { role: 'system', content: '你是新闻编辑，用简体中文写「今日趋势点评」。只输出 2-3 句连贯的话，不分点、不加标题、不用「综上所述」，不编造事实。' },
+        { role: 'user', content: '下面是今天的新闻热点：\n' + titles + '\n\n请概括今天舆论共同关注的方向、可能的成因，以及对高中生备考的启示，控制在 90 字内。' }
+      ], { maxTokens: 260, temperature: 0.5, timeout: 45000, tries: 1 });
+      const text = String(res.content || '').replace(/\s+/g, ' ').trim();
+      if (text) return text.slice(0, 300);
+    } catch (e) {
+      appendLog('NEWS_TREND_FAIL', { error: String((e && e.message) || e).slice(0, 100) });
+    }
+  }
+  const names = Array.from(new Set(list.map((it) => it.source).filter(Boolean))).slice(0, 3);
+  const top = list.slice(0, 3).map((it) => it.title).join('；');
+  return `今日热点主要集中在${top}。信息来自${names.join('、') || '公开热榜'}，可结合学科视角继续跟进。`;
+}
+
 
 /* 卡片要的摘要：启用状态、抓取时间、条目与失败原因 */
 function newsBrief() {
@@ -3265,6 +3374,7 @@ function newsBrief() {
     today: dateKey(),
     items: items.slice(0, 12),
     sources: Array.isArray(store.newsAutoSources) ? store.newsAutoSources : [],
+    trend: store.newsAutoTrend || '',
     error: store.newsAutoError || '',
     at: Number(store.newsAutoAt) || 0
   };
@@ -3290,15 +3400,31 @@ async function newsRefresh(force) {
     store.newsAutoDate = today;
     store.newsAutoItems = out.items;
     store.newsAutoSources = out.sources;
+    store.newsAutoTrend = '';
     store.newsAutoError = '';
-  } else {
-    store.newsAutoError = out.error || '暂未获取到今日热点';
+    store.newsAutoAt = Date.now();
+    saveStore();
+    appendLog('NEWS_AUTO', {
+      force: !!force, date: store.newsAutoDate, count: out.items.length,
+      ok: true, error: ''
+    });
+    newsBroadcast();
+    /* 趋势点评需要模型，放到后台算；算完再广播一次，不拖慢卡片首屏 */
+    newsTrendOf(out.items).then((text) => {
+      if (!text) return;
+      if (store.newsAutoDate !== today) return;
+      store.newsAutoTrend = text;
+      saveStore();
+      newsBroadcast();
+    }).catch(() => { /* 点评失败不影响条目 */ });
+    return newsBrief();
   }
+  store.newsAutoError = out.error || '暂未获取到今日热点';
   store.newsAutoAt = Date.now();
   saveStore();
   appendLog('NEWS_AUTO', {
-    force: !!force, date: store.newsAutoDate, count: out.items.length,
-    ok: out.items.length > 0, error: store.newsAutoError
+    force: !!force, date: store.newsAutoDate, count: 0,
+    ok: false, error: store.newsAutoError
   });
   newsBroadcast();
   return newsBrief();
@@ -3429,10 +3555,26 @@ async function aiBaiduHotItems(limit, timeout) {
   })).filter((x) => x.title);
 }
 
-/* Bing RSS：给具体问题找网页标题与链接 */
+/* Bing RSS：给具体问题找网页标题与链接；中文查询走 zh-CN，英文查询走 en-US */
+function aiLooksEnglish(q) {
+  const s = String(q || '').replace(/[^\x00-\x7F]/g, '');
+  return s.length >= 4 && s.length > String(q || '').replace(/\s/g, '').length * 0.6;
+}
 async function aiBingItems(q, limit, timeout) {
-  const xml = await fetchText(AI_SEARCH_RSS + encodeURIComponent(q), timeout || 12000, { Accept: 'application/rss+xml,application/xml,text/xml,*/*' });
+  const base = aiLooksEnglish(q) ? AI_SEARCH_RSS_EN : AI_SEARCH_RSS;
+  const xml = await fetchText(base + encodeURIComponent(q), timeout || 12000, { Accept: 'application/rss+xml,application/xml,text/xml,*/*' });
   return aiRssItems(xml, limit || 8).map((it) => Object.assign(it, { src: 'Bing' }));
+}
+/* Bing 资讯 RSS：比热榜更贴近「这个问题最近的报道」 */
+async function aiBingNewsItems(q, limit, timeout) {
+  const xml = await fetchText(AI_NEWS_RSS + encodeURIComponent(q), timeout || 12000, { Accept: 'application/rss+xml,application/xml,text/xml,*/*' });
+  return aiRssItems(xml, limit || 8).map((it) => Object.assign(it, { src: 'Bing 资讯' }));
+}
+/* 按类型取 RSS 源，避免每次把九个订阅源全打一遍 */
+function aiRssFeedsOf(kind) {
+  if (kind === 'tech') return AI_RSS_FEEDS.filter((f) => f.kind === 'tech');
+  if (kind === 'politics') return AI_RSS_FEEDS.filter((f) => f.kind === 'politics');
+  return AI_RSS_FEEDS.filter((f) => f.kind === 'life' || f.kind === 'society');
 }
 
 /* ---------------- 深度检索：多引擎搜索 → 抓正文 → 带编号引用 ---------------- */
@@ -3441,7 +3583,7 @@ async function aiBingItems(q, limit, timeout) {
 const AI_SEARCH_ENGINES = [
   { id: 'toutiao', name: '头条搜索', parse: 'toutiao', url: (q) => 'https://so.toutiao.com/search?keyword=' + encodeURIComponent(q) + '&pd=information' },
   { id: 'so360', name: '360搜索', parse: 'so360', url: (q) => 'https://www.so.com/s?q=' + encodeURIComponent(q) },
-  { id: 'bing', name: 'Bing', parse: 'bing', url: (q) => 'https://cn.bing.com/search?q=' + encodeURIComponent(q) + '&count=10' },
+  { id: 'bing', name: 'Bing', parse: 'bing', url: (q, page) => 'https://cn.bing.com/search?q=' + encodeURIComponent(q) + '&count=10' + (page > 1 ? '&first=' + (page - 1) * 10 + 1 : '') },
   { id: 'sogou', name: '搜狗', parse: 'sogou', url: (q) => 'https://www.sogou.com/web?query=' + encodeURIComponent(q) }
 ];
 const AI_DEEP_CACHE = new Map();
@@ -3633,6 +3775,33 @@ function aiWorthWeb(text) {
   return true;
 }
 
+/* 垂直源：按问题类型补热榜 / 权威 RSS / 科技媒体，由 aiDeepSearch 统一并发抓取。
+   只用公开只读接口，不依赖密钥；某一路失败不影响其他来源。 */
+function aiVerticalJobs(q, limit, timeout) {
+  const kind = aiQueryKind(q);
+  const jobs = [];
+  const add = (name, fn) => jobs.push({ name: name, p: Promise.resolve().then(fn) });
+  if (kind === 'news') {
+    add('今日头条', () => aiToutiaoHotItems(limit, timeout));
+    add('百度热搜', () => aiBaiduHotItems(limit, timeout));
+    add('知乎日报', () => aiZhihuDailyItems(6, timeout));
+    add('Bing 资讯', () => aiBingNewsItems(q, limit, timeout));
+  } else if (kind === 'politics') {
+    add('人民网', () => aiRssSourceItems(AI_RSS_FEEDS[0], 5, timeout));
+    add('新华网', () => aiRssSourceItems(AI_RSS_FEEDS[1], 5, timeout));
+    add('中新网', () => aiRssSourceItems(AI_RSS_FEEDS[2], 5, timeout));
+  } else if (kind === 'tech') {
+    aiRssFeedsOf('tech').forEach((feed) => {
+      add(feed.name, () => aiRssSourceItems(feed, 4, timeout));
+    });
+  } else {
+    add('知乎日报', () => aiZhihuDailyItems(5, timeout));
+    add('Bing 资讯', () => aiBingNewsItems(q, limit, timeout));
+    add('少数派', () => aiRssSourceItems(AI_RSS_FEEDS[8], 4, timeout));
+  }
+  return jobs;
+}
+
 async function aiDeepSearch(query, opts) {
   const o = opts || {};
   const q = String(query || '').trim().slice(0, 120);
@@ -3647,15 +3816,21 @@ async function aiDeepSearch(query, opts) {
   const plan = [];
   aiVariantQueries(q).forEach((v, vi) => {
     AI_SEARCH_ENGINES.forEach((eng) => {
-      if (vi > 0 && eng.id !== 'toutiao' && eng.id !== 'bing') return;
-      plan.push({ engine: eng, q: v });
+      plan.push({ engine: eng, q: v, page: 1 });
+      // Bing 多抓一页，变体检索不再只发头条和 Bing
+      if (eng.id === 'bing' && vi === 0) plan.push({ engine: eng, q: v, page: 2 });
     });
   });
   const parseOf = (id, html) => (id === 'toutiao' ? aiParseToutiao(html) : id === 'so360' ? aiParse360(html) : id === 'bing' ? aiParseBing(html) : aiParseSogou(html));
-  const settled = await Promise.allSettled(plan.map((p) => (async () => {
-    const html = await fetchText(p.engine.url(p.q), timeout, { Accept: 'text/html,application/xhtml+xml,*/*', 'Accept-Language': 'zh-CN,zh;q=0.9' });
-    return { name: p.engine.name, items: parseOf(p.engine.id, html) };
-  })()));
+  const verticalJobs = aiVerticalJobs(q, o.limit || 8, timeout);
+  const [settled, verticalSettled] = await Promise.all([
+    Promise.allSettled(plan.map((p) => (async () => {
+      const acceptLang = aiLooksEnglish(p.q) ? 'en-US,en;q=0.9' : 'zh-CN,zh;q=0.9';
+      const html = await fetchText(p.engine.url(p.q, p.page), timeout, { Accept: 'text/html,application/xhtml+xml,*/*', 'Accept-Language': acceptLang });
+      return { name: p.engine.name, items: parseOf(p.engine.id, html) };
+    })())),
+    Promise.allSettled(verticalJobs.map((j) => j.p))
+  ]);
   const engines = [];
   const buckets = [];
   settled.forEach((res, i) => {
@@ -3666,7 +3841,18 @@ async function aiDeepSearch(query, opts) {
       else engines.push({ name: name, count: res.value.items.length });
       buckets.push(res.value.items);
     } else if (res.status === 'rejected') {
-      appendLog('AI_SEARCH_FAIL', { engine: plan[i].engine.name, error: String((res.reason && res.reason.message) || res.reason).slice(0, 120) });
+      appendLog('AI_SEARCH_FAIL', { engine: plan[i].engine.name, page: plan[i].page, error: String((res.reason && res.reason.message) || res.reason).slice(0, 120) });
+    }
+  });
+  verticalSettled.forEach((res, i) => {
+    if (res.status === 'fulfilled' && Array.isArray(res.value) && res.value.length) {
+      const name = verticalJobs[i].name;
+      const at = engines.find((e) => e.name === name);
+      if (at) at.count += res.value.length;
+      else engines.push({ name: name, count: res.value.length });
+      buckets.push(res.value);
+    } else if (res.status === 'rejected') {
+      appendLog('AI_SEARCH_FAIL', { engine: verticalJobs[i].name, error: String((res.reason && res.reason.message) || res.reason).slice(0, 120) });
     }
   });
   /* 轮转交织：各家轮流占一位，避免结果多的引擎霸占前排 */
@@ -3704,7 +3890,7 @@ async function aiDeepSearch(query, opts) {
   const picked = [];
   const hostUsed = new Set();
   const skipHost = /(^|\.)(baike\.baidu\.com|zhidao\.baidu\.com|wikipedia\.org|douban\.com|bilibili\.com|weibo\.com)$/;
-  const goodHost = /(gov\.cn|xinhuanet\.com|people\.com\.cn|chinanews\.com|thepaper\.cn|36kr\.com|ithome\.com|solidot\.org|stdaily\.com|sina\.com\.cn|163\.com|qq\.com|sohu\.com|ifeng\.com|yicai\.com|jiqizhixin\.com|qbitai\.com|oschina\.net|infoq\.cn|csdn\.net)$/;
+  const goodHost = /(gov\.cn|xinhuanet\.com|people\.com\.cn|chinanews\.com|thepaper\.cn|36kr\.com|ithome\.com|solidot\.org|stdaily\.com|sina\.com\.cn|163\.com|qq\.com|sohu\.com|ifeng\.com|yicai\.com|jiqizhixin\.com|qbitai\.com|sspai\.com|oschina\.net|infoq\.cn|csdn\.net|chsi\.com\.cn|moe\.gov\.cn)$/;
   const rank = (host) => (goodHost.test(host) ? 0 : /toutiao\.com$/.test(host) ? 2 : 1);
   items
     .map((it, i) => ({ it: it, i: i, host: aiHostOf(it.url) }))
@@ -3746,61 +3932,6 @@ async function aiDeepSearch(query, opts) {
     AI_DEEP_CACHE.set(q, { at: Date.now(), data: data });
   }
   return data;
-}
-
-async function aiSearchWeb(query, opts) {
-  const q = String(query || '').trim().slice(0, 120);
-  const o = opts || {};
-  if (!q) return { ok: false, query: '', source: '', items: [], sources: [], kind: '' };
-  /* 按问题类型分派：新闻走热搜组，科技走 IT 媒体，时政走权威 RSS，具体事实走网页搜索 */
-  const kind = aiQueryKind(q);
-  const limit = o.limit || 8;
-  const timeout = o.timeout || 12000;
-  const jobs = [];
-  const add = (name, fn) => jobs.push({ name, p: Promise.resolve().then(fn) });
-  if (kind === 'news') {
-    add('今日头条', () => aiToutiaoHotItems(limit, timeout));
-    add('百度热搜', () => aiBaiduHotItems(limit, timeout));
-    add('知乎日报', () => aiZhihuDailyItems(6, timeout));
-  } else if (kind === 'tech') {
-    add('IT之家', () => aiRssSourceItems(AI_RSS_FEEDS[3], limit, timeout));
-    add('Solidot', () => aiRssSourceItems(AI_RSS_FEEDS[4], limit, timeout));
-    add('Bing 搜索', () => aiBingItems(q, limit, timeout));
-  } else if (kind === 'politics') {
-    add('人民网', () => aiRssSourceItems(AI_RSS_FEEDS[0], 5, timeout));
-    add('新华网', () => aiRssSourceItems(AI_RSS_FEEDS[1], 5, timeout));
-    add('中新网', () => aiRssSourceItems(AI_RSS_FEEDS[2], 5, timeout));
-  } else {
-    add('Bing 搜索', () => aiBingItems(q, limit, timeout));
-    add('知乎日报', () => aiZhihuDailyItems(5, timeout));
-  }
-  const settled = await Promise.allSettled(jobs.map((j) => j.p));
-  const groups = [];
-  const sources = [];
-  settled.forEach((res, i) => {
-    const name = jobs[i].name;
-    if (res.status === 'fulfilled' && Array.isArray(res.value) && res.value.length) {
-      groups.push(res.value);
-      sources.push({ name, count: res.value.length });
-    } else if (res.status === 'rejected') {
-      appendLog('AI_SEARCH_FAIL', { engine: name, error: String((res.reason && res.reason.message) || res.reason).slice(0, 120) });
-    }
-  });
-  let items = aiMergeItems(groups, Math.max(limit, 10));
-  /* 多源全挂：退回网页搜索兜底一次 */
-  if (!items.length && !jobs.some((j) => j.name === 'Bing 搜索')) {
-    try {
-      const bing = await aiBingItems(q, limit, timeout);
-      if (bing.length) {
-        items = bing;
-        sources.push({ name: 'Bing 搜索', count: bing.length });
-      }
-    } catch (e) {
-      appendLog('AI_SEARCH_FAIL', { engine: 'bing', error: String((e && e.message) || e).slice(0, 120) });
-    }
-  }
-  const source = sources.map((s) => s.name).join(' · ');
-  return { ok: items.length > 0, query: q, kind, source, items, sources, at: aiNowBits().time };
 }
 
 /* 判断这句话是不是在问「现在/最近」的事，需要先联网再回答 */
@@ -4126,6 +4257,7 @@ function wireIpc() {
       skin: store.skin,
       petScale,
       petFreq: store.petFreq,
+      uiFontScale: normalizeUiFontScale(store.uiFontScale),
       autoLaunch: store.autoLaunch,
       history: store.history,
       updateUrl: store.updateUrl,
@@ -4199,6 +4331,10 @@ function wireIpc() {
     if (typeof patch.petFreq === 'string' && ['quiet', 'slow', 'fast', 'ultra'].includes(patch.petFreq)) {
       store.petFreq = patch.petFreq;
     }
+    if (patch.uiFontScale != null) {
+      store.uiFontScale = normalizeUiFontScale(patch.uiFontScale);
+      resizePanelForFont();
+    }
     if (typeof patch.weatherCity === 'string') {
       store.weatherCity = patch.weatherCity.trim().slice(0, 60);
       store.weatherCache = null;
@@ -4227,6 +4363,7 @@ function wireIpc() {
     appendLog('SETTINGS', { targetDate: store.targetDate, petScale });
     return {
       ok: true, targetDate: store.targetDate, skin: store.skin, petScale, petFreq: store.petFreq,
+      uiFontScale: normalizeUiFontScale(store.uiFontScale),
       updateUrl: store.updateUrl, weatherCity: store.weatherCity, selectedSubjects: store.selectedSubjects,
       onboarded: !!store.onboarded,
       updateAutoCheck: !!store.updateAutoCheck,

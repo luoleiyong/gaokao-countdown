@@ -106,7 +106,9 @@ const state = {
   aiThink: true,
   aiWeb: true,
   /* 每日热点卡片：默认每天 08:00 自动抓取 */
-  news: { enabled: true, time: '08:00', date: '', items: [], sources: [], error: '', at: 0 }
+  news: { enabled: true, time: '08:00', date: '', items: [], sources: [], trend: '', error: '', at: 0 },
+  /* 主界面字号档位：0.9 / 1 / 1.15 / 1.3 */
+  uiFontScale: 1
 };
 
 const bridge = window.gaokao || createMockBridge();
@@ -208,6 +210,8 @@ async function boot() {
   state.petScale = Number(s.petScale) || 1;
   state.petFreq = PET_FREQ_META.some((f) => f.id === s.petFreq) ? s.petFreq : 'slow';
   applyPetScaleVar();
+  state.uiFontScale = normalizeFontScale(s.uiFontScale);
+  applyUiFontScale();
   state.autoLaunch = !!s.autoLaunch;
   state.history = Array.isArray(s.history) ? s.history : [];
   state.today = init.today || dateKey();
@@ -267,6 +271,7 @@ async function boot() {
   }
   renderSkinGrid();
   renderPetFreq();
+  renderFontScale();
   renderAll();
   tick();
 
@@ -697,9 +702,30 @@ function fishSay(text) {
   if (!bubble || !text) return;
   bubble.textContent = text;
   bubble.hidden = false;
+  fishPlaceBubble();
   clearTimeout(fishState.hideTimer);
   fishState.hideTimer = setTimeout(() => { bubble.hidden = true; }, 9000);
   fishMaybeHomeworkAction(text);
+}
+
+/* 气泡水平跟随大肥鱼：以角色中心对齐，靠近窗口边缘时夹住，尾巴始终指向鱼 */
+function fishPlaceBubble() {
+  const wrap = $('petFish');
+  const actor = $('petFishActor');
+  const bubble = $('petFishBubble');
+  if (!wrap || !actor || !bubble || bubble.hidden) return;
+  if (wrap.dataset.mode === 'homework') {
+    bubble.style.left = '';
+    bubble.style.removeProperty('--bubble-tail');
+    return;
+  }
+  const width = wrap.clientWidth || 300;
+  const actorLeft = parseFloat(actor.style.left) || 0;
+  const bw = bubble.offsetWidth || 190;
+  const cx = actorLeft + FISH_ACTOR_W / 2;
+  const bl = Math.max(6, Math.min(cx - bw / 2, width - bw - 6));
+  bubble.style.left = Math.round(bl) + 'px';
+  bubble.style.setProperty('--bubble-tail', Math.round(Math.max(8, Math.min(cx - bl - 4, bw - 18))) + 'px');
 }
 
 function fishAllVideos() {
@@ -1070,10 +1096,7 @@ function renderFish() {
   if (track) track.style.width = mode === 'crawl' ? Math.round(progress * 100) + '%' : '0%';
 
   const bubble = $('petFishBubble');
-  if (bubble) {
-    if (mode === 'homework') bubble.style.left = '';
-    else bubble.style.left = Math.max(6, Math.min(left - 8, width - 200)) + 'px';
-  }
+  if (bubble) fishPlaceBubble();
 
   const nowTs = Date.now();
   const interval = petFreqDelay(mode === 'homework' ? 150000 : 90000);
@@ -1414,6 +1437,38 @@ function applyPetScaleVar() {
   document.body.style.setProperty('--pet-scale', String(scale));
 }
 
+/* 界面字号：四档，数值与 main.js 的 normalizeUiFontScale 保持一致 */
+const FONT_SCALE_META = [
+  { v: 0.9, name: '小' },
+  { v: 1, name: '标准' },
+  { v: 1.15, name: '大' },
+  { v: 1.3, name: '特大' }
+];
+function normalizeFontScale(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 1;
+  let best = 1;
+  let gap = Infinity;
+  FONT_SCALE_META.forEach((m) => {
+    const d = Math.abs(m.v - n);
+    if (d < gap) { gap = d; best = m.v; }
+  });
+  return best;
+}
+function applyUiFontScale() {
+  const scale = normalizeFontScale(state.uiFontScale);
+  document.body.style.setProperty('--ui-scale', String(scale));
+  document.body.setAttribute('data-ui-big', scale > 1 ? '1' : '0');
+}
+function renderFontScale() {
+  const meta = FONT_SCALE_META.find((m) => m.v === normalizeFontScale(state.uiFontScale)) || FONT_SCALE_META[1];
+  const label = $('fontScaleLabel');
+  if (label) label.textContent = meta.name;
+  $$('#fontScaleGrid .freq-opt').forEach((btn) => {
+    btn.classList.toggle('on', Number(btn.dataset.font) === meta.v);
+  });
+}
+
 /* 桌宠频率：按当前档位缩放间隔，最低 8 秒，避免极快档过于频繁 */
 function petFreqMult() {
   const meta = PET_FREQ_META.find((f) => f.id === state.petFreq);
@@ -1467,7 +1522,14 @@ function renderNewsCard() {
       row.innerHTML = `<i>${i + 1}</i><b>${escapeHtml(it.title)}</b>`;
       const tag = it.source ? it.source + ' · ' : '';
       row.title = it.url ? `${tag}${it.title}（点击用浏览器打开）` : tag + it.title;
-      if (it.url) row.addEventListener('click', () => bridge.openExternal(it.url));
+      if (it.url) {
+        row.addEventListener('click', (e) => {
+          e.stopPropagation();
+          bridge.openExternal(it.url);
+        });
+      } else {
+        row.addEventListener('click', (e) => e.stopPropagation());
+      }
       box.appendChild(row);
     });
   }
@@ -1475,12 +1537,100 @@ function renderNewsCard() {
   if (foot) {
     const names = (Array.isArray(n.sources) ? n.sources : []).map((s) => s.name).filter(Boolean);
     if (items.length && names.length) {
-      foot.textContent = `共 ${items.length} 条 · 来源 ${names.join(' / ')}`;
+      foot.textContent = `共 ${items.length} 条 · 来源 ${names.join(' / ')} · 点卡片看全部`;
     } else if (items.length) {
-      foot.textContent = `共 ${items.length} 条 · 点标题用浏览器打开`;
+      foot.textContent = `共 ${items.length} 条 · 点卡片看全部`;
     } else {
-      foot.textContent = `每天 ${n.time || '08:00'} 抓取 · 点标题用浏览器打开`;
+      foot.textContent = `每天 ${n.time || '08:00'} 抓取 · 点卡片看全部`;
     }
+  }
+  renderNewsDetail();
+}
+
+/* 每日热点详情：趋势点评 + 5-8 条要闻（标题 / 一句话摘要 / 来源）+ 自动化任务 */
+function renderNewsDetail() {
+  const modal = $('newsModal');
+  if (!modal || modal.hidden) return;
+  const n = state.news || {};
+  const meta = $('newsBoxMeta');
+  if (meta) meta.textContent = newsCardMeta();
+  const trend = $('newsBoxTrend');
+  if (trend) {
+    const text = String(n.trend || '').trim();
+    trend.hidden = !text;
+    trend.textContent = text;
+  }
+  const list = $('newsBoxList');
+  const items = Array.isArray(n.items) ? n.items : [];
+  if (list) {
+    list.innerHTML = '';
+    items.slice(0, 8).forEach((it, i) => {
+      const row = document.createElement('div');
+      row.className = 'news-item';
+      row.appendChild(aiAssistEl('span', 'news-item__no', String(i + 1)));
+      const main = document.createElement('div');
+      main.className = 'news-item__main';
+      const title = document.createElement('button');
+      title.type = 'button';
+      title.className = 'news-item__title';
+      title.textContent = it.title;
+      title.title = it.url ? '点击用浏览器打开' : it.title;
+      if (it.url) title.addEventListener('click', () => bridge.openExternal(it.url));
+      main.appendChild(title);
+      const sum = String(it.summary || '').trim();
+      if (sum) main.appendChild(aiAssistEl('p', 'news-item__sum', sum));
+      const bits = [];
+      if (it.source) bits.push(it.source);
+      if (it.date) bits.push(it.date);
+      main.appendChild(aiAssistEl('span', 'news-item__meta', bits.join(' · ') || '公开热榜'));
+      row.appendChild(main);
+      list.appendChild(row);
+    });
+  }
+  const empty = $('newsBoxEmpty');
+  if (empty) {
+    empty.hidden = items.length > 0;
+    if (!items.length) {
+      empty.textContent = n.error
+        ? `今天的热点还没取到：${n.error}`
+        : `今天 ${n.time || '08:00'} 自动抓取，稍等一下`;
+    }
+  }
+  syncNewsAutoUI();
+}
+
+function openNewsDetail() {
+  const modal = $('newsModal');
+  if (!modal) return;
+  modal.hidden = false;
+  renderNewsDetail();
+}
+
+function closeNewsDetail() {
+  const modal = $('newsModal');
+  if (modal) modal.hidden = true;
+}
+
+async function refreshNewsNow(btn, idleText) {
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = '抓取中';
+  try {
+    const res = await bridge.newsRefresh();
+    if (res && res.ok) {
+      state.news = Object.assign({}, state.news, res);
+      renderNewsCard();
+      const n = Array.isArray(res.items) ? res.items.length : 0;
+      toast(n ? `已更新 ${n} 条今日热点` : '暂未获取到今日热点');
+    } else {
+      renderNewsCard();
+      toast((res && res.error) || '抓取失败，请稍后再试');
+    }
+  } catch (e) {
+    toast('抓取失败，请稍后再试');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = idleText || '刷新';
   }
 }
 
@@ -3911,6 +4061,15 @@ function buildAiAssistEditor(m, idx) {
   box.appendChild(acts);
   return box;
 }
+function aiAssistTimeText(m) {
+  const t = Number(m && m.ts);
+  if (!Number.isFinite(t) || t <= 0) return '';
+  const d = new Date(t);
+  const now = new Date();
+  const hm = pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  if (d.toDateString() === now.toDateString()) return hm;
+  return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
+}
 function buildAiAssistMessage(m, idx) {
   const isUser = m.role === 'user';
   const wrap = aiAssistEl('div', 'ai-msg ' + (isUser ? 'ai-msg--user' : 'ai-msg--ai') +
@@ -3927,6 +4086,8 @@ function buildAiAssistMessage(m, idx) {
     acts.appendChild(copyBtn);
     acts.appendChild(aiAssistBtn('编辑重发', () => { aiAssist.editing = idx; renderAiAssist(); }));
     acts.appendChild(aiAssistBtn('分支', () => branchAiAssist(idx)));
+    const ut = aiAssistTimeText(m);
+    if (ut) acts.appendChild(aiAssistEl('span', 'ai-msg__time', ut));
     wrap.appendChild(acts);
     return wrap;
   }
@@ -3970,6 +4131,8 @@ function buildAiAssistMessage(m, idx) {
   acts.appendChild(copyBtn);
   if (m.request && m.request.query) acts.appendChild(aiAssistBtn('重新生成', () => retryAiAssist(idx)));
   acts.appendChild(aiAssistBtn('分支', () => branchAiAssist(idx)));
+  const at = aiAssistTimeText(m);
+  if (at) acts.appendChild(aiAssistEl('span', 'ai-msg__time', at));
   wrap.appendChild(acts);
   return wrap;
 }
@@ -4560,6 +4723,21 @@ function closeAiAssistant() {
   renderAiAssist();
 }
 
+/* 放大 / 还原 AI 对话窗口：放大后是居中大对话框，还原回右侧抽屉 */
+function setAiAssistExpanded(on) {
+  const el = $('aiAssistant');
+  if (!el) return;
+  el.classList.toggle('is-expanded', !!on);
+  const btn = $('btnAiAssistExpand');
+  if (btn) {
+    btn.setAttribute('aria-pressed', String(!!on));
+    btn.title = on ? '还原对话窗口' : '放大对话窗口';
+    btn.setAttribute('aria-label', btn.title);
+  }
+  const body = $('aiAssistBody');
+  if (body) body.scrollTop = body.scrollHeight;
+}
+
 function bindAiAssistant() {
   const openBtn = $('btnAiAssistant');
   if (openBtn) openBtn.addEventListener('click', openAiAssistant);
@@ -4567,6 +4745,23 @@ function bindAiAssistant() {
   if (openBtn2) openBtn2.addEventListener('click', openAiAssistant);
   const closeBtn = $('btnAiAssistClose');
   if (closeBtn) closeBtn.addEventListener('click', closeAiAssistant);
+  const expandBtn = $('btnAiAssistExpand');
+  if (expandBtn) {
+    expandBtn.addEventListener('click', () => {
+      const el = $('aiAssistant');
+      setAiAssistExpanded(!(el && el.classList.contains('is-expanded')));
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const el = $('aiAssistant');
+    if (!el || el.hidden) return;
+    if (el.classList.contains('is-expanded')) {
+      setAiAssistExpanded(false);
+      return;
+    }
+    closeAiAssistant();
+  });
   const backdrop = $('aiAssistBackdrop');
   if (backdrop) {
     backdrop.addEventListener('click', () => {
@@ -5352,6 +5547,20 @@ function bindEvents() {
       } catch (e) { /* 忽略 */ }
     });
   });
+  $$('#fontScaleGrid .freq-opt').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const v = normalizeFontScale(btn.dataset.font);
+      state.uiFontScale = v;
+      applyUiFontScale();
+      renderFontScale();
+      try {
+        await bridge.saveSettings({ uiFontScale: v });
+        toast('界面字号已切换为「' + FONT_SCALE_META.find((m) => m.v === v).name + '」');
+      } catch (e) {
+        toast('字号保存失败，请重试');
+      }
+    });
+  });
   $('authorMail').addEventListener('click', copyAuthorMail);
   $('btnEventsManage').addEventListener('click', openEventsModal);
   $('btnAddEvent').addEventListener('click', addEvent);
@@ -5393,28 +5602,24 @@ function bindEvents() {
     } catch (err) { /* 忽略 */ }
     toast('已改为每天 ' + v + ' 抓取热点');
   });
-  $('btnNewsRefresh').addEventListener('click', async () => {
-    const btn = $('btnNewsRefresh');
-    if (btn.disabled) return;
-    btn.disabled = true;
-    btn.textContent = '抓取中';
-    try {
-      const res = await bridge.newsRefresh();
-      if (res && res.ok) {
-        state.news = Object.assign({}, state.news, res);
-        renderNewsCard();
-        const n = Array.isArray(res.items) ? res.items.length : 0;
-        toast(n ? `已更新 ${n} 条今日热点` : '暂未获取到今日热点');
-      } else {
-        renderNewsCard();
-        toast((res && res.error) || '抓取失败，请稍后再试');
-      }
-    } catch (e) {
-      toast('抓取失败，请稍后再试');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '刷新';
+  $('btnNewsRefresh').addEventListener('click', (e) => {
+    e.stopPropagation();
+    refreshNewsNow($('btnNewsRefresh'), '刷新');
+  });
+  $('btnNewsRefreshDetail').addEventListener('click', () => refreshNewsNow($('btnNewsRefreshDetail'), '立即更新'));
+  $('newsCard').addEventListener('click', openNewsDetail);
+  $('newsCard').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      openNewsDetail();
     }
+  });
+  $('btnNewsClose').addEventListener('click', closeNewsDetail);
+  const newsBackdrop = document.querySelector('#newsModal .modal__backdrop');
+  if (newsBackdrop) newsBackdrop.addEventListener('click', closeNewsDetail);
+  document.addEventListener('keydown', (e) => {
+    const modal = $('newsModal');
+    if (e.key === 'Escape' && modal && !modal.hidden) closeNewsDetail();
   });
 
   // 数据与备份

@@ -13,7 +13,8 @@ const state = {
   ttFile: null,
   showNight: true,
   saveTimer: null,
-  importTarget: 'weekday'
+  importTarget: 'weekday',
+  ttAi: { image: '', name: '', text: '', parsed: null, target: 'weekday', busy: false }
 };
 
 function esc(v) {
@@ -535,6 +536,58 @@ function bind() {
   });
 
   $('btnTtImport').addEventListener('click', () => openImport('weekday'));
+  $('btnTtAiImport').addEventListener('click', openTtAi);
+  $('btnTtAiRepick').addEventListener('click', () => $('ttAiFile').click());
+  $('ttAiDrop').addEventListener('click', () => $('ttAiFile').click());
+  $('ttAiFile').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (file) await ttAiAttach(file);
+  });
+  $('btnTtAiRun').addEventListener('click', runTtAi);
+  $('btnTtAiApply').addEventListener('click', applyTtAi);
+  $('btnTtAiToText').addEventListener('click', ttAiToText);
+  $('ttAiModel').addEventListener('change', () => {
+    try { localStorage.setItem('tt-ai-model', $('ttAiModel').value); } catch (e) { /* 忽略 */ }
+  });
+  document.querySelectorAll('#ttAiTarget button').forEach((b) => {
+    b.addEventListener('click', () => {
+      state.ttAi.target = b.dataset.target || 'weekday';
+      document.querySelectorAll('#ttAiTarget button').forEach((x) => x.classList.toggle('is-on', x === b));
+      state.ttAi.text = '';
+      state.ttAi.parsed = null;
+      $('ttAiResult').textContent = '';
+      $('btnTtAiApply').hidden = true;
+      $('btnTtAiRun').hidden = false;
+      $('ttAiRaw').hidden = true;
+      $('btnTtAiToText').hidden = true;
+      ttAiStep(2);
+      setTtAiStatus('已切换导入目标，点「开始识别」重新识别。', '');
+    });
+  });
+  document.querySelectorAll('[data-close="tt-ai"]').forEach((el) => {
+    el.addEventListener('click', closeTtAi);
+  });
+  const aiStage = $('ttAiStage');
+  aiStage.addEventListener('dragover', (e) => { e.preventDefault(); aiStage.classList.add('is-drag'); });
+  aiStage.addEventListener('dragleave', () => aiStage.classList.remove('is-drag'));
+  aiStage.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    aiStage.classList.remove('is-drag');
+    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) await ttAiAttach(file);
+  });
+  document.addEventListener('paste', (e) => {
+    if ($('ttAiModal').hidden) return;
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type && items[i].type.indexOf('image/') === 0) {
+        const file = items[i].getAsFile();
+        if (file) { ttAiAttach(file); break; }
+      }
+    }
+  });
   $('btnImportTips').addEventListener('click', openTips);
   $('btnCopyTips').addEventListener('click', copyTips);
   document.querySelectorAll('[data-close="tips"]').forEach((el) => {
@@ -582,14 +635,208 @@ function bind() {
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (!$('ttTipsModal').hidden) closeTips();
+      if (!$('ttAiModal').hidden) closeTtAi();
+      else if (!$('ttTipsModal').hidden) closeTips();
       else if (!$('ttImportModal').hidden) closeImport();
       else bridge.closeTimetable();
     }
   });
 }
 
-/* ---------------- 导入 ---------------- */
+/* ---------------- AI 识图导入 ---------------- */
+let ttAiModelsLoaded = false;
+
+function setTtAiStatus(text, kind) {
+  const el = $('ttAiStatus');
+  if (!el) return;
+  el.innerHTML = '<i></i>' + esc(text);
+  el.classList.toggle('is-busy', kind === 'busy');
+  el.classList.toggle('is-ok', kind === 'ok');
+  el.classList.toggle('is-err', kind === 'err');
+}
+
+function ttAiStep(n) {
+  const box = $('ttAiSteps');
+  if (!box) return;
+  box.querySelectorAll('span').forEach((s) => {
+    const step = Number(s.dataset.step);
+    s.classList.toggle('is-on', step === n);
+    s.classList.toggle('is-done', step < n);
+  });
+}
+
+async function loadTtAiModels() {
+  if (ttAiModelsLoaded || !bridge || !bridge.aiListModels) return;
+  ttAiModelsLoaded = true;
+  try {
+    const res = await bridge.aiListModels();
+    if (!res || !res.ok || !Array.isArray(res.models)) { ttAiModelsLoaded = false; return; }
+    const sel = $('ttAiModel');
+    res.models.filter((m) => m && m.id && m.vision).forEach((m) => {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = (m.name || m.id) + (m.free ? ' · 免费' : '');
+      sel.appendChild(opt);
+    });
+    let saved = '';
+    try { saved = localStorage.getItem('tt-ai-model') || ''; } catch (e) { saved = ''; }
+    if (saved && Array.from(sel.options).some((o) => o.value === saved)) sel.value = saved;
+  } catch (e) { ttAiModelsLoaded = false; }
+}
+
+function openTtAi() {
+  $('ttAiModal').hidden = false;
+  loadTtAiModels();
+  ttAiStep(state.ttAi.image ? (state.ttAi.parsed && state.ttAi.parsed.length ? 3 : 2) : 1);
+  if (!state.ttAi.image) setTtAiStatus('图片只在识别时发送给免费模型，识别后不会留存。', '');
+}
+
+function closeTtAi() {
+  if (state.ttAi.busy) { toast('正在识别，请稍候'); return; }
+  $('ttAiModal').hidden = true;
+}
+function closeTtAiForce() {
+  state.ttAi.busy = false;
+  $('ttAiModal').hidden = true;
+}
+
+function ttAiReadImage(file) {
+  return new Promise((resolve) => {
+    if (!file || !/^image\//.test(String(file.type || ''))) { resolve(''); return; }
+    if (file.size > 6 * 1024 * 1024) { toast('图片超过 6 MB，换一张小一点的'); resolve(''); return; }
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result || ''));
+    fr.onerror = () => resolve('');
+    fr.readAsDataURL(file);
+  });
+}
+
+/* 长边压到 1600 px，减少识别耗时，也避免网关拒收大图 */
+function ttAiShrink(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const max = 1600;
+      const scale = Math.min(1, max / Math.max(img.width || 1, img.height || 1));
+      if (scale >= 1 && dataUrl.length < 1.6 * 1024 * 1024) { resolve(dataUrl); return; }
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.86));
+      } catch (e) { resolve(dataUrl); }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+async function ttAiAttach(file) {
+  const raw = await ttAiReadImage(file);
+  if (!raw) return;
+  const image = await ttAiShrink(raw);
+  state.ttAi.image = image;
+  state.ttAi.name = String(file.name || '课程表图片');
+  state.ttAi.text = '';
+  state.ttAi.parsed = null;
+  $('ttAiImg').src = image;
+  $('ttAiPreview').hidden = false;
+  $('ttAiDrop').hidden = true;
+  $('ttAiFileName').textContent = state.ttAi.name;
+  $('ttAiResult').textContent = '';
+  $('btnTtAiApply').hidden = true;
+  $('btnTtAiRun').hidden = false;
+  $('ttAiRaw').hidden = true;
+  $('btnTtAiToText').hidden = true;
+  ttAiStep(2);
+  setTtAiStatus('图片已就绪，点「开始识别」交给视觉模型。', '');
+}
+
+function cleanTtAiText(text) {
+  let s = String(text || '').replace(/\r\n?/g, '\n').trim();
+  s = s.replace(/\x60\x60\x60[a-zA-Z]*\s*/g, '').replace(/\x60\x60\x60/g, '').trim();
+  const start = s.search(/节次|日期/);
+  if (start > 0) s = s.slice(start);
+  return s.trim();
+}
+
+async function runTtAi() {
+  if (!bridge || !bridge.timetableAiImport) { toast('当前版本不支持 AI 识图'); return; }
+  if (!state.ttAi.image) { toast('请先选择课程表图片'); return; }
+  if (state.ttAi.busy) return;
+  state.ttAi.busy = true;
+  $('btnTtAiRun').disabled = true;
+  $('btnTtAiApply').hidden = true;
+  $('ttAiRaw').hidden = true;
+  $('btnTtAiToText').hidden = true;
+  $('ttAiResult').textContent = '';
+  $('ttAiPreview').classList.add('is-scanning');
+  ttAiStep(2);
+  setTtAiStatus('正在识别课程表，通常 10–40 秒…', 'busy');
+  try {
+    const res = await bridge.timetableAiImport({
+      image: state.ttAi.image,
+      target: state.ttAi.target,
+      model: $('ttAiModel').value,
+      note: $('ttAiNote').value.trim()
+    });
+    if (!res || !res.ok) {
+      setTtAiStatus((res && res.error) || '识别失败，请稍后再试', 'err');
+      $('btnTtAiRun').hidden = false;
+      return;
+    }
+    const text = cleanTtAiText(res.text);
+    state.ttAi.text = text;
+    const list = parseTextForTarget(text, state.ttAi.target);
+    state.ttAi.parsed = list;
+    if (list.length) {
+      setTtAiStatus('识别完成：' + (res.modelName || res.model || '视觉模型') + '，共 ' + list.length + ' 节，确认无误后应用。', 'ok');
+      $('ttAiResult').textContent = '✓ 已识别 ' + list.length + ' 节';
+      $('btnTtAiApply').hidden = false;
+      $('btnTtAiRun').hidden = true;
+      ttAiStep(3);
+    } else {
+      setTtAiStatus('识别完成，但没能解析成课程表格式；可以查看识别文本后手动导入。', 'err');
+      $('ttAiRaw').textContent = text.slice(0, 4000);
+      $('ttAiRaw').hidden = false;
+      $('btnTtAiToText').hidden = false;
+      $('btnTtAiRun').hidden = false;
+    }
+  } catch (e) {
+    setTtAiStatus('识别失败：' + e.message, 'err');
+  } finally {
+    state.ttAi.busy = false;
+    $('btnTtAiRun').disabled = false;
+    $('ttAiPreview').classList.remove('is-scanning');
+  }
+}
+
+function applyTtAi() {
+  const list = state.ttAi.parsed || [];
+  if (!list.length) { toast('没有可应用的课程'); return; }
+  state.importTarget = state.ttAi.target;
+  state.ttRows = null;
+  state.ttSheets = null;
+  state.ttFile = null;
+  $('ttImportText').value = state.ttAi.text;
+  closeTtAiForce();
+  doImport();
+}
+
+function ttAiToText() {
+  if (!state.ttAi.text) return;
+  const target = state.ttAi.target;
+  closeTtAiForce();
+  openImport(target);
+  $('ttImportText').value = state.ttAi.text;
+  toast('识别文本已放进导入框，可直接导入');
+}
+
+
 const IMPORT_META = {
   weekday: {
     title: '一键导入工作日课程表',

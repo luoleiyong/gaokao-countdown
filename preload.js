@@ -106,6 +106,8 @@ contextBridge.exposeInMainWorld('gaokao', {
   aiAsk: (payload) => ipcRenderer.invoke('ai:ask', payload),
   aiCancel: () => ipcRenderer.invoke('ai:cancel'),
   aiExportDoc: (payload) => ipcRenderer.invoke('ai:export-doc', payload),
+  aiReadDoc: (payload) => ipcRenderer.invoke('ai:read-doc', payload),
+  timetableAiImport: (payload) => ipcRenderer.invoke('timetable:ai-import', payload),
 
   /* 每日热点自动化：卡片读取、手动刷新、定时设置 */
   newsBrief: () => ipcRenderer.invoke('news:brief'),

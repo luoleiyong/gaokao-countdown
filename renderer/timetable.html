@@ -30,6 +30,7 @@
       </label>
       <button class="tt-ghost" id="btnAddNight">＋ 晚自习</button>
       <button class="tt-ghost" id="btnTtAdd">＋ 加一节</button>
+      <button class="tt-ghost tt-ai-btn" id="btnTtAiImport">✦ AI 识图</button>
       <button class="tt-ghost" id="btnTtImport">一键导入</button>
       <button class="tt-ghost" id="btnImportTips">导入技巧</button>
       <label class="tt-toggle" title="显示或隐藏晚自习课次">
@@ -122,6 +123,67 @@
 </div>
 
 <div class="tt-toast" id="ttToast" hidden></div>
+
+<!-- AI 识图导入 -->
+<div class="tt-modal" id="ttAiModal" hidden>
+  <div class="tt-modal__backdrop" data-close="tt-ai"></div>
+  <div class="tt-modal__box tt-ai-box">
+    <header class="tt-modal__head">
+      <h3>AI 识图导入</h3>
+      <button class="tt-close" data-close="tt-ai" title="关闭">×</button>
+    </header>
+    <div class="tt-ai-body">
+      <div class="tt-ai-steps" id="ttAiSteps">
+        <span data-step="1" class="is-on">1 选图</span><i></i>
+        <span data-step="2">2 识别</span><i></i>
+        <span data-step="3">3 应用</span>
+      </div>
+      <section class="tt-ai-stage" id="ttAiStage">
+        <input type="file" id="ttAiFile" accept="image/png,image/jpeg,image/webp,image/bmp" hidden />
+        <button class="tt-ai-drop" id="ttAiDrop" type="button">
+          <span class="tt-ai-drop__seal">✦</span>
+          <b>拖入或选择课表图片</b>
+          <i>PNG / JPG / WEBP · 6 MB 以内</i>
+        </button>
+        <div class="tt-ai-preview" id="ttAiPreview" hidden>
+          <img id="ttAiImg" alt="课程表预览" />
+          <i class="tt-ai-scan" aria-hidden="true"></i>
+          <span class="tt-ai-file" id="ttAiFileName"></span>
+          <button class="tt-ai-repick" id="btnTtAiRepick" type="button">换一张</button>
+        </div>
+      </section>
+      <section class="tt-ai-side">
+        <div class="tt-ai-field">
+          <label class="tt-ai-label">导入到</label>
+          <div class="tt-ai-seg" id="ttAiTarget">
+            <button type="button" data-target="weekday" class="is-on">工作日</button>
+            <button type="button" data-target="weekend-fixed">周末固定</button>
+            <button type="button" data-target="weekend-variable">周末不固定</button>
+          </div>
+        </div>
+        <div class="tt-ai-field">
+          <label class="tt-ai-label">识别模型 <em>免费 · 无需密钥</em></label>
+          <select class="tt-ai-select" id="ttAiModel">
+            <option value="">自动选择（推荐）</option>
+          </select>
+        </div>
+        <div class="tt-ai-field">
+          <label class="tt-ai-label">补充要求 <em>可选</em></label>
+          <textarea class="tt-textarea tt-ai-note" id="ttAiNote" maxlength="200" placeholder="例如：晚自习也要识别；周六上午有课；看不清的格子留空"></textarea>
+        </div>
+        <p class="tt-ai-status" id="ttAiStatus"><i></i>图片只在识别时发送给免费模型，识别后不会留存。</p>
+        <pre class="tt-ai-raw" id="ttAiRaw" hidden></pre>
+        <button class="tt-ghost tt-ai-totext" id="btnTtAiToText" type="button" hidden>转到文本导入</button>
+      </section>
+    </div>
+    <footer class="tt-modal__foot">
+      <span class="tt-ai-result" id="ttAiResult"></span>
+      <button class="tt-ghost" data-close="tt-ai">取消</button>
+      <button class="tt-primary" id="btnTtAiRun">开始识别</button>
+      <button class="tt-primary" id="btnTtAiApply" hidden>应用到课程表</button>
+    </footer>
+  </div>
+</div>
 
 <!-- 导入技巧 -->
 <div class="tt-modal" id="ttTipsModal" hidden>

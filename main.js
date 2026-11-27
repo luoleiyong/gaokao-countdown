@@ -13,6 +13,10 @@ const { execFile, execFileSync, spawn } = require('child_process');
 
 let XLSX = null;
 try { XLSX = require('xlsx'); } catch { /* 缺少表格组件时仅支持 txt/csv */ }
+let DOCX = null;
+try { DOCX = require('docx'); } catch { /* 缺少 Word 组件时导出 docx 会提示 */ }
+let MAMMOTH = null;
+try { MAMMOTH = require('mammoth'); } catch { /* 缺少解析组件时不能读取 docx */ }
 
 const USER_DIR = path.join(app.getPath('appData'), 'GaokaoCountdown');
 const STORE_FILE = path.join(USER_DIR, 'store.json');
@@ -2907,6 +2911,12 @@ function aiCandidates(opts) {
     if (seen.has(key)) return;
     seen.add(key);
     const meta = aiModelMeta(providerId, m);
+    /* 视觉请求只走支持图片的模型：否则 kilo-auto / 文本模型会返回 404，最后被别的供应商 401 盖住 */
+    if (o.vision) {
+      if (providerId === 'kilo' && !meta.vision) return;
+      if (providerId === 'pollinations') return;
+      if (providerId === 'zhipu' && !/vision|vl|4v/i.test(m)) return;
+    }
     const entryProvider = AI_PROVIDERS.find((p) => p.id === providerId) || provider;
     out.push({
       providerId,
@@ -2932,6 +2942,12 @@ function aiCandidates(opts) {
   } else {
     push(provider.id, preferred || provider.model, true);
     (provider.presets || []).forEach((m) => push(provider.id, m, false));
+  }
+
+  if (o.vision) {
+    /* 视觉模型不在前 3 个默认候选里，这里显式补进候选链 */
+    AI_TASK_MODELS.vision.forEach((m) => push('kilo', m, false));
+    KILO_MODELS.filter((x) => x.vision).forEach((x) => push('kilo', x.id, false));
   }
 
   if (store.aiAutoModel !== false) {
@@ -4088,6 +4104,7 @@ async function aiRunAsk(payload) {
     '【历史人物】历史人物、历史事件、朝代与人物评价属于正常学习内容，可以正常讲解、比较与评价，不需要回避；请区分史实与观点，不编造史料。',
     '',
     '【公式】数学、物理、化学公式统一用 LaTeX 写在 $...$ 或 $$...$$ 中：分数用 \\frac{分子}{分母}，上下标用 ^ 与 _，根号用 \\sqrt{}，不要用纯文字描述公式。',
+    '【化学式】化学式与反应方程式用 mhchem：$\\ce{H2SO4}$、$\\ce{2H2 + O2 -> 2H2O}$，反应条件写成 $\\ce{... ->[高温高压] ...}$。',
     '',
     '【排版要求】用 Markdown 让重点一眼可见：',
     '1. 每个要点用 **加粗** 标出关键词或结论，不要把整句都加粗。',
@@ -5036,36 +5053,384 @@ function wireIpc() {
     }
   });
 
-  /* AI 回答导出为文档：Markdown 与 HTML 两种，内容由渲染层传入，主进程只负责落盘 */
+  /* ---------------- AI 文档：Markdown → Word / Excel / 纯文本 ---------------- */
+  const AI_SUP_MAP = {
+    '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
+    '+': '⁺', '-': '⁻', '=': '⁼', '(': '⁽', ')': '⁾', 'n': 'ⁿ', 'i': 'ⁱ'
+  };
+  const AI_SUB_MAP = {
+    '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄', '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
+    '+': '₊', '-': '₋', '=': '₌', '(': '₍', ')': '₎',
+    'a': 'ₐ', 'e': 'ₑ', 'o': 'ₒ', 'x': 'ₓ', 'h': 'ₕ', 'k': 'ₖ', 'l': 'ₗ', 'm': 'ₘ', 'n': 'ₙ', 'p': 'ₚ', 's': 'ₛ', 't': 'ₜ'
+  };
+  function aiRaise(text, map) {
+    return String(text == null ? '' : text).split('').map((c) => map[c] || c).join('');
+  }
+  /* LaTeX → 可读纯文本：Word / TXT 里不出现原始反斜杠 */
+  function aiMathPlain(src) {
+    let s = String(src == null ? '' : src);
+    s = s.replace(/\\ce\{([^{}]*)\}/g, (_m, body) => String(body)
+      .replace(/<=>|<->|\\rightleftharpoons|\\leftrightharpoons/g, '⇌')
+      .replace(/->/g, '→')
+      .replace(/<-(?!>)/g, '←')
+      .replace(/\^(\d*[+-])/g, (_x, c) => aiRaise(c, AI_SUP_MAP))
+      .replace(/\s*\^\s*/g, '↑')
+      .replace(/([A-Za-z)\]])(\d+)/g, (_x, a, d) => a + aiRaise(d, AI_SUB_MAP)));
+    s = s.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '($1)/($2)');
+    s = s.replace(/\\sqrt\[([^\]]+)\]\{([^{}]+)\}/g, '$1√($2)');
+    s = s.replace(/\\sqrt\{([^{}]+)\}/g, '√($1)');
+    const cmds = {
+      '\\leftrightharpoons': '⇌', '\\rightleftharpoons': '⇌', '\\xrightarrow': '→', '\\xleftarrow': '←',
+      '\\times': '×', '\\div': '÷', '\\pm': '±', '\\mp': '∓',
+      '\\leq': '≤', '\\le': '≤', '\\geq': '≥', '\\ge': '≥', '\\neq': '≠', '\\ne': '≠',
+      '\\approx': '≈', '\\equiv': '≡', '\\infty': '∞', '\\cdot': '·',
+      '\\rightarrow': '→', '\\to': '→', '\\Rightarrow': '⇒', '\\leftarrow': '←',
+      '\\Delta': 'Δ', '\\Omega': 'Ω', '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ',
+      '\\delta': 'δ', '\\theta': 'θ', '\\lambda': 'λ', '\\mu': 'μ', '\\sigma': 'σ',
+      '\\omega': 'ω', '\\pi': 'π', '\\rho': 'ρ', '\\eta': 'η', '\\nu': 'ν',
+      '\\phi': 'φ', '\\varphi': 'φ', '\\tau': 'τ', '\\epsilon': 'ε', '\\varepsilon': 'ε',
+      '\\kappa': 'κ', '\\psi': 'ψ', '\\chi': 'χ', '\\zeta': 'ζ', '\\xi': 'ξ',
+      '\\sum': '∑', '\\int': '∫', '\\partial': '∂', '\\nabla': '∇', '\\circ': '°',
+      '\\sin': 'sin', '\\cos': 'cos', '\\tan': 'tan', '\\log': 'log', '\\ln': 'ln',
+      '\\lim': 'lim', '\\max': 'max', '\\min': 'min',
+      '\\left': '', '\\right': '', '\\text': '', '\\mathrm': '', '\\mathbf': '',
+      '\\,': ' ', '\\;': ' ', '\\!': '', '\\quad': ' ', '\\qquad': '  '
+    };
+    Object.keys(cmds).forEach((k) => { s = s.split(k).join(cmds[k]); });
+    s = s.replace(/\^\{([^{}]+)\}/g, (_m, x) => aiRaise(x, AI_SUP_MAP));
+    s = s.replace(/\^([A-Za-z0-9+\-])/g, (_m, x) => aiRaise(x, AI_SUP_MAP));
+    s = s.replace(/_\{([^{}]+)\}/g, (_m, x) => aiRaise(x, AI_SUB_MAP));
+    s = s.replace(/_([A-Za-z0-9+\-])/g, (_m, x) => aiRaise(x, AI_SUB_MAP));
+    s = s.replace(/\\[a-zA-Z]+/g, '');
+    s = s.replace(/[{}]/g, '');
+    return s.replace(/\s+/g, ' ').trim();
+  }
+  function aiStripInline(s) {
+    let t = String(s == null ? '' : s);
+    t = t.replace(/!\[[^\]]*\]\([^)]*\)/g, '');
+    t = t.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
+    t = t.replace(/\x60([^\x60]+)\x60/g, '$1');
+    t = t.replace(/\$([^$\n]+?)\$/g, (_m, x) => aiMathPlain(x));
+    t = t.replace(/\*\*([^*]+)\*\*/g, '$1');
+    t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1$2');
+    t = t.replace(/==([^=]+)==/g, '$1');
+    return t.trim();
+  }
+  function markdownToPlain(md) {
+    let text = String(md == null ? '' : md).replace(/\r\n?/g, '\n');
+    text = text.replace(/\x60\x60\x60[\w+#.-]*[ \t]*\n?([\s\S]*?)(?:\x60\x60\x60|$)/g,
+      (_m, code) => '\n' + String(code).replace(/\n+$/, '') + '\n');
+    const out = [];
+    text.split('\n').forEach((line) => {
+      const t = line.trim();
+      if (!t) { out.push(''); return; }
+      if (/^\|?[\s:-]+\|[\s:|-]*$/.test(t)) return;
+      if (/^[-—_]{3,}$/.test(t)) return;
+      if (/^\|.*\|$/.test(t)) {
+        out.push(t.replace(/^\||\|$/g, '').split('|').map((x) => aiStripInline(x)).join(' | '));
+        return;
+      }
+      out.push(aiStripInline(t.replace(/^#{1,4}\s+/, '').replace(/^>\s?/, '').replace(/^[-*+•]\s+/, '· ')));
+    });
+    return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+  function markdownToRows(md) {
+    const rows = [];
+    const lines = String(md == null ? '' : md).replace(/\r\n?/g, '\n').split('\n');
+    let code = null;
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i];
+      const t = raw.trim();
+      if (t.startsWith('\x60\x60\x60')) {
+        if (code) { code.forEach((c) => rows.push([c])); code = null; } else { code = []; }
+        continue;
+      }
+      if (code) { code.push(raw); continue; }
+      if (!t) { if (rows.length && rows[rows.length - 1].length) rows.push([]); continue; }
+      if (/^\|?[\s:-]+\|[\s:|-]*$/.test(t)) continue;
+      if (/^[-—_]{3,}$/.test(t)) { rows.push([]); continue; }
+      const h = t.match(/^(#{1,4})\s+(.*)$/);
+      if (h) { rows.push([aiStripInline(h[2])]); continue; }
+      if (/^\|.*\|$/.test(t)) {
+        rows.push(t.replace(/^\||\|$/g, '').split('|').map((x) => aiStripInline(x)));
+        continue;
+      }
+      const ul = t.match(/^[-*+•]\s+(.*)$/);
+      if (ul) { rows.push(['• ' + aiStripInline(ul[1])]); continue; }
+      rows.push([aiStripInline(t.replace(/^>\s?/, ''))]);
+    }
+    if (code) code.forEach((c) => rows.push([c]));
+    return rows;
+  }
+  function aiDocStamp() {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  /* 行内 Markdown → Word 文本段（粗体 / 代码 / 公式，粗体内部还会再解析公式） */
+  function docxInlineRuns(text, bold, depth) {
+    const src = String(text == null ? '' : text);
+    const runs = [];
+    const re = /(\*\*([^*]+)\*\*|\x60([^\x60]+)\x60|\$([^$\n]+)\$)/g;
+    const base = bold ? { bold: true } : {};
+    const push = (t, extra) => {
+      if (t) runs.push(new DOCX.TextRun(Object.assign({ text: t, size: 22 }, base, extra || {})));
+    };
+    let last = 0;
+    let m;
+    while ((m = re.exec(src))) {
+      push(src.slice(last, m.index));
+      if (m[2] !== undefined) {
+        if ((depth || 0) < 2) docxInlineRuns(m[2], true, (depth || 0) + 1).forEach((r) => runs.push(r));
+        else push(m[2]);
+      } else if (m[3] !== undefined) {
+        runs.push(new DOCX.TextRun({ text: m[3], font: 'Consolas', size: 20, bold: !!bold }));
+      } else if (m[4] !== undefined) {
+        runs.push(new DOCX.TextRun({ text: aiMathPlain(m[4]), size: 22, italics: true, bold: !!bold }));
+      }
+      last = m.index + m[0].length;
+    }
+    push(src.slice(last));
+    return runs.length ? runs : [new DOCX.TextRun({ text: ' ', size: 22, bold: !!bold })];
+  }
+  function buildDocxChildren(markdown) {
+    const { Paragraph, Table, TableRow, TableCell, WidthType, HeadingLevel } = DOCX;
+    const heads = [HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3, HeadingLevel.HEADING_4];
+    const children = [];
+    const lines = String(markdown == null ? '' : markdown).replace(/\r\n?/g, '\n').split('\n');
+    const splitRow = (t) => t.replace(/^\||\|$/g, '').split('|').map((x) => x.trim());
+    let i = 0;
+    while (i < lines.length) {
+      const t = lines[i].trim();
+      if (!t) { i++; continue; }
+      if (t.startsWith('\x60\x60\x60')) {
+        i++;
+        const code = [];
+        while (i < lines.length && !lines[i].trim().startsWith('\x60\x60\x60')) { code.push(lines[i]); i++; }
+        i++;
+        code.forEach((c, idx) => children.push(new Paragraph({
+          spacing: { after: idx === code.length - 1 ? 160 : 0 },
+          children: [new DOCX.TextRun({ text: c || ' ', font: 'Consolas', size: 19 })]
+        })));
+        continue;
+      }
+      if (/^\|.*\|$/.test(t) && i + 1 < lines.length && /^\|?[\s:-]+\|[\s:|-]*$/.test(lines[i + 1].trim())) {
+        const header = splitRow(t);
+        i += 2;
+        const body = [];
+        while (i < lines.length && /^\|.*\|$/.test(lines[i].trim())) { body.push(splitRow(lines[i].trim())); i++; }
+        const rows = [header].concat(body).map((cells, ri) => new TableRow({
+          tableHeader: ri === 0,
+          children: cells.map((c) => new TableCell({ children: [new Paragraph({ children: docxInlineRuns(c) })] }))
+        }));
+        children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows }));
+        children.push(new Paragraph({ text: '', spacing: { after: 120 } }));
+        continue;
+      }
+      const h = t.match(/^(#{1,4})\s+(.*)$/);
+      if (h) {
+        children.push(new Paragraph({ heading: heads[Math.min(3, h[1].length - 1)], children: docxInlineRuns(h[2]) }));
+        i++;
+        continue;
+      }
+      if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) { children.push(new Paragraph({ text: '' })); i++; continue; }
+      const ul = t.match(/^[-*+•]\s+(.*)$/);
+      if (ul) { children.push(new Paragraph({ bullet: { level: 0 }, children: docxInlineRuns(ul[1]) })); i++; continue; }
+      if (/^\d+[.)、]\s+/.test(t)) { children.push(new Paragraph({ bullet: { level: 0 }, children: docxInlineRuns(t) })); i++; continue; }
+      if (/^>\s?/.test(t)) {
+        children.push(new Paragraph({ indent: { left: 360 }, children: docxInlineRuns(t.replace(/^>\s?/, '')) }));
+        i++;
+        continue;
+      }
+      children.push(new Paragraph({ spacing: { after: 100 }, children: docxInlineRuns(t) }));
+      i++;
+    }
+    return children;
+  }
+  async function writeAiDocx(filePath, markdown, title) {
+    const { Document, Packer, Paragraph, TextRun } = DOCX;
+    const children = [
+      new Paragraph({ heading: DOCX.HeadingLevel.TITLE, children: [new TextRun({ text: title, bold: true, size: 40 })] }),
+      new Paragraph({ spacing: { after: 200 }, children: [new TextRun({ text: '高考倒计时 AI 助手 · ' + aiDocStamp(), size: 18, color: '888888' })] })
+    ].concat(buildDocxChildren(markdown));
+    const doc = new Document({
+      styles: { default: { document: { run: { font: 'Microsoft YaHei', size: 22 } } } },
+      sections: [{
+        properties: { page: { margin: { top: 900, bottom: 900, left: 1000, right: 1000 } } },
+        children
+      }]
+    });
+    fs.writeFileSync(filePath, await Packer.toBuffer(doc));
+  }
+  function writeAiXlsx(filePath, markdown, title) {
+    const rows = [[title], ['高考倒计时 AI 助手 · ' + aiDocStamp()], []].concat(markdownToRows(markdown));
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const width = rows.reduce((n, r) => Math.max(n, r.length), 1);
+    ws['!cols'] = Array.from({ length: width }, (_v, i) => ({ wch: i === 0 ? 46 : 30 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'AI 回答');
+    XLSX.writeFile(wb, filePath);
+  }
+  /* 读取 AI 附件：docx / xlsx / 文本，统一返回纯文本 */
+  async function readAiDocFile(filePath, ext) {
+    const stat = fs.statSync(filePath);
+    if (stat.size > 20 * 1024 * 1024) throw new Error('文件超过 20 MB，请精简后再试');
+    if (ext === 'docx') {
+      if (!MAMMOTH) throw new Error('Word 解析组件不可用');
+      const res = await MAMMOTH.extractRawText({ path: filePath });
+      return String((res && res.value) || '').replace(/\n{3,}/g, '\n\n').trim().slice(0, 60000);
+    }
+    if (ext === 'xlsx' || ext === 'xls') {
+      if (!XLSX) throw new Error('表格组件不可用');
+      const wb = XLSX.readFile(filePath);
+      const parts = [];
+      wb.SheetNames.slice(0, 6).forEach((name) => {
+        const csv = XLSX.utils.sheet_to_csv(wb.Sheets[name], { blankrows: false });
+        parts.push('【工作表：' + name + '】\n' + csv);
+      });
+      return parts.join('\n\n').slice(0, 60000);
+    }
+    if (ext === 'doc') throw new Error('暂不支持旧版 .doc，请另存为 .docx 后再试');
+    return fs.readFileSync(filePath, 'utf8').slice(0, 60000);
+  }
+
+  /* AI 回答导出为文档：Markdown / HTML / Word / Excel / 纯文本，内容由渲染层传入 */
   ipcMain.handle('ai:export-doc', async (_e, payload) => {
     try {
       const data = payload && typeof payload === 'object' ? payload : {};
       const rawTitle = String(data.title || 'AI 回答').replace(/[\\/:*?"<>|\r\n]/g, '_').slice(0, 40) || 'AI 回答';
       const markdown = String(data.markdown || '').slice(0, 400000);
       const html = String(data.html || '').slice(0, 800000);
-      if (!markdown && !html) return { ok: false, error: '没有可导出的内容' };
+      /* 正文只含回答本身：Word / Excel / TXT 不再重复渲染标题与时间行 */
+      const body = String(data.body || markdown).slice(0, 400000);
+      if (!markdown && !html && !body) return { ok: false, error: '没有可导出的内容' };
+      const labels = { md: 'Markdown', docx: 'Word 文档', xlsx: 'Excel 表格', txt: '纯文本', html: '网页文档' };
+      const want = String(data.format || 'md').toLowerCase();
+      const format = Object.prototype.hasOwnProperty.call(labels, want) ? want : 'md';
       const stamp = (() => {
         const d = new Date();
         const p = (n) => String(n).padStart(2, '0');
         return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
       })();
+      const filters = [{ name: labels[format], extensions: [format] }];
+      Object.keys(labels).forEach((k) => { if (k !== format) filters.push({ name: labels[k], extensions: [k] }); });
       const { canceled, filePath } = await dialog.showSaveDialog(win, {
         title: '导出为文档',
-        defaultPath: path.join(app.getPath('downloads'), rawTitle + '-' + stamp + '.md'),
-        filters: [
-          { name: 'Markdown', extensions: ['md'] },
-          { name: '网页文档', extensions: ['html'] }
-        ]
+        defaultPath: path.join(app.getPath('downloads'), rawTitle + '-' + stamp + '.' + format),
+        filters
       });
       if (canceled || !filePath) return { ok: false, canceled: true };
-      const isHtml = /\.html?$/i.test(filePath);
-      fs.writeFileSync(filePath, isHtml ? html : markdown, 'utf8');
-      appendLog('AI_EXPORT', { file: path.basename(filePath), html: isHtml });
-      return { ok: true, filePath };
+      let target = filePath;
+      let ext = (path.extname(target) || '').slice(1).toLowerCase();
+      if (!ext) { target += '.' + format; ext = format; }
+      const fmt = Object.prototype.hasOwnProperty.call(labels, ext) ? ext : format;
+      if (fmt === 'html') fs.writeFileSync(target, html, 'utf8');
+      else if (fmt === 'md') fs.writeFileSync(target, markdown, 'utf8');
+      else if (fmt === 'txt') {
+        const plain = body ? markdownToPlain(body) : String(html).replace(/<[^>]+>/g, '');
+        fs.writeFileSync(target, plain, 'utf8');
+      } else if (fmt === 'xlsx') {
+        if (!XLSX) return { ok: false, error: '表格组件不可用，请重装完整版本' };
+        writeAiXlsx(target, body, rawTitle);
+      } else {
+        if (!DOCX) return { ok: false, error: 'Word 组件不可用，请重装完整版本' };
+        await writeAiDocx(target, body, rawTitle);
+      }
+      appendLog('AI_EXPORT', { file: path.basename(target), format: fmt });
+      return { ok: true, filePath: target, format: fmt };
     } catch (e) {
       return { ok: false, error: e.message };
     }
   });
+
+  /* AI 附件读取：docx / xlsx / 文本，主进程读出纯文本回传渲染层 */
+  ipcMain.handle('ai:read-doc', async (_e, payload) => {
+    try {
+      const p = payload && typeof payload === 'object' ? payload : {};
+      const filePath = String(p.path || '');
+      if (!filePath) return { ok: false, error: '没有拿到文件路径' };
+      if (!fs.existsSync(filePath)) return { ok: false, error: '文件不存在或已被移动' };
+      const ext = (path.extname(filePath) || '').slice(1).toLowerCase();
+      const text = await readAiDocFile(filePath, ext);
+      if (!text) return { ok: false, error: '文件里没有可读取的文字' };
+      appendLog('AI_READ_DOC', { ext, chars: text.length });
+      return { ok: true, text };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  /* 课程表 AI 识图：把课表图片交给视觉模型，返回可直接导入的 CSV 文本 */
+  ipcMain.handle('timetable:ai-import', async (_e, payload) => {
+    try {
+      const p = payload && typeof payload === 'object' ? payload : {};
+      const image = String(p.image || '');
+      if (!/^data:image\/(png|jpe?g|webp|bmp);base64,/i.test(image)) {
+        return { ok: false, error: '请先选择课程表图片' };
+      }
+      if (image.length > 12 * 1024 * 1024) return { ok: false, error: '图片太大，请压缩到 6 MB 以内' };
+      const specs = {
+        weekday: {
+          label: '工作日课程表（周一至周五）',
+          columns: '节次,时间,周一,周二,周三,周四,周五',
+          example: '节次,时间,周一,周二,周三,周四,周五\n第1节,08:00-08:45,语文,数学,英语,物理,化学\n第2节,08:55-09:40,数学,语文,物理,英语,生物',
+          rules: '一行一节；某天没有课就留空；晚自习节次写「晚自习1」。'
+        },
+        'weekend-fixed': {
+          label: '课程固定的周末作息',
+          columns: '节次,周六时间,周日时间,周六课程,周日课程',
+          example: '节次,周六时间,周日时间,周六课程,周日课程\n第1节,08:20-09:00,08:20-09:00,语文,数学\n第5节,14:10-14:50,14:10-14:50,物理,放假',
+          rules: '周六、周日时间分列；没有课留空；放假写「放假」。'
+        },
+        'weekend-variable': {
+          label: '按日期登记的周末课程',
+          columns: '日期,节次,时间,课程',
+          example: '日期,节次,时间,课程\n2026-11-14,第1节,08:20-09:00,物理\n2026-11-14,第2节,09:10-09:50,物理',
+          rules: '日期写 YYYY-MM-DD；每个日期从第 1 节开始列；看不清的日期不要编造。'
+        }
+      };
+      const target = Object.prototype.hasOwnProperty.call(specs, p.target) ? p.target : 'weekday';
+      const spec = specs[target];
+      const note = String(p.note || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+      const system = [
+        '你是课程表识别助手。把图片里的课程表转成 CSV，只输出 CSV 本身。',
+        '不要解释，不要 Markdown 代码块，不要表头以外的多余文字。',
+        '看不清的格子留空，不要猜测；课程名保持图片原文；时间统一成 24 小时制 HH:MM-HH:MM。'
+      ].join('\n');
+      const userText = [
+        '导入目标：' + spec.label,
+        '列名必须是：' + spec.columns,
+        '示例：',
+        spec.example,
+        '规则：' + spec.rules,
+        note ? '用户补充要求：' + note : ''
+      ].filter(Boolean).join('\n');
+      const gen = await aiChat([
+        { role: 'system', content: system },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: userText },
+            { type: 'image_url', image_url: { url: image } }
+          ]
+        }
+      ], {
+        model: String(p.model || ''),
+        query: '课程表图片识别',
+        vision: true,
+        think: false,
+        maxTokens: 2600,
+        timeout: 120000,
+        tries: 2
+      });
+      appendLog('TIMETABLE_AI_IMPORT', { target, model: gen.model, chars: String(gen.content || '').length });
+      const meta = KILO_MODELS.find((m) => m.id === gen.model);
+      return { ok: true, text: gen.content, model: gen.model, modelName: meta ? meta.name : gen.model, target };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
 
   ipcMain.on('app:log', (_e, event, detail) => appendLog(String(event || 'CLIENT'), detail));
 

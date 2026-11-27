@@ -3062,6 +3062,37 @@ body[data-skin="bamboo"] .logs{background:rgba(255,255,255,.55);color:var(--dim)
 }
 
 /* 系统开启「减少动态效果」时，去掉装饰性动画与过渡，降低持续绘制占用 */
+/* ===== AI 导出格式菜单 ===== */
+.ai-export-menu{
+  position:fixed;z-index:95;width:238px;padding:6px;
+  border:1px solid color-mix(in srgb,var(--gold) 30%,var(--line));
+  border-radius:14px;
+  background:linear-gradient(165deg,color-mix(in srgb,var(--bg-solid) 92%,transparent),var(--bg-deep));
+  box-shadow:0 20px 44px rgba(0,0,0,.46),inset 0 1px 0 color-mix(in srgb,var(--gold) 16%,transparent);
+  backdrop-filter:blur(14px);
+  display:grid;gap:2px;
+  animation:aiExportIn .16s cubic-bezier(.2,.9,.3,1);
+}
+.ai-export-menu__item{
+  display:grid;grid-template-columns:1fr auto;gap:1px 10px;align-items:baseline;
+  padding:8px 10px;border:none;border-radius:9px;background:transparent;
+  color:var(--text);text-align:left;cursor:pointer;transition:background .14s,transform .14s;
+}
+.ai-export-menu__item:hover{background:color-mix(in srgb,var(--gold) 13%,transparent);transform:translateX(2px)}
+.ai-export-menu__item b{font-size:12.5px;font-weight:500;letter-spacing:.05em}
+.ai-export-menu__item i{font-style:normal;font-size:10px;letter-spacing:.04em;color:var(--faint)}
+.ai-export-menu__item em{
+  grid-column:1 / -1;font-style:normal;font-size:10.5px;line-height:1.5;
+  letter-spacing:.02em;color:var(--faint);
+}
+@keyframes aiExportIn{from{opacity:0;transform:translateY(6px) scale(.97)}to{opacity:1;transform:none}}
+
+/* ===== KaTeX 与整行公式 ===== */
+.ai-math .katex{font-size:1.06em}
+.ai-math--block .katex-display{margin:6px 0}
+.ai-math--block .katex-display>.katex{max-width:100%;overflow-x:auto;overflow-y:hidden}
+.ai-md>.ai-math--block{margin:10px 0}
+
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{
     animation-duration:.01ms !important;

@@ -3793,7 +3793,8 @@ function aiAssistCopy(text, btn, back) {
 }
 
 /* 把这条回答导出为 Markdown / HTML 文档：主进程弹保存框并落盘 */
-async function exportAiAssistDoc(m) {
+async function exportAiAssistDoc(m, format) {
+  const fmt = ['md', 'docx', 'xlsx', 'txt', 'html'].includes(format) ? format : 'md';
   const text = String((m && m.text) || '');
   if (!text.trim()) { toast('这条回答没有可导出的内容'); return; }
   if (!bridge.aiExportDoc) { toast('当前版本不支持导出文档'); return; }
@@ -3808,6 +3809,7 @@ async function exportAiAssistDoc(m) {
     '',
     text
   ].join('\n');
+  /* 独立 HTML 用轻量公式渲染：不依赖本地 KaTeX 字体，换机打开也不会散架 */
   const html = [
     '<!DOCTYPE html>',
     '<html lang="zh-CN"><head><meta charset="utf-8" />',
@@ -3826,11 +3828,11 @@ async function exportAiAssistDoc(m) {
     '</style></head><body>',
     `<h1>${escapeHtml(title)}</h1>`,
     `<blockquote>${escapeHtml(stamp)} · 高考倒计时 AI 助手</blockquote>`,
-    aiAssistMarkdown(text),
+    aiAssistMarkdown(text, { lightMath: true }),
     '</body></html>'
   ].join('\n');
   try {
-    const res = await bridge.aiExportDoc({ title, markdown: md, html });
+    const res = await bridge.aiExportDoc({ title, markdown: md, html, body: text, format: fmt });
     if (res && res.ok) toast(`已导出「${String(res.filePath || '').split(/[\\/]/).pop()}」`);
     else if (res && res.canceled) { /* 用户取消，不提示 */ }
     else toast(`导出失败：${(res && res.error) || '请稍后再试'}`);
@@ -3839,9 +3841,72 @@ async function exportAiAssistDoc(m) {
   }
 }
 
-/* 轻量公式渲染：把常见 LaTeX 转成 HTML，避免引入 KaTeX；保证公式不用原始反斜杠糊在正文里 */
-function aiMathHtml(src, display) {
-  let s = escapeHtml(String(src === undefined || src === null ? '' : src).trim());
+/* 导出格式菜单：挂在「导出文档」按钮上方 */
+let aiExportMenuEl = null;
+function closeAiExportMenu() {
+  if (!aiExportMenuEl) return;
+  aiExportMenuEl.remove();
+  aiExportMenuEl = null;
+  document.removeEventListener('mousedown', onAiExportMenuOutside, true);
+}
+function onAiExportMenuOutside(e) {
+  if (aiExportMenuEl && !aiExportMenuEl.contains(e.target)) closeAiExportMenu();
+}
+function openAiExportMenu(anchor, m) {
+  closeAiExportMenu();
+  const menu = aiAssistEl('div', 'ai-export-menu');
+  const items = [
+    { id: 'docx', label: 'Word 文档', ext: '.docx', hint: '带标题与表格，适合提交' },
+    { id: 'xlsx', label: 'Excel 表格', ext: '.xlsx', hint: '要点与表格分列' },
+    { id: 'txt', label: '纯文本', ext: '.txt', hint: '任何设备都能打开' },
+    { id: 'md', label: 'Markdown', ext: '.md', hint: '保留公式与结构' },
+    { id: 'html', label: '网页文档', ext: '.html', hint: '带排版，可直接打印' }
+  ];
+  items.forEach((it) => {
+    const b = aiAssistEl('button', 'ai-export-menu__item');
+    b.type = 'button';
+    b.appendChild(aiAssistEl('b', null, it.label));
+    b.appendChild(aiAssistEl('i', null, it.ext));
+    b.appendChild(aiAssistEl('em', null, it.hint));
+    b.addEventListener('click', () => {
+      closeAiExportMenu();
+      exportAiAssistDoc(m, it.id);
+    });
+    menu.appendChild(b);
+  });
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  const w = menu.offsetWidth || 236;
+  const h = menu.offsetHeight || 260;
+  const left = Math.max(12, Math.min(window.innerWidth - w - 12, r.left));
+  const top = r.top - h - 10 >= 12 ? r.top - h - 10 : Math.min(window.innerHeight - h - 12, r.bottom + 10);
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+  aiExportMenuEl = menu;
+  setTimeout(() => document.addEventListener('mousedown', onAiExportMenuOutside, true), 0);
+}
+
+/* 公式渲染：优先 KaTeX + mhchem（化学式、分式、根号一次到位），不可用时退回轻量转换 */
+function aiMathHtml(src, display, forceLight) {
+  const raw = String(src === undefined || src === null ? '' : src).trim();
+  if (!forceLight && window.katex && typeof window.katex.renderToString === 'function') {
+    try {
+      /* 对话里常出现 a & b、50% 这类写法；不在 aligned 环境时转义，避免 KaTeX 报错标红 */
+      let expr = raw;
+      if (!/\\begin\{/.test(expr)) expr = expr.replace(/(^|[^\\])&/g, '$1\\&');
+      expr = expr.replace(/(^|[^\\])%/g, '$1\\%');
+      const html = window.katex.renderToString(expr, {
+        displayMode: !!display,
+        throwOnError: false,
+        strict: 'ignore',
+        trust: false,
+        maxSize: 26,
+        output: 'html'
+      });
+      return '<span class="ai-math' + (display ? ' ai-math--block' : '') + '">' + html + '</span>';
+    } catch (e) { /* 走下面的轻量渲染 */ }
+  }
+  let s = escapeHtml(raw);
   const parts = [];
   /* 生成的分式 / 根号 HTML 先存占位符，避免后面的 _ ^ 转换把 class 名里的下划线改掉 */
   const holdPart = (html) => {
@@ -3866,6 +3931,7 @@ function aiMathHtml(src, display) {
     '\\partial': '∂', '\\nabla': '∇', '\\circ': '°',
     '\\sin': 'sin', '\\cos': 'cos', '\\tan': 'tan', '\\log': 'log', '\\ln': 'ln',
     '\\lim': 'lim', '\\max': 'max', '\\min': 'min',
+    '\\leftrightharpoons': '⇌', '\\rightleftharpoons': '⇌',
     '\\rightarrow': '→', '\\to': '→', '\\Rightarrow': '⇒', '\\leftarrow': '←',
     '\\left': '', '\\right': '', '\\,': ' ', '\\;': ' ', '\\!': '',
     '\\quad': '　', '\\qquad': '　　'
@@ -3875,7 +3941,7 @@ function aiMathHtml(src, display) {
       '</span><span class="ai-frac__d">' + powSub(b) + '</span></span>'));
   /* 化学式：\ce{H2SO4} / \pu{} 直接把数字转下标，箭头转符号，避免原始命令漏到正文 */
   s = s.replace(/\\(?:ce|pu)\{([^{}]*)\}/g, (_m, body) => String(body)
-    .replace(/&lt;=&gt;|&lt;-&gt;|\\rightleftharpoons/g, '⇌')
+    .replace(/&lt;=&gt;|&lt;-&gt;|\\rightleftharpoons|\\leftrightharpoons/g, '⇌')
     .replace(/-&gt;/g, '→')
     .replace(/&lt;-(?!&gt;)/g, '←')
     .replace(/\^(\d*[+-])/g, '<sup>$1</sup>')
@@ -3895,9 +3961,21 @@ function aiMathHtml(src, display) {
   return '<span class="ai-math' + (display ? ' ai-math--block' : '') + '">' + s + '</span>';
 }
 
+/* 模型常把化学 / 物理公式直接写成一行 LaTeX（没有 $ 包裹），这里做保守识别，整行按公式渲染 */
+function looksLikeFormulaLine(line) {
+  const s = String(line || '').trim();
+  if (!s || s.length > 240) return false;
+  if (/[\u4e00-\u9fff]/.test(s)) return false;
+  if (s.charAt(0) === '\x60' || s.charAt(0) === '|' || s.charAt(0) === '>') return false;
+  if (!/\\[a-zA-Z]+|[_^]\{?[0-9A-Za-z]/.test(s)) return false;
+  return /\\[a-zA-Z]+|[=<>→⇌]|[_^]\{?[0-9A-Za-z]/.test(s);
+}
+
 /* 轻量 Markdown：思路照 renderer/knowledge.js 的 renderMarkdown，先转义再套标签，
    代码块与行内代码用占位符保护，用户文本无法注入 HTML */
-function aiAssistMarkdown(src) {
+function aiAssistMarkdown(src, opts) {
+  const lightMath = !!(opts && opts.lightMath);
+  const mathHtml = (expr, block) => aiMathHtml(expr, block, lightMath);
   let text = String(src === undefined || src === null ? '' : src)
     .replace(/\r\n?/g, '\n')
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
@@ -3923,8 +4001,8 @@ function aiAssistMarkdown(src) {
       codes.push('<code>' + escapeHtml(code) + '</code>');
       return '\u0001C' + (codes.length - 1) + '\u0002';
     });
-    t = t.replace(/\\\(([^)\n]+)\\\)/g, (_m, expr) => holdMath(aiMathHtml(expr, false)));
-    t = t.replace(/\$([^$\n]+?)\$/g, (_m, expr) => holdMath(aiMathHtml(expr, false)));
+    t = t.replace(/\\\(([^)\n]+)\\\)/g, (_m, expr) => holdMath(mathHtml(expr, false)));
+    t = t.replace(/\$([^$\n]+?)\$/g, (_m, expr) => holdMath(mathHtml(expr, false)));
     t = escapeHtml(t);
     t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
@@ -3937,7 +4015,7 @@ function aiAssistMarkdown(src) {
   text = text.replace(/\x60\x60\x60([\w+#.-]*)[ \t]*\n?([\s\S]*?)(?:\x60\x60\x60|$)/g, (_m, lang, code) => {
     const body = String(code).replace(/\n+$/, '');
     /* latex / tex / math 代码块直接按公式渲染，不再把原始反斜杠当代码展示 */
-    if (/^(latex|tex|math)$/i.test(lang || '')) return holdMath(aiMathHtml(body, true));
+    if (/^(latex|tex|math)$/i.test(lang || '')) return holdMath(mathHtml(body, true));
     const html = escapeHtml(body);
     const tag = lang ? escapeHtml(lang) : '代码';
     return hold(
@@ -3949,8 +4027,8 @@ function aiAssistMarkdown(src) {
     );
   });
 
-  text = text.replace(/\$\$([\s\S]+?)\$\$/g, (_m, expr) => holdMath(aiMathHtml(expr, true)));
-  text = text.replace(/\\\[([\s\S]+?)\\\]/g, (_m, expr) => holdMath(aiMathHtml(expr, true)));
+  text = text.replace(/\$\$([\s\S]+?)\$\$/g, (_m, expr) => holdMath(mathHtml(expr, true)));
+  text = text.replace(/\\\[([\s\S]+?)\\\]/g, (_m, expr) => holdMath(mathHtml(expr, true)));
 
   text = text.replace(/(^\|.+\|[ \t]*\n\|[-: |]+\|[ \t]*\n(?:\|.*\|[ \t]*(?:\n|$))+)/gm, (m) => {
     const rows = m.trim().split('\n').filter(Boolean);
@@ -3982,6 +4060,12 @@ function aiAssistMarkdown(src) {
     if (!line.trim()) { flushList(); continue; }
     if (/^\u0001B\d+\u0002$/.test(line.trim())) { flushList(); out.push(line.trim()); continue; }
     if (/^\u0001M\d+\u0002$/.test(line.trim())) { flushList(); out.push(line.trim()); continue; }
+    if (looksLikeFormulaLine(line)) {
+      flushList();
+      /* 无定界符的公式行：连续空格多半是分隔反应条件，转成 \quad 保留间隔 */
+      out.push(mathHtml(line.trim().replace(/\s{2,}/g, ' \\quad '), true));
+      continue;
+    }
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) { flushList(); out.push('<hr>'); continue; }
     const h = line.match(/^(#{1,4})\s+(.*)$/);
     if (h) {
@@ -4278,7 +4362,11 @@ function buildAiAssistMessage(m, idx) {
   const copyBtn = aiAssistBtn('复制', () => aiAssistCopy(m.text || (m.error ? String(m.error) : ''), copyBtn));
   acts.appendChild(copyBtn);
   if (!m.error && !m.stopped && m.text) {
-    acts.appendChild(aiAssistBtn('导出文档', () => exportAiAssistDoc(m)));
+    const exportBtn = aiAssistBtn('导出文档', () => {
+      if (aiExportMenuEl) { closeAiExportMenu(); return; }
+      openAiExportMenu(exportBtn, m);
+    });
+    acts.appendChild(exportBtn);
   }
   if (m.request && m.request.query) acts.appendChild(aiAssistBtn('重新生成', () => retryAiAssist(idx)));
   acts.appendChild(aiAssistBtn('分支', () => branchAiAssist(idx)));
@@ -4893,6 +4981,7 @@ function readAiAssistFile(file) {
   return new Promise((resolve) => {
     const name = String(file.name || 'file');
     const type = String(file.type || '');
+    const ext = (name.split('.').pop() || '').toLowerCase();
     const isImage = /^image\//.test(type);
     if (isImage) {
       if (file.size > AI_ASSIST_MAX_IMAGE) {
@@ -4904,6 +4993,32 @@ function readAiAssistFile(file) {
       fr.onload = () => resolve({ name, kind: 'image', mime: type, size: file.size, dataUrl: String(fr.result || '') });
       fr.onerror = () => resolve(null);
       fr.readAsDataURL(file);
+      return;
+    }
+    /* Word / Excel 交给主进程解析成文字，再作为普通附件发给模型 */
+    if (ext === 'docx' || ext === 'xlsx' || ext === 'xls' || ext === 'doc') {
+      const filePath = bridge.getFilePath ? bridge.getFilePath(file) : '';
+      if (!filePath || !bridge.aiReadDoc) {
+        toast('当前环境读不了「' + name + '」');
+        resolve(null);
+        return;
+      }
+      Promise.resolve(bridge.aiReadDoc({ path: filePath, name }))
+        .then((res) => {
+          if (!res || !res.ok) {
+            toast((res && res.error) || ('读取「' + name + '」失败'));
+            resolve(null);
+            return;
+          }
+          resolve({
+            name,
+            kind: 'text',
+            mime: type || 'application/octet-stream',
+            size: file.size,
+            text: String(res.text || '').slice(0, 60000)
+          });
+        })
+        .catch(() => resolve(null));
       return;
     }
     if (file.size > AI_ASSIST_MAX_TEXT) {
@@ -5985,6 +6100,7 @@ function bindEvents() {
       return;
     }
     if (e.key === 'Escape') {
+      if (aiExportMenuEl) { closeAiExportMenu(); return; }
       if (!$('aiModal2').hidden) closeAiSetup();
       else if (aiAssist.modelOpen) setAiAssistModelMenu(false);
       else if (isAiAssistOpen()) closeAiAssistant();

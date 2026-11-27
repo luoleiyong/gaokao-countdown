@@ -6,6 +6,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';" />
 <title>高考倒计时</title>
 <link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="vendor/katex/katex.min.css" />
 </head>
 <body data-skin="board" data-mode="panel">
 <div class="app" id="app">
@@ -906,7 +907,7 @@
                 <path d="M21 11.5 12.5 20a5 5 0 0 1-7-7l8-8a3.3 3.3 0 1 1 4.7 4.7l-8 8a1.6 1.6 0 1 1-2.3-2.3l7.4-7.4"/>
               </svg>
             </button>
-            <input type="file" id="aiAssistFile" multiple hidden accept="image/*,.txt,.md,.csv,.json,.js,.ts,.py,.html,.css,.log">
+            <input type="file" id="aiAssistFile" multiple hidden accept="image/*,.txt,.md,.csv,.json,.js,.ts,.py,.html,.css,.log,.docx,.xlsx,.xls">
             <button class="ai-send" id="btnAiAssistSend" type="button" title="发送">发送</button>
           </div>
         </div>
@@ -940,6 +941,8 @@
 <script src="mottos.js"></script>
 <script src="fish.js"></script>
 <script src="ai-store.js"></script>
+<script src="vendor/katex/katex.min.js"></script>
+<script src="vendor/katex/mhchem.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

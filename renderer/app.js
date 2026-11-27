@@ -3895,6 +3895,10 @@ function aiMathHtml(src, display, forceLight) {
       let expr = raw;
       if (!/\\begin\{/.test(expr)) expr = expr.replace(/(^|[^\\])&/g, '$1\\&');
       expr = expr.replace(/(^|[^\\])%/g, '$1\\%');
+      /* 模型常写「⇌[催化剂][高温高压]」，套一层 mhchem 让条件排到箭头上下 */
+      if (/[⇌→←]\s*\[[^\]]*\]/.test(expr) && !/\\ce\{/.test(expr)) {
+        expr = '\\ce{' + expr.replace(/⇌/g, '<=>').replace(/→/g, '->').replace(/←/g, '<-') + '}';
+      }
       const html = window.katex.renderToString(expr, {
         displayMode: !!display,
         throwOnError: false,
@@ -3903,7 +3907,10 @@ function aiMathHtml(src, display, forceLight) {
         maxSize: 26,
         output: 'html'
       });
-      return '<span class="ai-math' + (display ? ' ai-math--block' : '') + '">' + html + '</span>';
+      /* KaTeX 遇到不认识的写法会内联 katex-error，这时交给轻量渲染兜底 */
+      if (html.indexOf('katex-error') === -1) {
+        return '<span class="ai-math' + (display ? ' ai-math--block' : '') + '">' + html + '</span>';
+      }
     } catch (e) { /* 走下面的轻量渲染 */ }
   }
   let s = escapeHtml(raw);
@@ -3947,6 +3954,11 @@ function aiMathHtml(src, display, forceLight) {
     .replace(/\^(\d*[+-])/g, '<sup>$1</sup>')
     .replace(/\s*\^\s*/g, '↑')
     .replace(/([A-Za-z)\]])(\d+)/g, '$1<sub>$2</sub>'));
+  /* 箭头上的反应条件：[催化剂][高温高压] → （催化剂，高温高压） */
+  s = s.replace(/(⇌|→|←)\s*((?:\[[^\]]*\]\s*)+)/g, (_m, arrow, conds) => {
+    const list = (conds.match(/\[([^\]]*)\]/g) || []).map((x) => x.slice(1, -1).trim()).filter(Boolean);
+    return arrow + (list.length ? '（' + list.join('，') + '）' : '');
+  });
   s = s.replace(/\\sqrt\[([^\]]+)\]\{([^{}]+)\}/g, (_m, n, v) =>
     holdPart('<span class="ai-sqrt"><sup>' + powSub(n) + '</sup>√<span class="ai-sqrt__v">' + powSub(v) + '</span></span>'));
   s = s.replace(/\\sqrt\{([^{}]+)\}/g, (_m, v) =>
@@ -5736,11 +5748,14 @@ function bindEvents() {
       try {
         const patch = { enabled: true, provider: state.aiProvider, model, autoModel: !!state.aiAutoModel };
         if (isCustom && base) patch.baseUrl = base;
+        /* 自定义模型保存时一起记住，设置页立刻出现模型名称标签 */
+        if (isCustom) patch.rememberModel = model;
         const cfg = await bridge.aiSaveConfig(patch);
         if (!cfg || !cfg.ok) {
           aiSaveError((cfg && cfg.error) || '保存失败，请检查接口地址与模型名');
           return;
         }
+        if (Array.isArray(cfg.customModels)) state.aiCustomModels = cfg.customModels;
         if (key && !aiIsNoKey()) {
           const saved = await bridge.aiSaveKey(key, state.aiProvider);
           if (!saved || !saved.ok) { aiSaveError((saved && saved.error) || '密钥保存失败'); return; }
@@ -5748,8 +5763,9 @@ function bindEvents() {
         }
         await loadAiConfig();
         renderAiSetup();
-        aiSetupTip(state.aiReady === false ? '已保存，但配置还没填完整。' : '已保存，AI 知识助手已启用。');
-        toast(state.aiReady === false ? '已保存，但配置还没填完整' : '已保存，AI 知识助手已启用');
+        const name = aiModelShort(model) || model;
+        aiSetupTip(state.aiReady === false ? '已保存，但配置还没填完整。' : '已保存并记住模型「' + name + '」，AI 知识助手已启用。');
+        toast(state.aiReady === false ? '已保存，但配置还没填完整' : '已保存模型「' + name + '」');
       } catch (e) {
         aiSaveError('保存失败：' + e.message);
       } finally {

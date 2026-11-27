@@ -100,12 +100,48 @@ const AI_PROVIDERS = [
     models: [{ id: 'openai-fast', name: 'GPT-OSS 20B · 带思考', ctx: 131072, think: true }]
   },
   {
+    id: 'ovh',
+    name: 'OVH 免费端点',
+    baseUrl: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1',
+    model: 'Meta-Llama-3_3-70B-Instruct',
+    authUrl: '',
+    keyUrl: 'https://endpoints.ai.cloud.ovh.net/',
+    noKey: true,
+    hint: '无需密钥，匿名约每分钟 2 次；含 Qwen3-VL 等视觉模型',
+    presets: [
+      'Meta-Llama-3_3-70B-Instruct', 'gpt-oss-120b', 'DeepSeek-V4.1-Flash-1017',
+      'Qwen3.5-397B-A17B', 'Mistral-Small-3.2-24B-Instruct-2506',
+      'qwen3-vl-30b-a3b', 'Qwen2.5-VL-72B-Instruct'
+    ],
+    models: [
+      { id: 'Meta-Llama-3_3-70B-Instruct', name: 'Llama 3.3 70B · OVH', ctx: 131072 },
+      { id: 'gpt-oss-120b', name: 'GPT-OSS 120B · OVH', ctx: 131072, think: true },
+      { id: 'DeepSeek-V4.1-Flash-1017', name: 'DeepSeek V4.1 Flash · OVH', ctx: 131072, think: true },
+      { id: 'Qwen3.5-397B-A17B', name: 'Qwen 3.5 397B · OVH', ctx: 262144, think: true },
+      { id: 'Mistral-Small-3.2-24B-Instruct-2506', name: 'Mistral Small 3.2 · OVH', ctx: 131072 },
+      { id: 'qwen3-vl-30b-a3b', name: 'Qwen3 VL 30B · OVH', ctx: 131072, vision: true },
+      { id: 'Qwen2.5-VL-72B-Instruct', name: 'Qwen2.5 VL 72B · OVH', ctx: 32768, vision: true }
+    ]
+  },
+  {
+    id: 'llm7',
+    name: 'LLM7 免费池',
+    baseUrl: 'https://api.llm7.io/v1',
+    model: 'gpt-oss:20b',
+    authUrl: '',
+    keyUrl: 'https://llm7.io/',
+    noKey: true,
+    hint: '无需密钥，匿名可用 gpt-oss:20b；额度随平台调整',
+    presets: ['gpt-oss:20b'],
+    models: [{ id: 'gpt-oss:20b', name: 'GPT-OSS 20B · LLM7', ctx: 131072 }]
+  },
+  {
     id: 'zhipu',
     name: '智谱 GLM',
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4/',
     model: 'glm-4.7-flash',
-    authUrl: 'https://bigmodel.cn/login',
-    keyUrl: 'https://bigmodel.cn/usercenter/proj-mgmt/apikeys',
+    authUrl: 'https://bigmodel.cn/usercenter/apikeys',
+    keyUrl: 'https://bigmodel.cn/usercenter/apikeys',
     hint: 'GLM-4.7-Flash 输入输出全免，调用 API 不强制实名',
     presets: ['glm-4.7-flash', 'glm-4-flash-250414', 'glm-z1-flash']
   },
@@ -131,17 +167,17 @@ const AI_PROVIDERS = [
     presets: []
   }
 ];
-const AI_AUTH_REDIRECT = 'https://bigmodel.cn/usercenter/proj-mgmt/apikeys';
-const AI_LOGIN_URL = AI_PROVIDERS[0].authUrl + '?redirect=' + encodeURIComponent(AI_AUTH_REDIRECT);
-/* 登录地址按供应商取；自定义供应商没有登录页，返回空串 */
+const AI_AUTH_REDIRECT = 'https://bigmodel.cn/usercenter/apikeys';
+/* 登录地址按供应商取；直接打开控制台/密钥页，避免旧登录路径 404 */
 function aiAuthUrlOf(provider) { return provider && provider.authUrl ? provider.authUrl : ''; }
 function aiLoginUrlOf(provider) {
-  const auth = aiAuthUrlOf(provider);
-  if (!auth) return '';
-  return auth + '?redirect=' + encodeURIComponent(provider.keyUrl || AI_AUTH_REDIRECT);
+  if (!provider) return '';
+  return provider.keyUrl || aiAuthUrlOf(provider);
 }
 /* 联网热点：新浪滚动公开接口，失败时自动退回模型生成并如实标注来源 */
 const AI_HOT_URL = 'https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2510&k=&num=20&page=1';
+/* 热点抓取规则版本：加过时效过滤后旧缓存不再复用 */
+const AI_NEWS_VER = 2;
 /* 联网检索：Bing RSS 与百度热搜都是公开只读接口，不需要密钥 */
 const AI_SEARCH_RSS = 'https://cn.bing.com/search?format=rss&count=10&mkt=zh-CN&setlang=zh-hans&cc=CN&q=';
 const AI_SEARCH_RSS_EN = 'https://cn.bing.com/search?format=rss&count=10&mkt=en-US&setlang=en&q=';
@@ -212,6 +248,8 @@ const STORE_DEFAULTS = {
   aiTopic: '每日热点',
   aiNewsDate: '',
   aiNewsCache: null,
+  /* 热点抓取规则的版本号：规则升级后旧缓存自动作废，避免继续引用旧闻 */
+  aiNewsVer: 0,
   /* 每日热点自动化：默认每天 08:00 抓一次，主界面卡片显示前 4 条 */
   newsAutoEnabled: true,
   newsAutoTime: '08:00',
@@ -966,6 +1004,7 @@ function loadStore() {
       : '每日热点';
     merged.aiNewsDate = typeof merged.aiNewsDate === 'string' ? merged.aiNewsDate : '';
     merged.aiNewsCache = merged.aiNewsCache && typeof merged.aiNewsCache === 'object' ? merged.aiNewsCache : null;
+    merged.aiNewsVer = Number(data.aiNewsVer) || 0;
     // 每日热点自动化：字段缺失时按默认开启、08:00 处理，旧数据升级后直接可用
     merged.newsAutoEnabled = data.newsAutoEnabled !== false;
     merged.newsAutoTime = normalizeNewsTime(data.newsAutoTime);
@@ -2872,6 +2911,11 @@ function aiCooling(model) {
 
 function aiModelMeta(providerId, model) {
   const pid = String(providerId || '');
+  const provider = AI_PROVIDERS.find((p) => p.id === pid);
+  if (provider && Array.isArray(provider.models)) {
+    const found = provider.models.find((m) => m.id === model);
+    if (found) return found;
+  }
   if (pid === 'kilo') {
     const found = KILO_MODELS.find((m) => m.id === model);
     return found || { id: model, name: model, ctx: 0, think: true };
@@ -2913,8 +2957,10 @@ function aiCandidates(opts) {
     const meta = aiModelMeta(providerId, m);
     /* 视觉请求只走支持图片的模型：否则 kilo-auto / 文本模型会返回 404，最后被别的供应商 401 盖住 */
     if (o.vision) {
-      if (providerId === 'kilo' && !meta.vision) return;
       if (providerId === 'pollinations') return;
+      if (providerId === 'kilo' && !meta.vision) return;
+      if (providerId === 'ovh' && !meta.vision) return;
+      if (providerId === 'llm7' && !meta.vision) return;
       if (providerId === 'zhipu' && !/vision|vl|4v/i.test(m)) return;
     }
     const entryProvider = AI_PROVIDERS.find((p) => p.id === providerId) || provider;
@@ -2948,6 +2994,8 @@ function aiCandidates(opts) {
     /* 视觉模型不在前 3 个默认候选里，这里显式补进候选链 */
     AI_TASK_MODELS.vision.forEach((m) => push('kilo', m, false));
     KILO_MODELS.filter((x) => x.vision).forEach((x) => push('kilo', x.id, false));
+    const ovh = AI_PROVIDERS.find((p) => p.id === 'ovh');
+    if (ovh) (ovh.models || []).filter((x) => x.vision).forEach((x) => push('ovh', x.id, false));
   }
 
   if (store.aiAutoModel !== false) {
@@ -3213,7 +3261,7 @@ function aiTopicLabel(storeRef, topic) {
 /* 联网热点：多源并行（今日头条 + 百度热搜 + 知乎日报 + 人民网），按天缓存；全挂时退回新浪滚动 */
 async function aiHotNews(force) {
   const today = new Date().toISOString().slice(0, 10);
-  if (!force && store.aiNewsDate === today && store.aiNewsCache && store.aiNewsCache.text) {
+  if (!force && store.aiNewsDate === today && store.aiNewsCache && store.aiNewsCache.text && Number(store.aiNewsVer) === AI_NEWS_VER) {
     return store.aiNewsCache;
   }
   let error = '';
@@ -3229,8 +3277,10 @@ async function aiHotNews(force) {
   settled.forEach((res, i) => {
     const name = jobs[i].name;
     if (res.status === 'fulfilled' && Array.isArray(res.value) && res.value.length) {
-      sources.push({ name, count: res.value.length });
-      res.value.forEach((it) => {
+      const kept = res.value.filter((it) => aiNewsItemOk(Object.assign({ source: name }, it)));
+      if (!kept.length) return;
+      sources.push({ name, count: kept.length });
+      kept.forEach((it) => {
         const bits = [it.title];
         if (it.snippet) bits.push('— ' + it.snippet);
         if (it.url) bits.push('（' + it.url + '）');
@@ -3270,6 +3320,7 @@ async function aiHotNews(force) {
   };
   store.aiNewsDate = today;
   store.aiNewsCache = payload;
+  store.aiNewsVer = AI_NEWS_VER;
   saveStore();
   return payload;
 }
@@ -3336,10 +3387,13 @@ async function newsFetchItems() {
   settled.forEach((res, i) => {
     const name = jobs[i].name;
     if (res.status === 'fulfilled' && Array.isArray(res.value) && res.value.length) {
+      /* RSS / 资讯类只留近 3 天，过期或没日期的直接丢掉，避免旧闻混进今日热点 */
+      const kept = res.value.filter((it) => it && aiNewsItemOk(Object.assign({ source: name }, it)));
+      if (!kept.length) return;
       const exist = sources.find((s) => s.name === name);
-      if (exist) exist.count += res.value.length;
-      else sources.push({ name, count: res.value.length });
-      res.value.forEach((it, idx) => {
+      if (exist) exist.count += kept.length;
+      else sources.push({ name, count: kept.length });
+      kept.forEach((it, idx) => {
         candidates.push({
           title: it.title,
           source: name,
@@ -3410,9 +3464,22 @@ async function newsTrendOf(items) {
 }
 
 
+/* 卡片只展示还在时效内的条目：旧版本缓存里的 RSS 旧闻不再带出来 */
+function newsVisibleItems() {
+  const list = Array.isArray(store.newsAutoItems) ? store.newsAutoItems : [];
+  return list.filter((it) => aiNewsItemOk(it));
+}
+
+/* 缓存里混进过期条目时需要重抓一次，避免旧闻一直挂到第二天 */
+function newsCacheDirty() {
+  const all = Array.isArray(store.newsAutoItems) ? store.newsAutoItems : [];
+  if (!all.length) return false;
+  return newsVisibleItems().length !== all.length;
+}
+
 /* 卡片要的摘要：启用状态、抓取时间、条目与失败原因 */
 function newsBrief() {
-  const items = Array.isArray(store.newsAutoItems) ? store.newsAutoItems : [];
+  const items = newsVisibleItems();
   return {
     enabled: store.newsAutoEnabled !== false,
     time: normalizeNewsTime(store.newsAutoTime),
@@ -3438,7 +3505,7 @@ function newsBroadcast() {
 /* 抓一次写进 store；force=true 表示用户手动刷新，忽略「今天已经抓过」 */
 async function newsRefresh(force) {
   const today = dateKey();
-  if (!force && store.newsAutoDate === today && Array.isArray(store.newsAutoItems) && store.newsAutoItems.length) {
+  if (!force && store.newsAutoDate === today && newsVisibleItems().length) {
     return newsBrief();
   }
   const out = await newsFetchItems();
@@ -3490,8 +3557,22 @@ function newsTick() {
 
 function startNewsScheduler() {
   if (newsTimer) clearInterval(newsTimer);
-  /* 启动 6 秒后先补一次，避免开机晚于设定时间就整天没内容 */
-  setTimeout(() => { try { newsTick(); } catch { /* 忽略 */ } }, 6000);
+  /* 启动 6 秒后先补一次，避免开机晚于设定时间就整天没内容；
+     如果今天已抓过但缓存里混着旧闻，顺手重抓一次 */
+  setTimeout(() => {
+    try {
+      if (store.newsAutoEnabled === false) return;
+      if (store.newsAutoDate === dateKey() && newsCacheDirty()) {
+        /* 卡片缓存有旧闻时，AI 用的热点缓存也一并作废，下次提问重新抓 */
+        store.aiNewsDate = '';
+        store.aiNewsCache = null;
+        store.aiNewsVer = 0;
+        newsRefresh(true).catch(() => { /* 失败原因已写进 store */ });
+      } else {
+        newsTick();
+      }
+    } catch { /* 忽略 */ }
+  }, 6000);
   newsTimer = setInterval(() => { try { newsTick(); } catch { /* 忽略 */ } }, 60 * 1000);
 }
 
@@ -3510,6 +3591,45 @@ function aiStripTags(s) {
     .trim();
 }
 
+/* RSS 的 pubDate 有 RFC822 / ISO / 中文日期几种写法，统一成 YYYY-MM-DD 才能判断新旧 */
+function aiParseNewsDate(v) {
+  const s = String(v || '').trim();
+  if (!s) return '';
+  const m = s.match(/(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})/);
+  if (m) return m[1] + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[3]).padStart(2, '0');
+  const t = Date.parse(s);
+  if (!isNaN(t)) {
+    const d = new Date(t);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  return '';
+}
+
+/* 每日热点只收近 3 天的条目；热榜本身是实时榜，不走日期判断 */
+const NEWS_FRESH_DAYS = 3;
+const NEWS_HOT_SOURCES = /^(今日头条|百度热搜|知乎日报|新浪滚动)$/;
+function aiNewsDateAge(v) {
+  const s = String(v || '').trim();
+  if (/今天|今日|刚刚|实时/.test(s)) return 0;
+  if (/昨天|昨日/.test(s)) return 1;
+  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  let t = NaN;
+  if (m) t = Date.parse(m[1] + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[3]).padStart(2, '0') + 'T00:00:00+08:00');
+  else t = Date.parse(s);
+  return isNaN(t) ? -1 : (Date.now() - t) / 86400000;
+}
+function aiNewsDateOk(v, days) {
+  const age = aiNewsDateAge(v);
+  if (!isFinite(age) || age < 0) return false;
+  return age <= (days || NEWS_FRESH_DAYS);
+}
+function aiNewsItemOk(it) {
+  if (!it) return false;
+  if (NEWS_HOT_SOURCES.test(String(it.source || it.src || ''))) return true;
+  /* RSS / 资讯类没有日期就无法确认时效，按旧条目丢掉 */
+  return aiNewsDateOk(it.date);
+}
+
 function aiRssItems(xml, limit) {
   const out = [];
   const blocks = String(xml || '').match(/<item>[\s\S]*?<\/item>/g) || [];
@@ -3521,7 +3641,7 @@ function aiRssItems(xml, limit) {
     const title = pick('title');
     const url = pick('link');
     if (!title || !url) return;
-    out.push({ title: title.slice(0, 120), url: url.slice(0, 400), date: pick('pubDate').slice(0, 40), snippet: pick('description').slice(0, 160) });
+    out.push({ title: title.slice(0, 120), url: url.slice(0, 400), date: aiParseNewsDate(pick('pubDate')), snippet: pick('description').slice(0, 160) });
   });
   return out;
 }
@@ -3870,6 +3990,16 @@ function aiRelevance(it, tokens) {
   return hit / Math.min(tokens.length, 8);
 }
 
+/* 搜索引擎被反爬/验证码拦截时的典型页面标记；命中就当这一路没有结果 */
+function aiSerpWall(html) {
+  const s = String(html || '');
+  if (!s) return '';
+  if (/wappass\.baidu\.com|seccaptcha|百度安全验证/.test(s)) return 'baidu-captcha';
+  if (/_____tmd_____\/punish\?x5secdata|rgv587_flag/.test(s)) return 'quark-punish';
+  if (s.length < 120000 && /captcha|unusual traffic|人机验证|安全验证|访问过于频繁|访问异常/.test(s)) return 'captcha';
+  return '';
+}
+
 async function aiDeepSearch(query, opts) {
   const o = opts || {};
   const q = String(query || '').trim().slice(0, 120);
@@ -3895,7 +4025,12 @@ async function aiDeepSearch(query, opts) {
     Promise.allSettled(plan.map((p) => (async () => {
       const acceptLang = aiLooksEnglish(p.q) ? 'en-US,en;q=0.9' : 'zh-CN,zh;q=0.9';
       const html = await fetchText(p.engine.url(p.q, p.page), timeout, { Accept: 'text/html,application/xhtml+xml,*/*', 'Accept-Language': acceptLang });
-      return { name: p.engine.name, items: parseOf(p.engine.id, html) };
+      const items = parseOf(p.engine.id, html);
+      if (!items.length) {
+        const wall = aiSerpWall(html);
+        if (wall) appendLog('AI_SEARCH_WALL', { engine: p.engine.name, page: p.page, wall });
+      }
+      return { name: p.engine.name, items };
     })())),
     Promise.allSettled(verticalJobs.map((j) => j.p))
   ]);
@@ -3907,7 +4042,7 @@ async function aiDeepSearch(query, opts) {
       const at = engines.find((e) => e.name === name);
       if (at) at.count += res.value.items.length;
       else engines.push({ name: name, count: res.value.items.length });
-      buckets.push(res.value.items);
+      buckets.push({ name, items: res.value.items });
     } else if (res.status === 'rejected') {
       appendLog('AI_SEARCH_FAIL', { engine: plan[i].engine.name, page: plan[i].page, error: String((res.reason && res.reason.message) || res.reason).slice(0, 120) });
     }
@@ -3918,34 +4053,43 @@ async function aiDeepSearch(query, opts) {
       const at = engines.find((e) => e.name === name);
       if (at) at.count += res.value.length;
       else engines.push({ name: name, count: res.value.length });
-      buckets.push(res.value);
+      buckets.push({ name, items: res.value });
     } else if (res.status === 'rejected') {
       appendLog('AI_SEARCH_FAIL', { engine: verticalJobs[i].name, error: String((res.reason && res.reason.message) || res.reason).slice(0, 120) });
     }
   });
-  /* 轮转交织：各家轮流占一位，避免结果多的引擎霸占前排 */
-  const merged = [];
-  const seen = new Set();
-  const maxLen = buckets.reduce((n, b) => Math.max(n, b.length), 0);
-  for (let i = 0; i < maxLen; i++) {
-    for (let b = 0; b < buckets.length; b++) {
-      const it = buckets[b][i];
-      if (!it || !it.title) continue;
-      if (/^https?:\/\/ai\.so\.com\//i.test(it.url || '')) continue;
-      if (/百度百科|维基百科|百度知道|演唱的歌曲|汉语国学|字典|的意思与解释/.test(it.title || '')) continue;
-      if (/hanyuguoxue|zdic\.net|cidianwang/.test(it.url || '')) continue;
+  /* RRF（互惠排序融合）：同一结果在越多引擎里排得越前，综合分越高；顺带去重 */
+  const fused = new Map();
+  let seq = 0;
+  buckets.forEach((bucket) => {
+    const items = bucket && Array.isArray(bucket.items) ? bucket.items : [];
+    items.forEach((it, rank) => {
+      if (!it || !it.title) return;
+      if (/^https?:\/\/ai\.so\.com\//i.test(it.url || '')) return;
+      if (/百度百科|维基百科|百度知道|演唱的歌曲|汉语国学|字典|的意思与解释/.test(it.title || '')) return;
+      if (/hanyuguoxue|zdic\.net|cidianwang/.test(it.url || '')) return;
       const key = String(it.title).replace(/[\s,.!?，。！？、：；「」（）【】"'“”·\-—|:;]/g, '').slice(0, 16);
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      merged.push(it);
-    }
-  }
+      if (!key) return;
+      let hit = fused.get(key);
+      if (!hit) {
+        hit = { it: it, score: 0, first: seq++ };
+        fused.set(key, hit);
+      }
+      hit.score += 1 / (60 + rank + 1);
+    });
+  });
+  const merged = Array.from(fused.values())
+    .sort((a, b) => (b.score - a.score) || (a.first - b.first))
+    .map((x) => x.it);
   merged.forEach((it) => { if (!it.date) it.date = aiSniffDate(it.snippet || ''); });
   const nowMs = Date.now();
   const ageOf = (it) => {
-    const m = String(it.date || '').match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    const s = String(it.date || '').trim();
+    if (/今天|今日|刚刚|实时/.test(s)) return 0;
+    if (/昨天|昨日/.test(s)) return 1;
+    const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
     if (!m) return -1;
-    const t = Date.parse(m[1] + '-' + m[2] + '-' + m[3] + 'T00:00:00+08:00');
+    const t = Date.parse(m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0') + 'T00:00:00+08:00');
     return isNaN(t) ? -1 : Math.round((nowMs - t) / 86400000);
   };
   const stale = (it) => { const a = ageOf(it); return a > 120; };
@@ -3958,7 +4102,9 @@ async function aiDeepSearch(query, opts) {
   const limit = o.limit || 8;
   let items;
   if (qkind === 'news' || qkind === 'politics') {
-    items = ordered.slice(0, limit);
+    /* 新闻问句只留近 7 天；近期条目够 3 条就不再往后塞旧闻 */
+    const recent = ordered.filter((it) => { const a = ageOf(it); return a >= 0 && a <= 7; });
+    items = (recent.length >= 3 ? recent : ordered).slice(0, limit);
   } else {
     const tokens = aiQueryTokens(q);
     const pool = fresh.length >= 3 ? fresh : ordered;
@@ -4276,6 +4422,8 @@ async function aiListModels() {
       };
     })
     .filter(Boolean);
+  /* 只留聊天模型：把嵌入、语音、绘图、审核模型从选择列表里去掉 */
+  models = models.filter((m) => !/(^bge-|embedding|whisper|tts|stable-diffusion|rerank|guard|audio)/i.test(m.id));
   if (provider.id === 'kilo') {
     const freeIds = new Set(KILO_MODELS.map((m) => m.id));
     models = models.filter((m) => m.free || freeIds.has(m.id));
@@ -5066,9 +5214,37 @@ function wireIpc() {
   function aiRaise(text, map) {
     return String(text == null ? '' : text).split('').map((c) => map[c] || c).join('');
   }
+  const AI_SUB_BACK = Object.keys(AI_SUB_MAP).reduce((o, k) => { o[AI_SUB_MAP[k]] = k; return o; }, {});
+  const AI_SUP_BACK = Object.keys(AI_SUP_MAP).reduce((o, k) => { o[AI_SUP_MAP[k]] = k; return o; }, {});
+  /* Unicode 上下标 → Word 真正的上下标，避免字体缺字显示成方块 */
+  function docxTextRuns(text, opts) {
+    const o = opts || {};
+    const base = { size: o.size || 22 };
+    if (o.bold) base.bold = true;
+    if (o.italics) base.italics = true;
+    const out = [];
+    let buf = '';
+    let mode = 0;
+    const flush = () => {
+      if (!buf) return;
+      const extra = mode === 1 ? { subScript: true } : (mode === 2 ? { superScript: true } : {});
+      out.push(new DOCX.TextRun(Object.assign({ text: buf }, base, extra)));
+      buf = '';
+    };
+    for (const ch of String(text == null ? '' : text)) {
+      let next = 0;
+      let c = ch;
+      if (AI_SUB_BACK[ch]) { next = 1; c = AI_SUB_BACK[ch]; }
+      else if (AI_SUP_BACK[ch]) { next = 2; c = AI_SUP_BACK[ch]; }
+      if (next !== mode) { flush(); mode = next; }
+      buf += c;
+    }
+    flush();
+    return out;
+  }
   /* LaTeX → 可读纯文本：Word / TXT 里不出现原始反斜杠 */
   function aiMathPlain(src) {
-    let s = String(src == null ? '' : src);
+    let s = String(src == null ? '' : src).replace(/\$/g, '');
     s = s.replace(/\\ce\{([^{}]*)\}/g, (_m, body) => String(body)
       .replace(/<=>|<->|\\rightleftharpoons|\\leftrightharpoons/g, '⇌')
       .replace(/->/g, '→')
@@ -5076,6 +5252,11 @@ function wireIpc() {
       .replace(/\^(\d*[+-])/g, (_x, c) => aiRaise(c, AI_SUP_MAP))
       .replace(/\s*\^\s*/g, '↑')
       .replace(/([A-Za-z)\]])(\d+)/g, (_x, a, d) => a + aiRaise(d, AI_SUB_MAP)));
+    /* 箭头上的反应条件：[催化剂][高温高压] → （催化剂，高温高压） */
+    s = s.replace(/(⇌|→|←|<->|<=>)\s*((?:\[[^\]]*\]\s*)+)/g, (_m, arrow, conds) => {
+      const list = (conds.match(/\[([^\]]*)\]/g) || []).map((x) => x.slice(1, -1).trim()).filter(Boolean);
+      return (arrow === '<->' || arrow === '<=>' ? '⇌' : arrow) + (list.length ? '（' + list.join('，') + '）' : '');
+    });
     s = s.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '($1)/($2)');
     s = s.replace(/\\sqrt\[([^\]]+)\]\{([^{}]+)\}/g, '$1√($2)');
     s = s.replace(/\\sqrt\{([^{}]+)\}/g, '√($1)');
@@ -5114,6 +5295,7 @@ function wireIpc() {
     t = t.replace(/\*\*([^*]+)\*\*/g, '$1');
     t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1$2');
     t = t.replace(/==([^=]+)==/g, '$1');
+    t = t.replace(/\$/g, '');
     return t.trim();
   }
   function markdownToPlain(md) {
@@ -5167,14 +5349,15 @@ function wireIpc() {
     const p = (n) => String(n).padStart(2, '0');
     return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${p(d.getHours())}:${p(d.getMinutes())}`;
   }
-  /* 行内 Markdown → Word 文本段（粗体 / 代码 / 公式，粗体内部还会再解析公式） */
+  /* 行内 Markdown → Word 文本段（粗体 / 斜体 / 代码 / 公式，粗体内部还会再解析公式） */
   function docxInlineRuns(text, bold, depth) {
     const src = String(text == null ? '' : text);
     const runs = [];
-    const re = /(\*\*([^*]+)\*\*|\x60([^\x60]+)\x60|\$([^$\n]+)\$)/g;
-    const base = bold ? { bold: true } : {};
+    const re = /(\*\*([^*]+)\*\*|\*([^*\n]+)\*|\x60([^\x60]+)\x60|\$([^$\n]+)\$)/g;
     const push = (t, extra) => {
-      if (t) runs.push(new DOCX.TextRun(Object.assign({ text: t, size: 22 }, base, extra || {})));
+      const clean = String(t == null ? '' : t).replace(/\$/g, '');
+      if (!clean) return;
+      docxTextRuns(clean, Object.assign({ bold: !!bold }, extra || {})).forEach((r) => runs.push(r));
     };
     let last = 0;
     let m;
@@ -5184,14 +5367,16 @@ function wireIpc() {
         if ((depth || 0) < 2) docxInlineRuns(m[2], true, (depth || 0) + 1).forEach((r) => runs.push(r));
         else push(m[2]);
       } else if (m[3] !== undefined) {
-        runs.push(new DOCX.TextRun({ text: m[3], font: 'Consolas', size: 20, bold: !!bold }));
+        push(m[3], { italics: true });
       } else if (m[4] !== undefined) {
-        runs.push(new DOCX.TextRun({ text: aiMathPlain(m[4]), size: 22, italics: true, bold: !!bold }));
+        runs.push(new DOCX.TextRun({ text: m[4], font: 'Consolas', size: 20, bold: !!bold }));
+      } else if (m[5] !== undefined) {
+        push(aiMathPlain(m[5]));
       }
       last = m.index + m[0].length;
     }
     push(src.slice(last));
-    return runs.length ? runs : [new DOCX.TextRun({ text: ' ', size: 22, bold: !!bold })];
+    return runs.length ? runs : docxTextRuns(' ', { bold: !!bold });
   }
   function buildDocxChildren(markdown) {
     const { Paragraph, Table, TableRow, TableCell, WidthType, HeadingLevel } = DOCX;
@@ -5364,11 +5549,14 @@ function wireIpc() {
   ipcMain.handle('timetable:ai-import', async (_e, payload) => {
     try {
       const p = payload && typeof payload === 'object' ? payload : {};
-      const image = String(p.image || '');
-      if (!/^data:image\/(png|jpe?g|webp|bmp);base64,/i.test(image)) {
-        return { ok: false, error: '请先选择课程表图片' };
-      }
-      if (image.length > 12 * 1024 * 1024) return { ok: false, error: '图片太大，请压缩到 6 MB 以内' };
+      const rawList = Array.isArray(p.images) && p.images.length ? p.images : [p.image];
+      const images = rawList
+        .map((x) => String(x || ''))
+        .filter((x) => /^data:image\/(png|jpe?g|webp|bmp);base64,/i.test(x))
+        .slice(0, 4);
+      if (!images.length) return { ok: false, error: '请先选择课程表图片' };
+      const totalChars = images.reduce((n, x) => n + x.length, 0);
+      if (totalChars > 24 * 1024 * 1024) return { ok: false, error: '图片太多或太大，请缩到 4 张、单张 6 MB 以内' };
       const specs = {
         weekday: {
           label: '工作日课程表（周一至周五）',
@@ -5395,7 +5583,10 @@ function wireIpc() {
       const system = [
         '你是课程表识别助手。把图片里的课程表转成 CSV，只输出 CSV 本身。',
         '不要解释，不要 Markdown 代码块，不要表头以外的多余文字。',
-        '看不清的格子留空，不要猜测；课程名保持图片原文；时间统一成 24 小时制 HH:MM-HH:MM。'
+        '图片可能有 1–4 张：如果多张是同一张课表的续表，按节次合并；如果分别是工作日与周末，只取当前导入目标需要的部分。',
+        '课程格只保留课程名称：删除老师姓名、教室号、人数、班级；例如「语文 王文静」只写「语文」，「外语-时平」只写「外语」。',
+        '时间列照抄图片上的起止时间，统一成 24 小时制 HH:MM-HH:MM；图片没有时间就留空，不要编造。',
+        '看不清的格子留空，不要猜测；课程名保持图片原文。'
       ].join('\n');
       const userText = [
         '导入目标：' + spec.label,
@@ -5403,16 +5594,17 @@ function wireIpc() {
         '示例：',
         spec.example,
         '规则：' + spec.rules,
+        p.stripTeacher ? '需要去掉教师姓名，只保留课程。' : '',
         note ? '用户补充要求：' + note : ''
       ].filter(Boolean).join('\n');
       const gen = await aiChat([
         { role: 'system', content: system },
         {
           role: 'user',
-          content: [
-            { type: 'text', text: userText },
-            { type: 'image_url', image_url: { url: image } }
-          ]
+          content: [{ type: 'text', text: userText }].concat(images.map((url) => ({
+            type: 'image_url',
+            image_url: { url }
+          })))
         }
       ], {
         model: String(p.model || ''),
@@ -5423,8 +5615,9 @@ function wireIpc() {
         timeout: 120000,
         tries: 2
       });
-      appendLog('TIMETABLE_AI_IMPORT', { target, model: gen.model, chars: String(gen.content || '').length });
-      const meta = KILO_MODELS.find((m) => m.id === gen.model);
+      appendLog('TIMETABLE_AI_IMPORT', { target, model: gen.model, images: images.length, chars: String(gen.content || '').length });
+      const meta = KILO_MODELS.find((m) => m.id === gen.model) ||
+        AI_PROVIDERS.reduce((found, pro) => found || (pro.models || []).find((m) => m.id === gen.model), null);
       return { ok: true, text: gen.content, model: gen.model, modelName: meta ? meta.name : gen.model, target };
     } catch (e) {
       return { ok: false, error: e.message };

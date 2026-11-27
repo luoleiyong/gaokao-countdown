@@ -107,6 +107,7 @@ const state = {
   aiWeb: true,
   /* 每日热点卡片：默认每天 08:00 自动抓取 */
   news: { enabled: true, time: '08:00', date: '', items: [], sources: [], trend: '', error: '', at: 0 },
+  newsExpanded: false,
   /* 主界面字号档位：0.9 / 1 / 1.15 / 1.3 */
   uiFontScale: 1
 };
@@ -1481,6 +1482,7 @@ function petFreqDelay(base) {
 
 /* ---------------- 渲染：每日热点卡片 ---------------- */
 const NEWS_CARD_LIMIT = 4;
+const NEWS_CARD_EXPANDED = 8;
 
 function newsCardMeta() {
   const n = state.news || {};
@@ -1515,7 +1517,8 @@ function renderNewsCard() {
       : `今天 ${n.time || '08:00'} 自动抓取，稍等一下`;
     box.appendChild(hint);
   } else {
-    items.slice(0, NEWS_CARD_LIMIT).forEach((it, i) => {
+    const limit = state.newsExpanded ? NEWS_CARD_EXPANDED : NEWS_CARD_LIMIT;
+    items.slice(0, limit).forEach((it, i) => {
       const row = document.createElement('button');
       row.type = 'button';
       row.className = 'news-row';
@@ -1537,13 +1540,21 @@ function renderNewsCard() {
   if (foot) {
     const names = (Array.isArray(n.sources) ? n.sources : []).map((s) => s.name).filter(Boolean);
     if (items.length && names.length) {
-      foot.textContent = `共 ${items.length} 条 · 来源 ${names.join(' / ')} · 点卡片看全部`;
+      foot.textContent = `共 ${items.length} 条 · 来源 ${names.join(' / ')}`;
     } else if (items.length) {
-      foot.textContent = `共 ${items.length} 条 · 点卡片看全部`;
+      foot.textContent = `共 ${items.length} 条 · 点标题用浏览器打开`;
     } else {
-      foot.textContent = `每天 ${n.time || '08:00'} 抓取 · 点卡片看全部`;
+      foot.textContent = `每天 ${n.time || '08:00'} 抓取`;
     }
   }
+  const more = $('btnNewsMore');
+  if (more) {
+    const canExpand = items.length > NEWS_CARD_LIMIT;
+    more.hidden = !canExpand;
+    more.textContent = state.newsExpanded ? '收起' : `展开全部 ${Math.min(items.length, NEWS_CARD_EXPANDED)} 条`;
+    more.setAttribute('aria-expanded', String(!!state.newsExpanded));
+  }
+  document.body.setAttribute('data-news-open', state.newsExpanded && items.length > NEWS_CARD_LIMIT ? '1' : '0');
   renderNewsDetail();
 }
 
@@ -3665,6 +3676,10 @@ function closeAgreementModal() {
   $('agreementModal').hidden = true;
 }
 
+function closeAiAgreementModal() {
+  $('aiAgreementModal').hidden = true;
+}
+
 /* ---------------- AI 助手抽屉（主界面） ---------------- */
 /* 会话与消息全部交给 renderer/ai-store.js（window.AIStore）落盘，
    这里只负责抽屉的渲染与请求编排；不改 main.js / preload.js / knowledge.js */
@@ -3674,8 +3689,11 @@ const AI_ASSIST_EXAMPLES = [
   { q: '帮我把这周的错题整理成一份复习清单', tip: '复习' },
   { q: '最近有什么适合写作文的科技热点？', tip: '作文' }
 ];
-const AI_ASSIST_REASON_SHOW = 4000;
+const AI_ASSIST_REASON_SHOW = 20000;
 const AI_ASSIST_SRC_MAX = 8;
+const AI_ASSIST_MAX_FILES = 3;
+const AI_ASSIST_MAX_IMAGE = 3 * 1024 * 1024;
+const AI_ASSIST_MAX_TEXT = 200 * 1024;
 
 const aiAssist = {
   doc: null,
@@ -3689,7 +3707,8 @@ const aiAssist = {
   mute: false,
   switched: false,
   actualModel: '',
-  modelOpen: false
+  modelOpen: false,
+  files: []
 };
 
 function aiAssistApi() { return window.AIStore || null; }
@@ -3773,6 +3792,109 @@ function aiAssistCopy(text, btn, back) {
   done(false);
 }
 
+/* 把这条回答导出为 Markdown / HTML 文档：主进程弹保存框并落盘 */
+async function exportAiAssistDoc(m) {
+  const text = String((m && m.text) || '');
+  if (!text.trim()) { toast('这条回答没有可导出的内容'); return; }
+  if (!bridge.aiExportDoc) { toast('当前版本不支持导出文档'); return; }
+  const q = String((m && m.request && m.request.query) || '').trim();
+  const title = (q ? q.slice(0, 24) : 'AI 回答').replace(/\s+/g, ' ') || 'AI 回答';
+  const d = new Date();
+  const stamp = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  const md = [
+    `# ${title}`,
+    '',
+    `> ${stamp} · 高考倒计时 AI 助手`,
+    '',
+    text
+  ].join('\n');
+  const html = [
+    '<!DOCTYPE html>',
+    '<html lang="zh-CN"><head><meta charset="utf-8" />',
+    `<title>${escapeHtml(title)}</title>`,
+    '<style>',
+    'body{max-width:820px;margin:40px auto;padding:0 20px;font:15px/1.75 -apple-system,"Microsoft YaHei",sans-serif;color:#222}',
+    'h1{font-size:22px;margin-bottom:8px}h2{font-size:19px}h3{font-size:17px}',
+    'pre{background:#f5f5f5;padding:12px 14px;border-radius:8px;overflow:auto}',
+    'code{background:#f2f2f2;padding:1px 5px;border-radius:4px;font-family:Consolas,monospace}',
+    'pre code{background:none;padding:0}',
+    'blockquote{margin:12px 0;padding:6px 14px;border-left:3px solid #d9b64a;color:#555;background:#faf7ee}',
+    'table{border-collapse:collapse}td,th{border:1px solid #ddd;padding:6px 10px}',
+    '.ai-math--block{display:block;text-align:center;margin:10px 0}',
+    '.ai-frac{display:inline-flex;flex-direction:column;vertical-align:middle;text-align:center}',
+    '.ai-frac__n{border-bottom:1px solid currentColor}.ai-sqrt__v{border-top:1px solid currentColor}',
+    '</style></head><body>',
+    `<h1>${escapeHtml(title)}</h1>`,
+    `<blockquote>${escapeHtml(stamp)} · 高考倒计时 AI 助手</blockquote>`,
+    aiAssistMarkdown(text),
+    '</body></html>'
+  ].join('\n');
+  try {
+    const res = await bridge.aiExportDoc({ title, markdown: md, html });
+    if (res && res.ok) toast(`已导出「${String(res.filePath || '').split(/[\\/]/).pop()}」`);
+    else if (res && res.canceled) { /* 用户取消，不提示 */ }
+    else toast(`导出失败：${(res && res.error) || '请稍后再试'}`);
+  } catch (e) {
+    toast('导出失败：' + e.message);
+  }
+}
+
+/* 轻量公式渲染：把常见 LaTeX 转成 HTML，避免引入 KaTeX；保证公式不用原始反斜杠糊在正文里 */
+function aiMathHtml(src, display) {
+  let s = escapeHtml(String(src === undefined || src === null ? '' : src).trim());
+  const parts = [];
+  /* 生成的分式 / 根号 HTML 先存占位符，避免后面的 _ ^ 转换把 class 名里的下划线改掉 */
+  const holdPart = (html) => {
+    parts.push(html);
+    return '\u0001H' + (parts.length - 1) + '\u0002';
+  };
+  const powSub = (t) => t
+    .replace(/\^°/g, '°')
+    .replace(/\^\{([^{}]+)\}/g, '<sup>$1</sup>').replace(/\^([A-Za-z0-9+\-])/g, '<sup>$1</sup>')
+    .replace(/_\{([^{}]+)\}/g, '<sub>$1</sub>').replace(/_([A-Za-z0-9+\-])/g, '<sub>$1</sub>');
+  const cmds = {
+    '\\frac': '', '\\sqrt': '', '\\text': '', '\\mathrm': '', '\\mathbf': '',
+    '\\times': '×', '\\div': '÷', '\\pm': '±', '\\mp': '∓',
+    '\\leq': '≤', '\\le': '≤', '\\geq': '≥', '\\ge': '≥',
+    '\\neq': '≠', '\\ne': '≠', '\\approx': '≈', '\\equiv': '≡',
+    '\\infty': '∞', '\\pi': 'π', '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ',
+    '\\delta': 'δ', '\\theta': 'θ', '\\lambda': 'λ', '\\mu': 'μ', '\\sigma': 'σ',
+    '\\omega': 'ω', '\\sum': '∑', '\\int': '∫', '\\cdot': '·',
+    '\\Delta': 'Δ', '\\Omega': 'Ω', '\\rho': 'ρ', '\\eta': 'η', '\\nu': 'ν',
+    '\\phi': 'φ', '\\varphi': 'φ', '\\tau': 'τ', '\\epsilon': 'ε', '\\varepsilon': 'ε',
+    '\\kappa': 'κ', '\\psi': 'ψ', '\\chi': 'χ', '\\zeta': 'ζ', '\\xi': 'ξ',
+    '\\partial': '∂', '\\nabla': '∇', '\\circ': '°',
+    '\\sin': 'sin', '\\cos': 'cos', '\\tan': 'tan', '\\log': 'log', '\\ln': 'ln',
+    '\\lim': 'lim', '\\max': 'max', '\\min': 'min',
+    '\\rightarrow': '→', '\\to': '→', '\\Rightarrow': '⇒', '\\leftarrow': '←',
+    '\\left': '', '\\right': '', '\\,': ' ', '\\;': ' ', '\\!': '',
+    '\\quad': '　', '\\qquad': '　　'
+  };
+  s = s.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, (_m, a, b) =>
+    holdPart('<span class="ai-frac"><span class="ai-frac__n">' + powSub(a) +
+      '</span><span class="ai-frac__d">' + powSub(b) + '</span></span>'));
+  /* 化学式：\ce{H2SO4} / \pu{} 直接把数字转下标，箭头转符号，避免原始命令漏到正文 */
+  s = s.replace(/\\(?:ce|pu)\{([^{}]*)\}/g, (_m, body) => String(body)
+    .replace(/&lt;=&gt;|&lt;-&gt;|\\rightleftharpoons/g, '⇌')
+    .replace(/-&gt;/g, '→')
+    .replace(/&lt;-(?!&gt;)/g, '←')
+    .replace(/\^(\d*[+-])/g, '<sup>$1</sup>')
+    .replace(/\s*\^\s*/g, '↑')
+    .replace(/([A-Za-z)\]])(\d+)/g, '$1<sub>$2</sub>'));
+  s = s.replace(/\\sqrt\[([^\]]+)\]\{([^{}]+)\}/g, (_m, n, v) =>
+    holdPart('<span class="ai-sqrt"><sup>' + powSub(n) + '</sup>√<span class="ai-sqrt__v">' + powSub(v) + '</span></span>'));
+  s = s.replace(/\\sqrt\{([^{}]+)\}/g, (_m, v) =>
+    holdPart('<span class="ai-sqrt">√<span class="ai-sqrt__v">' + powSub(v) + '</span></span>'));
+  s = s.replace(/\\(?:text|mathrm|mathbf)\{([^{}]+)\}/g, '$1');
+  Object.keys(cmds).forEach((k) => {
+    s = s.split(k).join(cmds[k]);
+  });
+  s = powSub(s);
+  s = s.replace(/[{}]/g, '');
+  s = s.replace(/\u0001H(\d+)\u0002/g, (_m, i) => parts[Number(i)] || '');
+  return '<span class="ai-math' + (display ? ' ai-math--block' : '') + '">' + s + '</span>';
+}
+
 /* 轻量 Markdown：思路照 renderer/knowledge.js 的 renderMarkdown，先转义再套标签，
    代码块与行内代码用占位符保护，用户文本无法注入 HTML */
 function aiAssistMarkdown(src) {
@@ -3783,36 +3905,52 @@ function aiAssistMarkdown(src) {
   if (!text) return '';
 
   const blocks = [];
+  const maths = [];
   const hold = (html) => {
     blocks.push(html);
     return '\u0001B' + (blocks.length - 1) + '\u0002';
   };
+  const holdMath = (html) => {
+    maths.push(html);
+    return '\u0001M' + (maths.length - 1) + '\u0002';
+  };
 
   function inline(s) {
-    let t = escapeHtml(s);
+    let t = String(s === undefined || s === null ? '' : s);
     const codes = [];
+    /* 先摘出行内代码与公式（原始文本），统一转义一次，避免公式里的 < > & 被二次转义 */
     t = t.replace(/\x60([^\x60]+)\x60/g, (_m, code) => {
-      codes.push('<code>' + code + '</code>');
+      codes.push('<code>' + escapeHtml(code) + '</code>');
       return '\u0001C' + (codes.length - 1) + '\u0002';
     });
+    t = t.replace(/\\\(([^)\n]+)\\\)/g, (_m, expr) => holdMath(aiMathHtml(expr, false)));
+    t = t.replace(/\$([^$\n]+?)\$/g, (_m, expr) => holdMath(aiMathHtml(expr, false)));
+    t = escapeHtml(t);
     t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
     t = t.replace(/==([^=]+)==/g, '<em>$1</em>');
     t = t.replace(/\u0001C(\d+)\u0002/g, (_m, i) => codes[Number(i)] || '');
+    t = t.replace(/\u0001M(\d+)\u0002/g, (_m, i) => maths[Number(i)] || '');
     return t;
   }
 
   text = text.replace(/\x60\x60\x60([\w+#.-]*)[ \t]*\n?([\s\S]*?)(?:\x60\x60\x60|$)/g, (_m, lang, code) => {
-    const body = escapeHtml(String(code).replace(/\n+$/, ''));
+    const body = String(code).replace(/\n+$/, '');
+    /* latex / tex / math 代码块直接按公式渲染，不再把原始反斜杠当代码展示 */
+    if (/^(latex|tex|math)$/i.test(lang || '')) return holdMath(aiMathHtml(body, true));
+    const html = escapeHtml(body);
     const tag = lang ? escapeHtml(lang) : '代码';
     return hold(
       '<div class="ai-code">' +
         '<div class="ai-code__bar"><span class="ai-code__lang">' + tag + '</span>' +
         '<button class="ai-code__copy" type="button" data-ai-copy="code">复制代码</button></div>' +
-        '<pre><code>' + body + '</code></pre>' +
+        '<pre><code>' + html + '</code></pre>' +
       '</div>'
     );
   });
+
+  text = text.replace(/\$\$([\s\S]+?)\$\$/g, (_m, expr) => holdMath(aiMathHtml(expr, true)));
+  text = text.replace(/\\\[([\s\S]+?)\\\]/g, (_m, expr) => holdMath(aiMathHtml(expr, true)));
 
   text = text.replace(/(^\|.+\|[ \t]*\n\|[-: |]+\|[ \t]*\n(?:\|.*\|[ \t]*(?:\n|$))+)/gm, (m) => {
     const rows = m.trim().split('\n').filter(Boolean);
@@ -3843,6 +3981,7 @@ function aiAssistMarkdown(src) {
     const line = lines[i].replace(/\s+$/, '');
     if (!line.trim()) { flushList(); continue; }
     if (/^\u0001B\d+\u0002$/.test(line.trim())) { flushList(); out.push(line.trim()); continue; }
+    if (/^\u0001M\d+\u0002$/.test(line.trim())) { flushList(); out.push(line.trim()); continue; }
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) { flushList(); out.push('<hr>'); continue; }
     const h = line.match(/^(#{1,4})\s+(.*)$/);
     if (h) {
@@ -3875,6 +4014,7 @@ function aiAssistMarkdown(src) {
 
   let html = out.join('');
   html = html.replace(/\u0001B(\d+)\u0002/g, (_m, i) => blocks[Number(i)] || '');
+  html = html.replace(/\u0001M(\d+)\u0002/g, (_m, i) => maths[Number(i)] || '');
   return html;
 }
 
@@ -3949,12 +4089,12 @@ function buildAiAssistAuditBox(m) {
 function buildAiAssistReason(m) {
   const raw = String((m && m.reasoning) || '');
   if (!raw.trim()) return null;
-  const shown = raw.length > AI_ASSIST_REASON_SHOW ? raw.slice(0, AI_ASSIST_REASON_SHOW) + '…' : raw;
   const det = aiAssistEl('details', 'ai-reason');
+  det.open = true;
   const sum = aiAssistEl('summary', 'ai-reason__sum', '思考过程 · ' + raw.length + ' 字');
-  sum.title = '点击展开模型思考过程';
+  sum.title = '点击收起或展开模型思考过程';
   det.appendChild(sum);
-  det.appendChild(aiAssistEl('div', 'ai-reason__body', shown));
+  det.appendChild(aiAssistEl('div', 'ai-reason__body', raw));
   return det;
 }
 /* 来源列表：默认收起，展开后给出「域名 · 标题 + 摘要」，并显示检索引擎与耗时 */
@@ -4081,6 +4221,14 @@ function buildAiAssistMessage(m, idx) {
       return wrap;
     }
     wrap.appendChild(aiAssistEl('div', 'ai-msg__bubble', m.text || ''));
+    const atts = Array.isArray(m.attachments) ? m.attachments : [];
+    if (atts.length) {
+      const row = aiAssistEl('div', 'ai-msg__atts');
+      atts.forEach((a) => {
+        row.appendChild(aiAssistEl('span', 'ai-msg__att', (a.kind === 'image' ? '图片 · ' : '文件 · ') + String(a.name || '')));
+      });
+      wrap.appendChild(row);
+    }
     const acts = aiAssistEl('div', 'ai-msg__acts');
     const copyBtn = aiAssistBtn('复制', () => aiAssistCopy(m.text, copyBtn));
     acts.appendChild(copyBtn);
@@ -4129,6 +4277,9 @@ function buildAiAssistMessage(m, idx) {
   const acts = aiAssistEl('div', 'ai-msg__acts');
   const copyBtn = aiAssistBtn('复制', () => aiAssistCopy(m.text || (m.error ? String(m.error) : ''), copyBtn));
   acts.appendChild(copyBtn);
+  if (!m.error && !m.stopped && m.text) {
+    acts.appendChild(aiAssistBtn('导出文档', () => exportAiAssistDoc(m)));
+  }
   if (m.request && m.request.query) acts.appendChild(aiAssistBtn('重新生成', () => retryAiAssist(idx)));
   acts.appendChild(aiAssistBtn('分支', () => branchAiAssist(idx)));
   const at = aiAssistTimeText(m);
@@ -4208,13 +4359,17 @@ function aiAssistModelGroups() {
     if (!p || !p.id) return;
     const items = [];
     const seen = {};
-    const push = (id, name, ctx) => {
+    const push = (id, name, ctx, vision) => {
       const key = String(id || '').trim();
       if (!key || seen[key]) return;
       seen[key] = true;
-      items.push({ id: key, name: String(name || '') || aiModelShort(key), ctx: Number(ctx) || 0 });
+      items.push({ id: key, name: String(name || '') || aiModelShort(key), ctx: Number(ctx) || 0, vision: !!vision });
     };
-    (Array.isArray(p.models) ? p.models : []).forEach((m) => push(m && m.id ? m.id : m, m && m.name, m && m.ctx));
+    (Array.isArray(p.models) ? p.models : []).forEach((m) => push(m && m.id ? m.id : m, m && m.name, m && m.ctx, m && m.vision));
+    if (p.id === 'kilo') {
+      (Array.isArray(state.aiModels) ? state.aiModels : []).forEach((m) => push(m && m.id, m && m.name, m && m.ctx, m && m.vision));
+      (Array.isArray(state.aiModelList) ? state.aiModelList : []).forEach((m) => push(m && m.id, m && m.name, m && m.ctx, m && m.vision));
+    }
     (Array.isArray(p.presets) ? p.presets : []).forEach((id) => push(id, '', 0));
     if (p.model) push(p.model, '', 0);
     if (p.id === 'custom') (state.aiCustomModels || []).forEach((id) => push(id, '', 0));
@@ -4254,6 +4409,12 @@ function renderAiAssistModelMenu() {
       name.className = 'ai-models__name';
       name.textContent = m.name || aiModelShort(m.id);
       btn.appendChild(name);
+      if (m.vision) {
+        const tag = document.createElement('span');
+        tag.className = 'ai-models__tag';
+        tag.textContent = '视觉';
+        btn.appendChild(tag);
+      }
       if (m.ctx) {
         const ctx = document.createElement('span');
         ctx.className = 'ai-models__ctx';
@@ -4485,15 +4646,20 @@ async function askAiAssist(req, opts) {
   if (aiAssist.busy) return;
   if (!bridge.aiAsk) { toast('当前环境不支持 AI 调用'); return; }
   const query = String((req && req.query) || '').trim();
-  if (!query) { toast('先写一句想问的'); return; }
+  const files = Array.isArray(req && req.attachments) ? req.attachments : [];
+  if (!query && !files.length) { toast('先写一句想问的'); return; }
   const payload = {
     mode: 'custom',
     query: query,
     history: aiAssistHistoryBefore(o.anchor),
     think: req.think !== false,
-    web: req.web !== false
+    web: req.web !== false,
+    attachments: files.map((f) => ({
+      name: f.name, kind: f.kind, mime: f.mime || '', dataUrl: f.dataUrl || '', text: f.text || ''
+    })),
+    vision: files.some((f) => f.kind === 'image')
   };
-  if (state.aiModel) payload.model = state.aiModel;
+  if (state.aiModel && state.aiModel !== 'kilo-auto/free') payload.model = state.aiModel;
   aiAssist.busy = true;
   aiAssist.stopping = false;
   aiAssist.req = { mode: 'custom', query: query, think: payload.think, web: payload.web };
@@ -4587,13 +4753,18 @@ function sendAiAssist(raw) {
   if (aiAssist.busy) { toast('正在生成，先停一下再发'); return; }
   const ta = $('aiAssistInput');
   const text = String(raw !== undefined && raw !== null ? raw : (ta ? ta.value : '')).trim();
-  if (!text) { toast('先写一句想问的'); return; }
-  const req = { mode: 'custom', query: text, think: aiAssistThinkOn(), web: aiAssistWebOn() };
+  const files = Array.isArray(aiAssist.files) ? aiAssist.files.slice() : [];
+  if (!text && !files.length) { toast('先写一句想问的'); return; }
+  const req = { mode: 'custom', query: text, think: aiAssistThinkOn(), web: aiAssistWebOn(), attachments: files };
   aiAssistStore((api, doc) => {
-    api.append(doc, { role: 'user', text: text, request: aiAssistRepeatReq(req), ts: Date.now() });
+    api.append(doc, {
+      role: 'user', text: text, request: aiAssistRepeatReq(req), ts: Date.now(),
+      attachments: files.map((f) => ({ name: f.name, kind: f.kind }))
+    });
     return true;
   });
   if (ta) { ta.value = ''; autoGrowAiInput(); }
+  clearAiAssistFiles();
   aiAssist.editing = -1;
   renderAiAssist();
   renderAiAssistSessions();
@@ -4686,11 +4857,99 @@ function autoGrowAiInput() {
   el.style.height = h + 'px';
   el.style.overflowY = el.scrollHeight > max ? 'auto' : 'hidden';
 }
+function aiAssistVisionModel() {
+  const id = String(state.aiModel || state.aiModelUsed || '');
+  if (/vl|vision|omni|multimodal/i.test(id)) return true;
+  const list = Array.isArray(state.aiModelList) ? state.aiModelList : [];
+  const hit = list.find((m) => m && m.id === id);
+  return !!(hit && hit.vision);
+}
+function renderAiAssistFiles() {
+  const box = $('aiAssistFiles');
+  if (!box) return;
+  const files = aiAssist.files || [];
+  box.hidden = !files.length;
+  box.innerHTML = '';
+  files.forEach((f, i) => {
+    const chip = aiAssistEl('span', 'ai-attach-chip');
+    chip.appendChild(aiAssistEl('b', null, f.name));
+    chip.appendChild(aiAssistEl('em', null, f.kind === 'image' ? '图片' : '文件'));
+    const x = aiAssistEl('button', null, '×');
+    x.type = 'button';
+    x.title = '移除';
+    x.addEventListener('click', () => {
+      aiAssist.files.splice(i, 1);
+      renderAiAssistFiles();
+    });
+    chip.appendChild(x);
+    box.appendChild(chip);
+  });
+}
+function clearAiAssistFiles() {
+  aiAssist.files = [];
+  renderAiAssistFiles();
+}
+function readAiAssistFile(file) {
+  return new Promise((resolve) => {
+    const name = String(file.name || 'file');
+    const type = String(file.type || '');
+    const isImage = /^image\//.test(type);
+    if (isImage) {
+      if (file.size > AI_ASSIST_MAX_IMAGE) {
+        toast('图片「' + name + '」超过 3 MB，已跳过');
+        resolve(null);
+        return;
+      }
+      const fr = new FileReader();
+      fr.onload = () => resolve({ name, kind: 'image', mime: type, size: file.size, dataUrl: String(fr.result || '') });
+      fr.onerror = () => resolve(null);
+      fr.readAsDataURL(file);
+      return;
+    }
+    if (file.size > AI_ASSIST_MAX_TEXT) {
+      toast('文件「' + name + '」超过 200 KB，已跳过');
+      resolve(null);
+      return;
+    }
+    const fr = new FileReader();
+    fr.onload = () => resolve({ name, kind: 'text', mime: type, size: file.size, text: String(fr.result || '').slice(0, 60000) });
+    fr.onerror = () => resolve(null);
+    fr.readAsText(file);
+  });
+}
+async function addAiAssistFiles(list) {
+  const arr = Array.from(list || []);
+  for (const f of arr) {
+    if (aiAssist.files.length >= AI_ASSIST_MAX_FILES) {
+      toast('最多添加 3 个附件');
+      break;
+    }
+    if (/^image\//.test(String(f.type || '')) && !aiAssistVisionModel()) {
+      toast('当前模型不支持图片，请切换带「视觉」标记的模型');
+      continue;
+    }
+    const item = await readAiAssistFile(f);
+    if (item) aiAssist.files.push(item);
+  }
+  renderAiAssistFiles();
+}
+
 function refreshAiAssistConfig() {
   if (!bridge.aiConfig) return;
   Promise.resolve(loadAiConfig())
     .then(() => { renderAiAssistModel(); renderAiAssistToggles(); })
     .catch(() => {});
+  /* 顺便拉一次免费模型清单，菜单里能看到网关新增的模型 */
+  if (bridge.aiListModels && !(state.aiModelList || []).length) {
+    Promise.resolve(bridge.aiListModels())
+      .then((res) => {
+        if (res && res.ok && Array.isArray(res.models) && res.models.length) {
+          state.aiModelList = res.models;
+          if (aiAssist.modelOpen) renderAiAssistModelMenu();
+        }
+      })
+      .catch(() => {});
+  }
 }
 function openAiAssistant() {
   const el = $('aiAssistant');
@@ -4750,6 +5009,15 @@ function bindAiAssistant() {
     expandBtn.addEventListener('click', () => {
       const el = $('aiAssistant');
       setAiAssistExpanded(!(el && el.classList.contains('is-expanded')));
+    });
+  }
+  const attachBtn = $('btnAiAssistAttach');
+  const fileInput = $('aiAssistFile');
+  if (attachBtn && fileInput) {
+    attachBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', async () => {
+      await addAiAssistFiles(fileInput.files);
+      fileInput.value = '';
     });
   }
   document.addEventListener('keydown', (e) => {
@@ -5608,6 +5876,11 @@ function bindEvents() {
   });
   $('btnNewsRefreshDetail').addEventListener('click', () => refreshNewsNow($('btnNewsRefreshDetail'), '立即更新'));
   $('newsCard').addEventListener('click', openNewsDetail);
+  $('btnNewsMore').addEventListener('click', (e) => {
+    e.stopPropagation();
+    state.newsExpanded = !state.newsExpanded;
+    renderNewsCard();
+  });
   $('newsCard').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
@@ -5697,6 +5970,11 @@ function bindEvents() {
   $('btnAgreementOk').addEventListener('click', closeAgreementModal);
   const agreementBackdrop = document.querySelector('[data-close="agreement"]');
   if (agreementBackdrop) agreementBackdrop.addEventListener('click', closeAgreementModal);
+  $('btnAiAgreement').addEventListener('click', () => { $('aiAgreementModal').hidden = false; });
+  $('btnAiAgreementCancel').addEventListener('click', closeAiAgreementModal);
+  $('btnAiAgreementOk').addEventListener('click', closeAiAgreementModal);
+  const aiAgreementBackdrop = document.querySelector('[data-close="ai-agreement"]');
+  if (aiAgreementBackdrop) aiAgreementBackdrop.addEventListener('click', closeAiAgreementModal);
   $('btnQuit').addEventListener('click', () => bridge.quit());
 
   // 键盘
@@ -5711,6 +5989,7 @@ function bindEvents() {
       else if (aiAssist.modelOpen) setAiAssistModelMenu(false);
       else if (isAiAssistOpen()) closeAiAssistant();
       else if (!$('msEgg').hidden) closeMilestoneEgg();
+      else if (!$('aiAgreementModal').hidden) closeAiAgreementModal();
       else if (!$('agreementModal').hidden) closeAgreementModal();
       else if (!$('eventsModal').hidden) closeEventsModal();
       else if (!$('updateNotesModal').hidden) dismissUpdateNotes();

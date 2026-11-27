@@ -60,9 +60,9 @@ const KILO_MODELS = [
   { id: 'nvidia/nemotron-3.5-lightning:free', name: 'Nemotron 3.5 Lightning · NVIDIA', ctx: 1000000, think: true },
   { id: 'inclusionai/ling-3.2-flash:free', name: 'Ling 3.2 Flash · inclusionAI', ctx: 1048576, think: true },
   { id: 'baidu/ernie-5.5-flash-preview:free', name: 'ERNIE 5.5 Flash · 百度', ctx: 1024000, think: true },
-  { id: 'nvidia/nemotron-3.5-super-vl:free', name: 'Nemotron 3.5 Super VL · NVIDIA', ctx: 1000000, think: true },
   { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', name: 'Nemotron 3 Ultra 550B · NVIDIA', ctx: 1000000, think: true },
-  { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', name: 'Nemotron 3 Nano Omni · NVIDIA', ctx: 256000, think: true },
+  { id: 'nvidia/nemotron-3.5-super-vl:free', name: 'Nemotron 3.5 Super VL · NVIDIA', ctx: 1000000, think: true, vision: true },
+  { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', name: 'Nemotron 3 Nano Omni · NVIDIA', ctx: 256000, think: true, vision: true },
   { id: 'particle-ai/particle-1:free', name: 'Particle 1', ctx: 1048576, think: true },
   { id: 'recursive/flint-v1.0:free', name: 'Flint v1.0', ctx: 262144, think: true },
   { id: 'reflection/beam-free', name: 'Beam Free', ctx: 1048576, think: true },
@@ -2875,6 +2875,25 @@ function aiModelMeta(providerId, model) {
   return { id: model, name: model, ctx: 0, think: false };
 }
 
+/* 内容路由：按问题类型优先尝试更合适的免费模型，视觉问题先走 VL / Omni */
+const AI_TASK_MODELS = {
+  vision: ['nvidia/nemotron-3.5-super-vl:free', 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free'],
+  code: ['inclusionai/ling-3.2-flash:free', 'nvidia/nemotron-3-ultra-550b-a55b:free', 'nvidia/nemotron-3.5-lightning:free'],
+  math: ['nvidia/nemotron-3-ultra-550b-a55b:free', 'nvidia/nemotron-3.5-lightning:free', 'inclusionai/ling-3.2-flash:free'],
+  history: ['baidu/ernie-5.5-flash-preview:free', 'inclusionai/ling-3.2-flash:free'],
+  long: ['inclusionai/ling-3.2-flash:free', 'particle-ai/particle-1:free', 'reflection/beam-free'],
+  general: ['kilo-auto/free']
+};
+function aiTaskOf(text, hasImage) {
+  if (hasImage) return 'vision';
+  const s = String(text || '');
+  if (/数学|公式|方程|导数|积分|几何|三角|概率|物理|化学|计算|求解/.test(s)) return 'math';
+  if (/代码|编程|函数|算法|python|javascript|java|c\+\+|sql|报错|bug|程序/i.test(s)) return 'code';
+  if (/历史|人物|朝代|战争|革命|古代|近代|史料|评价/.test(s)) return 'history';
+  if (s.length > 600) return 'long';
+  return 'general';
+}
+
 /* 候选链：当前配置的模型 → Kilo 免费池其余模型 → 其他已配密钥的供应商 */
 function aiCandidates(opts) {
   const o = opts || {};
@@ -2921,6 +2940,17 @@ function aiCandidates(opts) {
       if (!p.noKey && !aiKeyOf(p.id)) return;
       const models = p.id === 'kilo' ? AI_KILO_ORDER.slice(0, 3) : [p.model].concat((p.presets || []).slice(0, 2));
       models.forEach((m) => push(p.id, m, false));
+    });
+  }
+
+  // 自动模型：按内容类型把更合适的免费模型排到前面（用户手选的模型仍排第一）
+  if (store.aiAutoModel !== false && !o.model) {
+    const task = aiTaskOf(o.query || '', !!o.vision);
+    const pref = AI_TASK_MODELS[task] || AI_TASK_MODELS.general;
+    out.sort((a, b) => {
+      const ia = pref.indexOf(a.model);
+      const ib = pref.indexOf(b.model);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
     });
   }
 
@@ -3795,11 +3825,33 @@ function aiVerticalJobs(q, limit, timeout) {
       add(feed.name, () => aiRssSourceItems(feed, 4, timeout));
     });
   } else {
-    add('知乎日报', () => aiZhihuDailyItems(5, timeout));
-    add('Bing 资讯', () => aiBingNewsItems(q, limit, timeout));
-    add('少数派', () => aiRssSourceItems(AI_RSS_FEEDS[8], 4, timeout));
+    /* 具体问题不加热榜/生活类垂直源，避免「今天的热搜」把无关内容带进回答；
+       只有明确问「最近/热点」时才由上面的 news 分支补充。 */
   }
   return jobs;
+}
+
+/* 查询词切分：中文 2 字滑窗 + 英文/数字，去掉常见虚词，用于结果相关性打分 */
+function aiQueryTokens(q) {
+  const s = String(q || '').toLowerCase();
+  const stop = new Set(['什么', '怎么', '如何', '为什么', '哪些', '一下', '请问', '今天', '最近', '最新', '介绍', '解释', '帮我', '可以', '需要', '关于', '的是', '有哪些', '一个', '这个', '那个']);
+  const tokens = new Set();
+  const cn = s.match(/[\u4e00-\u9fa5]{2,}/g) || [];
+  cn.forEach((seg) => {
+    for (let i = 0; i < seg.length - 1; i++) {
+      const t = seg.slice(i, i + 2);
+      if (!stop.has(t)) tokens.add(t);
+    }
+  });
+  (s.match(/[a-z0-9]{2,}/g) || []).forEach((t) => tokens.add(t));
+  return Array.from(tokens).slice(0, 24);
+}
+function aiRelevance(it, tokens) {
+  if (!tokens.length) return 1;
+  const text = (String(it.title || '') + ' ' + String(it.snippet || it.excerpt || '')).toLowerCase();
+  let hit = 0;
+  tokens.forEach((t) => { if (text.indexOf(t) >= 0) hit++; });
+  return hit / Math.min(tokens.length, 8);
 }
 
 async function aiDeepSearch(query, opts) {
@@ -3884,7 +3936,22 @@ async function aiDeepSearch(query, opts) {
   const fresh = merged.filter((it) => !stale(it));
   const old = merged.filter(stale);
   const ordered = fresh.concat(old);
-  const items = ordered.slice(0, o.limit || 8);
+  /* 具体问题做相关性过滤：标题/摘要至少要命中查询词，避免热榜和资讯把无关内容带进来；
+     新闻/时政类保留按时效与权威度的原顺序。 */
+  const qkind = aiQueryKind(q);
+  const limit = o.limit || 8;
+  let items;
+  if (qkind === 'news' || qkind === 'politics') {
+    items = ordered.slice(0, limit);
+  } else {
+    const tokens = aiQueryTokens(q);
+    const pool = fresh.length >= 3 ? fresh : ordered;
+    const scored = pool.map((it, idx) => ({ it: it, idx: idx, rel: aiRelevance(it, tokens) }));
+    const relevant = scored
+      .filter((x) => x.rel >= 0.15)
+      .sort((a, b) => (b.rel - a.rel) || (a.idx - b.idx));
+    items = (relevant.length >= 3 ? relevant : scored.slice(0, 3)).slice(0, limit).map((x) => x.it);
+  }
   /* 每家站点最多抓一条正文，最多四篇，控制耗时 */
   const readCount = o.readCount === undefined ? 4 : o.readCount;
   const picked = [];
@@ -3967,23 +4034,7 @@ function aiWebBlock(search) {
   ].join('\n');
 }
 
-function parseAudit(text) {
-  let s = String(text || '');
-  const m = s.match(/\{[\s\S]*\}/);
-  if (m) s = m[0];
-  try {
-    const obj = JSON.parse(s);
-    return {
-      ok: obj.ok !== false,
-      issues: Array.isArray(obj.issues) ? obj.issues.map((x) => String(x)).slice(0, 10) : [],
-      note: typeof obj.note === 'string' ? obj.note : ''
-    };
-  } catch {
-    return { ok: true, issues: [], note: '审核结果无法解析，已保留原文并提示人工核对' };
-  }
-}
-
-/* 审核自查：先让模型自检，不通过时带意见重写一次，仍不过则如实标注 */
+/* 问答主流程：联网检索 → 模型生成（不再做二次审核或改写） */
 async function aiRunAsk(payload) {
   const provider = aiProviderOf(store);
   const ac = new AbortController();
@@ -3993,6 +4044,15 @@ async function aiRunAsk(payload) {
   const mode = String((payload && payload.mode) || 'knowledge').trim();
   const topic = aiTopicLabel(store, payload && payload.topic);
   const query = String((payload && payload.query) || '').trim();
+  const attachments = Array.isArray(payload && payload.attachments) ? payload.attachments : [];
+  const images = attachments.filter((a) => a && a.kind === 'image' && /^data:image\//i.test(String(a.dataUrl || ''))).slice(0, 3);
+  const textFiles = attachments.filter((a) => a && a.kind === 'text' && a.text).slice(0, 3);
+  let attachText = '';
+  if (textFiles.length) {
+    attachText = '\n\n【附件内容】\n' + textFiles.map((f) => {
+      return '--- ' + String(f.name || '文件') + ' ---\n' + String(f.text || '').slice(0, 20000);
+    }).join('\n\n');
+  }
   const subjectText = subject ? '「' + subject + '」' : '（' + aiSubjectText(store) + '）';
 
   const wantThink = payload && payload.think !== undefined ? !!payload.think : store.aiThink !== false;
@@ -4008,7 +4068,7 @@ async function aiRunAsk(payload) {
   }
 
   /* 问「今天/最近」的事、或用户手动开了联网：先抓公开结果再交给模型 */
-  const askText = query || topic;
+  const askText = query || (images.length ? '请分析这张图片' : topic);
   let search = { ok: false, query: '', source: '', items: [] };
   if (wantWeb && aiWorthWeb(askText)) {
     search = await aiDeepSearch(mode === 'news' ? topic : askText, { limit: 8, timeout: 11000, refresh: !!(payload && payload.refresh) });
@@ -4024,6 +4084,10 @@ async function aiRunAsk(payload) {
     '【能力范围】学科知识、时事新闻、生活常识、技术、写作、闲聊都可以直接回答，不需要把每个问题都扯回学习。',
     '【联网信息】如果下面给了【联网检索结果】，就基于它回答「今天/最近」的问题，并写明来源与日期；如果没给，或结果与问题无关，就如实说你这边没有实时信息，再给出已知背景，绝不编造具体日期、数字、人名、比分或价格。',
     '【诚实】不确定就直说不确定；不要为了显得完整而虚构细节，也不要声明自己是「只做高考的助手」而拒绝回答。',
+    '【内容安全】拒绝生成色情、性暗示、暴力犯罪教程、赌博诈骗、毒品制作等违法或伤害未成年人的内容；遇到这类请求直接简短拒绝，并把话题引回学习与正常讨论。',
+    '【历史人物】历史人物、历史事件、朝代与人物评价属于正常学习内容，可以正常讲解、比较与评价，不需要回避；请区分史实与观点，不编造史料。',
+    '',
+    '【公式】数学、物理、化学公式统一用 LaTeX 写在 $...$ 或 $$...$$ 中：分数用 \\frac{分子}{分母}，上下标用 ^ 与 _，根号用 \\sqrt{}，不要用纯文字描述公式。',
     '',
     '【排版要求】用 Markdown 让重点一眼可见：',
     '1. 每个要点用 **加粗** 标出关键词或结论，不要把整句都加粗。',
@@ -4068,6 +4132,8 @@ async function aiRunAsk(payload) {
     ].filter(Boolean).join('\n');
   }
   if (mode === 'news' && webBlock) user += '\n\n' + webBlock;
+  if (attachText) user += attachText;
+  if (images.length) user += '\n\n【图片附件】共 ' + images.length + ' 张，请结合图片内容回答。';
 
   /* 带上最近几轮问答作为上下文，让追问能接着聊 */
   const historyMsgs = [];
@@ -4078,43 +4144,31 @@ async function aiRunAsk(payload) {
     historyMsgs.push({ role: role, content: String(m.content).slice(0, 2000) });
   });
 
+  const userContent = images.length
+    ? [{ type: 'text', text: user }].concat(images.map((img) => ({
+      type: 'image_url',
+      image_url: { url: String(img.dataUrl) }
+    })))
+    : user;
+
   const gen = await aiChat([
     { role: 'system', content: system },
     ...historyMsgs,
-    { role: 'user', content: user }
-  ], { maxTokens: wantThink ? 2400 : 1600, timeout: 120000, tries: 2, signal, think: wantThink });
+    { role: 'user', content: userContent }
+  ], {
+    maxTokens: wantThink ? 2400 : 1600,
+    timeout: 120000,
+    tries: 2,
+    signal,
+    think: wantThink,
+    model: String((payload && payload.model) || ''),
+    query: askText,
+    vision: images.length > 0
+  });
 
-  let content = gen.content;
-  let audit = { ok: true, issues: [], note: '' };
-  try {
-    const auditRes = await aiChat([
-      { role: 'system', content: '你是严格的内容审核员，检查面向高考学生的知识内容。只输出 JSON：{"ok":true,"issues":[],"note":""}。'
-        + '没有明显问题时 ok 为 true、issues 为空、note 写「未发现明显错误」；'
-        + '存在事实错误、夸大、无法验证的具体数据或引语时 ok 为 false，issues 列出问题要点（每条不超过 40 字）。' },
-      { role: 'user', content: '请检查下面这段内容：\n' + content }
-    ], { json: true, temperature: 0.1, maxTokens: 500, timeout: 90000, tries: 1, signal });
-    audit = parseAudit(auditRes.content);
-  } catch (e) {
-    const raw = String((e && e.message) || '');
-    const brief = /HTTP\s*(401|403|429|5\d\d)/i.test(raw) ? '审核通道暂时不可用' : '审核没能完成';
-    audit = { ok: true, issues: [], note: brief + '（' + raw.slice(0, 80) + '）' };
-  }
-
-  if (!audit.ok && audit.issues && audit.issues.length) {
-    try {
-      const fix = await aiChat([
-        { role: 'system', content: system },
-        { role: 'user', content: user + '\n\n【审核意见，请据此修正后再输出】\n' + audit.issues.map((s, i) => '(' + (i + 1) + ') ' + s).join('\n') }
-      ], { maxTokens: 1200, timeout: 120000, tries: 1, signal });
-      if (fix.content && fix.content.trim()) {
-        content = fix.content;
-        audit = { ok: true, issues: [], note: '已按审核意见修正' };
-      }
-    } catch (e) {
-      audit.note += '；修正未完成：' + e.message;
-    }
-  }
-
+  const content = gen.content;
+  /* 不再做二次审核与改写：模型输出原文直接返回，避免改变语气、删减内容或改坏公式 */
+  const audit = { ok: true, issues: [], note: '' };
   return {
     ok: true,
     subject,
@@ -4200,7 +4254,8 @@ async function aiListModels() {
       return {
         id,
         name: String((m && (m.display_name || m.name)) || id),
-        free: m && (m.isFree === true || m.free === true || /:free$/.test(id) || id === 'kilo-auto/free')
+        free: m && (m.isFree === true || m.free === true || /:free$/.test(id) || id === 'kilo-auto/free'),
+        vision: /vl|vision|omni|multimodal/i.test(id)
       };
     })
     .filter(Boolean);
@@ -4209,7 +4264,7 @@ async function aiListModels() {
     models = models.filter((m) => m.free || freeIds.has(m.id));
     // 网关没标免费时，也用本地清单兜底
     KILO_MODELS.forEach((m) => {
-      if (!models.some((x) => x.id === m.id)) models.push({ id: m.id, name: m.name, free: true, ctx: m.ctx });
+      if (!models.some((x) => x.id === m.id)) models.push({ id: m.id, name: m.name, free: true, ctx: m.ctx, vision: !!m.vision });
     });
   }
   const seen = new Set();
@@ -4303,7 +4358,7 @@ function wireIpc() {
         hint: p.hint || '', presets: Array.isArray(p.presets) ? p.presets : [],
         noKey: !!p.noKey, hasAuth: !!p.authUrl, keyUrl: p.keyUrl || '',
         models: (Array.isArray(p.models) ? p.models : []).map((m) => ({
-          id: m.id, name: m.name || m.id, ctx: m.ctx || 0, free: true
+          id: m.id, name: m.name || m.id, ctx: m.ctx || 0, free: true, vision: !!m.vision
         }))
       }))
     },
@@ -4981,6 +5036,37 @@ function wireIpc() {
     }
   });
 
+  /* AI 回答导出为文档：Markdown 与 HTML 两种，内容由渲染层传入，主进程只负责落盘 */
+  ipcMain.handle('ai:export-doc', async (_e, payload) => {
+    try {
+      const data = payload && typeof payload === 'object' ? payload : {};
+      const rawTitle = String(data.title || 'AI 回答').replace(/[\\/:*?"<>|\r\n]/g, '_').slice(0, 40) || 'AI 回答';
+      const markdown = String(data.markdown || '').slice(0, 400000);
+      const html = String(data.html || '').slice(0, 800000);
+      if (!markdown && !html) return { ok: false, error: '没有可导出的内容' };
+      const stamp = (() => {
+        const d = new Date();
+        const p = (n) => String(n).padStart(2, '0');
+        return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
+      })();
+      const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        title: '导出为文档',
+        defaultPath: path.join(app.getPath('downloads'), rawTitle + '-' + stamp + '.md'),
+        filters: [
+          { name: 'Markdown', extensions: ['md'] },
+          { name: '网页文档', extensions: ['html'] }
+        ]
+      });
+      if (canceled || !filePath) return { ok: false, canceled: true };
+      const isHtml = /\.html?$/i.test(filePath);
+      fs.writeFileSync(filePath, isHtml ? html : markdown, 'utf8');
+      appendLog('AI_EXPORT', { file: path.basename(filePath), html: isHtml });
+      return { ok: true, filePath };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
   ipcMain.on('app:log', (_e, event, detail) => appendLog(String(event || 'CLIENT'), detail));
 
   ipcMain.handle('window:set-pet-mode', (_e, on) => {
@@ -5032,7 +5118,7 @@ function wireIpc() {
         hint: p.hint || '', presets: Array.isArray(p.presets) ? p.presets : [],
         noKey: !!p.noKey, hasAuth: !!p.authUrl, keyUrl: p.keyUrl || '',
         models: (Array.isArray(p.models) ? p.models : []).map((m) => ({
-          id: m.id, name: m.name || m.id, ctx: m.ctx || 0, free: true
+          id: m.id, name: m.name || m.id, ctx: m.ctx || 0, free: true, vision: !!m.vision
         }))
       }))
     };
